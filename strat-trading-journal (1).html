@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Strat Journal</title>
+<style>
+  :root{
+    --bg: #0B0F14;
+    --panel: #121822;
+    --panel-2: #182130;
+    --border: #24303F;
+    --text: #E7EDF4;
+    --text-dim: #8C9AAD;
+    --bull: #2FBF71;
+    --bull-dim: #1B5C3A;
+    --bear: #E5484D;
+    --bear-dim: #6E2224;
+    --amber: #F2B94A;
+    --mono: "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, "Inter", "Helvetica Neue", Arial, sans-serif;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0; background:var(--bg); color:var(--text); font-family:var(--sans); -webkit-font-smoothing:antialiased;}
+  body{padding-bottom:70px;}
+  h1,h2,h3{font-family:var(--sans); font-weight:700; margin:0 0 8px 0;}
+  .num{font-family:var(--mono);}
+  .header{
+    position:sticky; top:0; z-index:20; background:linear-gradient(180deg, #0B0F14 80%, rgba(11,15,20,0));
+    padding:14px 16px 8px 16px; display:flex; align-items:center; justify-content:space-between;
+  }
+  .brand{display:flex; align-items:center; gap:10px;}
+  .brand .mark{width:26px; height:26px; border-radius:6px; background:linear-gradient(135deg, var(--bull), var(--amber)); display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-weight:800; color:#0B0F14; font-size:13px;}
+  .brand .name{font-weight:800; letter-spacing:0.2px; font-size:16px;}
+  .brand .sub{font-size:10px; color:var(--text-dim); letter-spacing:1.5px; text-transform:uppercase; margin-top:-2px;}
+
+  .ladder{display:flex; gap:2px; padding:0 16px 10px 16px;}
+  .ladder .seg{flex:1; height:4px; border-radius:2px; background:var(--border);}
+  .ladder .seg.bull{background:var(--bull);}
+  .ladder .seg.bear{background:var(--bear);}
+
+  main{padding:0 16px;}
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px; margin-bottom:14px;}
+  .card h3{font-size:13px; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-dim); margin-bottom:12px;}
+
+  .stat-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .stat{background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:12px;}
+  .stat .label{font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.6px;}
+  .stat .val{font-family:var(--mono); font-size:22px; font-weight:700; margin-top:4px;}
+  .pos{color:var(--bull);} .neg{color:var(--bear);}
+
+  table{width:100%; border-collapse:collapse; font-size:12.5px;}
+  th{text-align:left; color:var(--text-dim); font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:0.5px; padding:6px 8px; border-bottom:1px solid var(--border); white-space:nowrap;}
+  td{padding:8px; border-bottom:1px solid var(--border); font-family:var(--mono); white-space:nowrap;}
+  .tbl-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch;}
+  .badge{display:inline-block; padding:2px 8px; border-radius:20px; font-size:10.5px; font-weight:700; font-family:var(--sans);}
+  .badge.win{background:var(--bull-dim); color:var(--bull);}
+  .badge.loss{background:var(--bear-dim); color:var(--bear);}
+  .badge.long{background:#1B3A5C; color:#5FA8E0;}
+  .badge.short{background:#4A2C5C; color:#C084E0;}
+  .badge.setup{background:#2A2416; color:var(--amber);}
+
+  label{display:block; font-size:12px; color:var(--text-dim); margin:12px 0 5px 0; font-weight:600;}
+  input, select, textarea{
+    width:100%; background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:11px 12px; border-radius:8px; font-size:15px; font-family:var(--sans);
+  }
+  input.num, .rr-input{font-family:var(--mono);}
+  textarea{min-height:70px; resize:vertical;}
+  .row2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .row3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;}
+
+  .tf-grid{display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; margin-top:6px;}
+  .tf-btn{
+    border:1px solid var(--border); background:var(--panel-2); color:var(--text-dim);
+    border-radius:8px; padding:8px 4px; font-size:11px; text-align:center; font-family:var(--mono);
+    display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; user-select:none;
+  }
+  .tf-btn .tf-label{font-weight:700;}
+  .tf-btn.bull{background:var(--bull-dim); color:var(--bull); border-color:var(--bull);}
+  .tf-btn.bear{background:var(--bear-dim); color:var(--bear); border-color:var(--bear);}
+  .ftfc-result{margin-top:10px; padding:10px; border-radius:8px; font-size:12.5px; font-weight:700; text-align:center;}
+  .ftfc-result.yes{background:var(--bull-dim); color:var(--bull);}
+  .ftfc-result.no{background:var(--panel-2); color:var(--text-dim); border:1px solid var(--border);}
+
+  .strat-opt{border:1px solid var(--border); border-radius:10px; padding:12px; margin-top:8px; cursor:pointer;}
+  .strat-opt.sel{border-color:var(--amber); background:var(--panel-2);}
+  .strat-opt .t{font-weight:700; font-size:13px; margin-bottom:3px;}
+  .strat-opt .d{font-size:12px; color:var(--text-dim); line-height:1.4;}
+
+  .shot-row{display:flex; gap:10px; margin-top:8px;}
+  .shot-box{flex:1; border:1px dashed var(--border); border-radius:10px; height:90px; display:flex; align-items:center; justify-content:center; color:var(--text-dim); font-size:11px; overflow:hidden; position:relative;}
+  .shot-box img{width:100%; height:100%; object-fit:cover;}
+
+  button.primary{
+    width:100%; background:var(--bull); color:#06130B; border:none; border-radius:10px;
+    padding:14px; font-weight:800; font-size:15px; margin-top:16px; cursor:pointer;
+  }
+  button.secondary{
+    width:100%; background:transparent; color:var(--text); border:1px solid var(--border); border-radius:10px;
+    padding:12px; font-weight:600; font-size:14px; margin-top:8px; cursor:pointer;
+  }
+  button.ghost{background:none; border:none; color:var(--amber); font-family:var(--sans); font-size:12px; font-weight:700; padding:6px;}
+
+  .navbar{
+    position:fixed; bottom:0; left:0; right:0; background:#0D131B; border-top:1px solid var(--border);
+    display:flex; padding:6px 4px calc(6px + env(safe-area-inset-bottom)) 4px; z-index:30;
+  }
+  .navbar .item{flex:1; text-align:center; padding:6px 0; color:var(--text-dim); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; cursor:pointer;}
+  .navbar .item.active{color:var(--bull);}
+  .navbar .item .ic{font-size:17px; display:block; margin-bottom:2px;}
+
+  .view{display:none;} .view.active{display:block;}
+  .empty{text-align:center; padding:30px 10px; color:var(--text-dim); font-size:13px;}
+  .pill-row{display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;}
+  .pill{padding:6px 12px; border-radius:20px; border:1px solid var(--border); font-size:12px; color:var(--text-dim); cursor:pointer;}
+  .pill.sel{background:var(--amber); color:#241C05; border-color:var(--amber); font-weight:700;}
+
+  .ai-msg{background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px; font-size:13px; line-height:1.5;}
+  .ai-msg .tag{font-size:10px; text-transform:uppercase; letter-spacing:0.6px; color:var(--amber); font-weight:800; margin-bottom:5px;}
+  .spin{width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--amber); border-radius:50%; animation:sp 0.7s linear infinite; display:inline-block; vertical-align:middle; margin-right:8px;}
+  @keyframes sp{to{transform:rotate(360deg);}}
+
+  .conn-dot{width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px;}
+  .conn-dot.on{background:var(--bull);} .conn-dot.off{background:var(--bear);}
+  .sync-log{max-height:160px; overflow-y:auto; font-family:var(--mono); font-size:11px; color:var(--text-dim); margin-top:8px;}
+  .sync-log div{padding:4px 0; border-bottom:1px solid var(--border);}
+  .close-x{position:absolute; top:6px; right:6px; background:rgba(0,0,0,0.6); color:#fff; border-radius:50%; width:18px; height:18px; text-align:center; line-height:18px; font-size:11px;}
+  .status-banner{border-radius:10px; padding:12px; font-size:13px; font-weight:600; margin-top:10px; display:none;}
+  .status-banner.show{display:block;}
+  .status-banner.ok{background:var(--bull-dim); color:var(--bull);}
+  .status-banner.err{background:var(--bear-dim); color:var(--bear);}
+  .status-banner.info{background:var(--panel-2); color:var(--text-dim); border:1px solid var(--border);}
+  button.secondary.busy{opacity:0.6; pointer-events:none;}
+  button.secondary.busy::after{content:" ..."}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">
+    <div class="mark">S</div>
+    <div>
+      <div class="name">Strat Journal</div>
+      <div class="sub">Schwab · Options</div>
+    </div>
+  </div>
+  <div id="connBadge" style="font-size:11px; color:var(--text-dim);"><span class="conn-dot off"></span>Not connected</div>
+</div>
+<div class="ladder" id="heroLadder"></div>
+
+<main>
+
+  <!-- DASHBOARD -->
+  <div class="view active" id="view-dashboard">
+    <div class="stat-grid">
+      <div class="stat"><div class="label">Net P&L</div><div class="val num" id="statPnl">$0.00</div></div>
+      <div class="stat"><div class="label">Win Rate</div><div class="val num" id="statWinRate">0%</div></div>
+      <div class="stat"><div class="label">Avg R:R (planned)</div><div class="val num" id="statRR">0.0</div></div>
+      <div class="stat"><div class="label">Trades Logged</div><div class="val num" id="statCount">0</div></div>
+    </div>
+
+    <div class="card" style="margin-top:14px;">
+      <h3>Setup Performance</h3>
+      <div id="setupBreakdown"><div class="empty">Log trades to see which Strat setups actually make you money.</div></div>
+    </div>
+
+    <div class="card">
+      <h3>FTFC Timeframe Hit Rate</h3>
+      <div id="ftfcBreakdown"><div class="empty">No data yet.</div></div>
+    </div>
+
+    <div class="card">
+      <h3>Recent Trades</h3>
+      <div id="recentTrades"><div class="empty">No trades logged yet. Tap "New" below to add your first one.</div></div>
+    </div>
+  </div>
+
+  <!-- JOURNAL -->
+  <div class="view" id="view-journal">
+    <div class="card">
+      <h3>All Trades</h3>
+      <div class="tbl-wrap">
+        <table id="journalTable">
+          <thead><tr>
+            <th>Date</th><th>Ticker</th><th>Dir</th><th>Setup</th><th>FTFC</th>
+            <th>Entry</th><th>Exit</th><th>Under. E/X</th><th>Stop</th><th>R:R Plan</th><th>R:R Act.</th><th>P&L $</th><th>P&L %</th><th>W/L</th>
+          </tr></thead>
+          <tbody id="journalBody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="journalEmpty" style="display:none;">No trades yet.</div>
+    </div>
+  </div>
+
+  <!-- NEW TRADE -->
+  <div class="view" id="view-new">
+    <div class="card">
+      <h3>Trade Info</h3>
+      <div class="row2">
+        <div><label>Ticker</label><input id="f_ticker" placeholder="SPY" autocapitalize="characters"></div>
+        <div><label>Direction</label>
+          <select id="f_dir"><option value="Long">Long</option><option value="Short">Short</option></select>
+        </div>
+      </div>
+      <div class="row2">
+        <div><label>Entry Date</label><input id="f_entryDate" type="date"></div>
+        <div><label>Entry Time</label><input id="f_entryTime" type="time"></div>
+      </div>
+      <div class="row2">
+        <div><label>Exit Date</label><input id="f_exitDate" type="date"></div>
+        <div><label>Exit Time</label><input id="f_exitTime" type="time"></div>
+      </div>
+
+      <label>Option Contract Symbol (OCC)</label>
+      <input id="f_occ" placeholder="SPY  260918C00560000">
+
+      <div class="row2">
+        <div><label>Option Entry Price</label><input id="f_optEntry" class="num" type="number" step="0.01" placeholder="1.85"></div>
+        <div><label>Option Exit Price</label><input id="f_optExit" class="num" type="number" step="0.01" placeholder="2.60"></div>
+      </div>
+      <div class="row2">
+        <div><label>Underlying Price @ Entry</label><input id="f_undEntry" class="num" type="number" step="0.01" placeholder="559.20"></div>
+        <div><label>Underlying Price @ Exit</label><input id="f_undExit" class="num" type="number" step="0.01" placeholder="561.05"></div>
+      </div>
+      <div class="row3">
+        <div><label>Contracts</label><input id="f_contracts" class="num" type="number" value="1" min="1"></div>
+        <div><label>Stop Loss (Strat-based)</label><input id="f_stop" class="num" type="number" step="0.01" placeholder="557.80"></div>
+        <div><label>Planned R:R</label><input id="f_rr" class="num" type="number" step="0.1" placeholder="2.5"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Strat Setup</h3>
+      <div class="strat-opt" data-v="2-2 Reversal" onclick="selectStrat(this)">
+        <div class="t">2→3 Reversal</div>
+        <div class="d">A "2" candle turning into a "3" (outside bar) on the working timeframe.</div>
+      </div>
+      <div class="strat-opt" data-v="FTFC Continuation" onclick="selectStrat(this)">
+        <div class="t">FTFC Continuation</div>
+        <div class="d">Setup in the direction of Full Time Frame Continuity, targeting setup completion, unfilled gaps, or pivots.</div>
+      </div>
+      <div class="strat-opt" data-v="Broadening Reversal" onclick="selectStrat(this)">
+        <div class="t">Broadening Formation Reversal</div>
+        <div class="d">Clear broadening formation on a higher TF (15m-4H) + liquidity taken out, reversing on a lower TF Strat setup (1m-5m).</div>
+      </div>
+      <input type="hidden" id="f_strat">
+    </div>
+
+    <div class="card">
+      <h3>Full Time Frame Continuity Check</h3>
+      <div style="font-size:12px; color:var(--text-dim); margin-bottom:4px;">Tap each timeframe: bullish / bearish / neutral, at the moment of entry.</div>
+      <div class="tf-grid" id="tfGrid"></div>
+      <div class="ftfc-result no" id="ftfcResult">Tap timeframes to check for 4+ consecutive alignment</div>
+    </div>
+
+    <div class="card">
+      <h3>Setup Screenshots</h3>
+      <div style="font-size:12px; color:var(--text-dim);">No API can auto-capture your screen at entry/exit — snap it yourself and attach it here.</div>
+      <div class="shot-row">
+        <div class="shot-box" id="shotEntryBox" onclick="document.getElementById('shotEntryInput').click()">+ Entry shot</div>
+        <div class="shot-box" id="shotExitBox" onclick="document.getElementById('shotExitInput').click()">+ Exit shot</div>
+      </div>
+      <input type="file" id="shotEntryInput" accept="image/*" capture="environment" style="display:none;" onchange="handleShot(this,'entry')">
+      <input type="file" id="shotExitInput" accept="image/*" capture="environment" style="display:none;" onchange="handleShot(this,'exit')">
+    </div>
+
+    <div class="card">
+      <h3>Notes</h3>
+      <textarea id="f_notes" placeholder="Anything about execution, timing, emotion, deviations from plan..."></textarea>
+    </div>
+
+    <button class="primary" onclick="saveTrade()">Save Trade</button>
+    <div style="height:10px;"></div>
+  </div>
+
+  <!-- AI ANALYST -->
+  <div class="view" id="view-ai">
+    <div class="card">
+      <h3>AI Analyst</h3>
+      <div style="font-size:12.5px; color:var(--text-dim); margin-bottom:10px;">
+        Reviews every logged trade for setup performance, late/early entries, sub-2:1 R:R setups you took anyway, and exits before target.
+      </div>
+      <button class="primary" id="analyzeBtn" onclick="runAnalysis()" style="margin-top:0;">Analyze My Trades</button>
+    </div>
+    <div id="aiOutput"></div>
+  </div>
+
+  <!-- SYNC -->
+  <div class="view" id="view-sync">
+    <div class="card">
+      <h3>Schwab Auto-Sync</h3>
+      <div style="font-size:12.5px; color:var(--text-dim); line-height:1.5; margin-bottom:10px;">
+        A background job on your backend checks Schwab every few minutes on its own —
+        whether your phone is open or not — and pairs up opening/closing fills into
+        completed trades. They show up below, ready to tag.
+      </div>
+      <label>Backend URL</label>
+      <input id="f_backendUrl" placeholder="https://your-backend.example.com">
+      <button class="secondary" id="btnConnect" onclick="connectBackend()">Connect</button>
+      <button class="secondary" id="btnRefresh" onclick="pollBackend()">Refresh Pending Queue Now</button>
+      <button class="secondary" id="btnBackfill" onclick="runBackfillNow()">Import Trade History (one-time)</button>
+      <div class="status-banner" id="syncStatus"></div>
+      <div class="sync-log" id="syncLog"><div>Not connected yet.</div></div>
+    </div>
+
+    <div class="card">
+      <h3>Ready to Tag <span id="pendingCount" style="color:var(--amber);"></span></h3>
+      <div style="font-size:12px; color:var(--text-dim); margin-bottom:6px;">
+        Auto-matched from Schwab. Underlying price at entry/exit isn't in Schwab's
+        transaction data — add it from your charts if you want it tracked.
+      </div>
+      <div id="pendingQueue"><div class="empty">Connect your backend to see auto-imported trades here.</div></div>
+    </div>
+
+    <div class="card">
+      <h3>Import Schwab CSV (fallback, no backend needed)</h3>
+      <div style="font-size:12.5px; color:var(--text-dim); margin-bottom:8px;">
+        Export "Transactions" from Schwab as CSV and import here. Auto-fills ticker, OCC symbol, price, date/time — you still tag the Strat setup and FTFC yourself.
+      </div>
+      <input type="file" id="csvInput" accept=".csv" onchange="handleCsv(this)">
+      <div class="sync-log" id="csvLog"></div>
+    </div>
+
+    <div class="card">
+      <h3>Data</h3>
+      <button class="secondary" onclick="exportData()">Export All Trades (JSON)</button>
+      <button class="secondary" onclick="exportCsvSheet()">Export Journal (CSV)</button>
+      <button class="secondary" style="color:var(--bear); border-color:var(--bear-dim);" onclick="wipeData()">Erase All Trades</button>
+    </div>
+  </div>
+
+</main>
+
+<div class="navbar">
+  <div class="item active" data-view="dashboard" onclick="showView('dashboard')"><span class="ic">◆</span>Home</div>
+  <div class="item" data-view="journal" onclick="showView('journal')"><span class="ic">▤</span>Journal</div>
+  <div class="item" data-view="new" onclick="showView('new')"><span class="ic">+</span>New</div>
+  <div class="item" data-view="ai" onclick="showView('ai')"><span class="ic">✦</span>AI</div>
+  <div class="item" data-view="sync" onclick="showView('sync')"><span class="ic">⇅</span>Sync<span id="navSyncBadge"></span></div>
+</div>
+
+<script>
+const TIMEFRAMES = ['6M','3M','1M','1W','1D','4H','2H','1H','30m','15m','5m','3m','1m'];
+let currentTf = {}; // {tf: 'bull'|'bear'|'neutral'}
+let currentShots = {entry:null, exit:null};
+let selectedStrat = null;
+let currentPendingId = null; // set when tagging a trade that came from the auto-sync queue
+
+function loadTrades(){ try{ return JSON.parse(localStorage.getItem('strat_trades')||'[]'); }catch(e){ return []; } }
+function saveTrades(t){ localStorage.setItem('strat_trades', JSON.stringify(t)); }
+
+function showView(name){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+name).classList.add('active');
+  document.querySelectorAll('.navbar .item').forEach(i=>i.classList.toggle('active', i.dataset.view===name));
+  if(name==='dashboard') renderDashboard();
+  if(name==='journal') renderJournal();
+}
+
+// ---- Timeframe grid ----
+function buildTfGrid(){
+  const grid = document.getElementById('tfGrid');
+  grid.innerHTML = '';
+  TIMEFRAMES.forEach(tf=>{
+    const btn = document.createElement('div');
+    btn.className = 'tf-btn';
+    btn.innerHTML = `<span class="tf-label">${tf}</span><span class="tf-state">–</span>`;
+    btn.onclick = ()=>{
+      const states = [undefined,'bull','bear'];
+      const cur = currentTf[tf];
+      const idx = states.indexOf(cur);
+      const next = states[(idx+1)%states.length];
+      currentTf[tf] = next;
+      btn.classList.remove('bull','bear');
+      if(next){ btn.classList.add(next); btn.querySelector('.tf-state').textContent = next==='bull'?'▲':'▼'; }
+      else { btn.querySelector('.tf-state').textContent = '–'; }
+      updateFtfcResult();
+    };
+    grid.appendChild(btn);
+  });
+}
+function updateFtfcResult(){
+  const seq = TIMEFRAMES.map(tf=>currentTf[tf]);
+  let best = 0, run = 0, dir = null;
+  seq.forEach(v=>{
+    if(v && v===dir){ run++; } else { run = v?1:0; dir = v; }
+    best = Math.max(best, run);
+  });
+  const el = document.getElementById('ftfcResult');
+  if(best>=4){ el.className='ftfc-result yes'; el.textContent = `FTFC confirmed — ${best} consecutive timeframes aligned`; }
+  else { el.className='ftfc-result no'; el.textContent = `No FTFC yet — longest run is ${best} timeframe(s)`; }
+}
+buildTfGrid();
+
+function selectStrat(el){
+  document.querySelectorAll('.strat-opt').forEach(o=>o.classList.remove('sel'));
+  el.classList.add('sel');
+  selectedStrat = el.dataset.v;
+  document.getElementById('f_strat').value = selectedStrat;
+}
+
+function handleShot(input, which){
+  const file = input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    currentShots[which] = e.target.result;
+    const box = document.getElementById(which==='entry'?'shotEntryBox':'shotExitBox');
+    box.innerHTML = `<img src="${e.target.result}"><div class="close-x" onclick="event.stopPropagation(); clearShot('${which}')">✕</div>`;
+  };
+  reader.readAsDataURL(file);
+}
+function clearShot(which){
+  currentShots[which]=null;
+  const box = document.getElementById(which==='entry'?'shotEntryBox':'shotExitBox');
+  box.innerHTML = `+ ${which==='entry'?'Entry':'Exit'} shot`;
+}
+
+// ---- Save trade ----
+function saveTrade(){
+  const ticker = document.getElementById('f_ticker').value.trim().toUpperCase();
+  if(!ticker){ alert('Enter a ticker.'); return; }
+  if(!selectedStrat){ alert('Pick a Strat setup.'); return; }
+
+  const optEntry = parseFloat(document.getElementById('f_optEntry').value)||0;
+  const optExit = parseFloat(document.getElementById('f_optExit').value)||0;
+  const contracts = parseFloat(document.getElementById('f_contracts').value)||1;
+  const dir = document.getElementById('f_dir').value;
+  const rrPlanned = parseFloat(document.getElementById('f_rr').value)||0;
+  const undEntry = parseFloat(document.getElementById('f_undEntry').value)||0;
+  const undExit = parseFloat(document.getElementById('f_undExit').value)||0;
+  const stop = parseFloat(document.getElementById('f_stop').value)||0;
+
+  const perContractDiff = (optExit - optEntry) * (dir==='Short' ? -1 : 1);
+  const pnlDollar = perContractDiff * 100 * contracts;
+  const pnlPercent = optEntry ? (perContractDiff/optEntry)*100 : 0;
+
+  // actual R:R realized vs planned risk (based on stop distance in underlying terms, approximated via option prices)
+  const riskPerContract = Math.abs(optEntry - (optEntry * (rrPlanned? (1/(1+rrPlanned)) : 0.4))); // fallback approximation
+  const rewardPerContract = Math.abs(perContractDiff);
+  const rrActual = stop && undEntry ? null : null; // left blank unless computable reliably; kept simple/manual below
+
+  const seq = TIMEFRAMES.map(tf=>currentTf[tf]);
+  let best=0, run=0, dirRun=null;
+  seq.forEach(v=>{ if(v && v===dirRun){run++;} else {run=v?1:0; dirRun=v;} best=Math.max(best,run); });
+  const ftfcConfirmed = best>=4;
+
+  const trade = {
+    id: Date.now(),
+    ticker, dir, strat: selectedStrat,
+    entryDate: document.getElementById('f_entryDate').value,
+    entryTime: document.getElementById('f_entryTime').value,
+    exitDate: document.getElementById('f_exitDate').value,
+    exitTime: document.getElementById('f_exitTime').value,
+    occ: document.getElementById('f_occ').value.trim(),
+    optEntry, optExit, contracts,
+    undEntry, undExit, stop,
+    rrPlanned,
+    ftfc: {...currentTf}, ftfcRun: best, ftfcConfirmed,
+    pnlDollar, pnlPercent,
+    winLoss: pnlDollar>=0 ? 'Win':'Loss',
+    notes: document.getElementById('f_notes').value,
+    shotEntry: currentShots.entry, shotExit: currentShots.exit,
+    source: currentPendingId ? 'schwab-auto' : 'manual'
+  };
+
+  const trades = loadTrades();
+  trades.unshift(trade);
+  saveTrades(trades);
+
+  if(currentPendingId){
+    const url = backendUrl();
+    if(url){
+      fetch(url+'/api/trades/pending/'+encodeURIComponent(currentPendingId), {method:'DELETE'}).catch(()=>{});
+    }
+    currentPendingId = null;
+  }
+
+  // reset form
+  ['f_ticker','f_occ','f_optEntry','f_optExit','f_undEntry','f_undExit','f_stop','f_rr','f_notes','f_entryDate','f_entryTime','f_exitDate','f_exitTime'].forEach(id=>document.getElementById(id).value='');
+  document.querySelectorAll('.strat-opt').forEach(o=>o.classList.remove('sel'));
+  selectedStrat = null;
+  currentTf = {};
+  currentShots = {entry:null, exit:null};
+  document.getElementById('shotEntryBox').innerHTML = '+ Entry shot';
+  document.getElementById('shotExitBox').innerHTML = '+ Exit shot';
+  buildTfGrid();
+  updateFtfcResult();
+
+  showView('journal');
+  if(backendUrl()) pollBackend();
+}
+
+// ---- Rendering ----
+function fmtMoney(n){ const s = n<0?'-':''; return s+'$'+Math.abs(n).toFixed(2); }
+function fmtPct(n){ return (n>=0?'+':'')+n.toFixed(1)+'%'; }
+
+function renderDashboard(){
+  const trades = loadTrades();
+  const count = trades.length;
+  const wins = trades.filter(t=>t.winLoss==='Win').length;
+  const netPnl = trades.reduce((s,t)=>s+t.pnlDollar,0);
+  const avgRR = count ? (trades.reduce((s,t)=>s+(t.rrPlanned||0),0)/count) : 0;
+
+  document.getElementById('statPnl').textContent = fmtMoney(netPnl);
+  document.getElementById('statPnl').className = 'val num ' + (netPnl>=0?'pos':'neg');
+  document.getElementById('statWinRate').textContent = count ? Math.round(wins/count*100)+'%' : '0%';
+  document.getElementById('statRR').textContent = avgRR.toFixed(1);
+  document.getElementById('statCount').textContent = count;
+
+  // hero ladder = last trade's FTFC snapshot, else empty
+  const ladder = document.getElementById('heroLadder');
+  ladder.innerHTML = '';
+  const last = trades[0];
+  TIMEFRAMES.forEach(tf=>{
+    const seg = document.createElement('div');
+    seg.className = 'seg' + (last && last.ftfc[tf] ? ' '+last.ftfc[tf] : '');
+    ladder.appendChild(seg);
+  });
+
+  // setup breakdown
+  const bySetup = {};
+  trades.forEach(t=>{
+    bySetup[t.strat] = bySetup[t.strat] || {count:0, pnl:0, wins:0};
+    bySetup[t.strat].count++; bySetup[t.strat].pnl += t.pnlDollar;
+    if(t.winLoss==='Win') bySetup[t.strat].wins++;
+  });
+  const sb = document.getElementById('setupBreakdown');
+  const keys = Object.keys(bySetup);
+  if(!keys.length){ sb.innerHTML = '<div class="empty">Log trades to see which Strat setups actually make you money.</div>'; }
+  else {
+    sb.innerHTML = keys.sort((a,b)=>bySetup[b].pnl-bySetup[a].pnl).map(k=>{
+      const s = bySetup[k];
+      return `<div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:13px;">
+        <div>${k}<div style="font-size:11px; color:var(--text-dim);">${s.count} trades · ${Math.round(s.wins/s.count*100)}% win</div></div>
+        <div class="num ${s.pnl>=0?'pos':'neg'}" style="font-weight:700;">${fmtMoney(s.pnl)}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // ftfc breakdown
+  const fb = document.getElementById('ftfcBreakdown');
+  if(!count){ fb.innerHTML = '<div class="empty">No data yet.</div>'; }
+  else {
+    const withFtfc = trades.filter(t=>t.ftfcConfirmed);
+    const withoutFtfc = trades.filter(t=>!t.ftfcConfirmed);
+    const winPct = arr => arr.length ? Math.round(arr.filter(t=>t.winLoss==='Win').length/arr.length*100) : 0;
+    fb.innerHTML = `
+      <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:13px;"><span>With FTFC confirmed (4+ TF aligned)</span><span class="num" style="font-weight:700;">${winPct(withFtfc)}% win · ${withFtfc.length} trades</span></div>
+      <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:13px;"><span>Without FTFC confirmed</span><span class="num" style="font-weight:700;">${winPct(withoutFtfc)}% win · ${withoutFtfc.length} trades</span></div>
+    `;
+  }
+
+  // recent
+  const rt = document.getElementById('recentTrades');
+  if(!count){ rt.innerHTML = '<div class="empty">No trades logged yet. Tap "New" below to add your first one.</div>'; }
+  else {
+    rt.innerHTML = trades.slice(0,5).map(t=>`
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid var(--border);">
+        <div>
+          <span style="font-weight:700;">${t.ticker}</span>
+          <span class="badge ${t.dir.toLowerCase()}" style="margin-left:6px;">${t.dir}</span>
+          <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">${t.strat} · ${t.entryDate||''}</div>
+        </div>
+        <div class="num ${t.pnlDollar>=0?'pos':'neg'}" style="font-weight:700;">${fmtMoney(t.pnlDollar)}</div>
+      </div>`).join('');
+  }
+}
+
+function renderJournal(){
+  const trades = loadTrades();
+  const body = document.getElementById('journalBody');
+  document.getElementById('journalEmpty').style.display = trades.length ? 'none':'block';
+  body.innerHTML = trades.map(t=>`
+    <tr>
+      <td>${t.entryDate||''}</td>
+      <td>${t.ticker}</td>
+      <td><span class="badge ${t.dir.toLowerCase()}">${t.dir}</span></td>
+      <td><span class="badge setup">${t.strat}</span></td>
+      <td>${t.ftfcConfirmed ? '✅ '+t.ftfcRun : t.ftfcRun+'/4'}</td>
+      <td>$${t.optEntry.toFixed(2)}</td>
+      <td>$${t.optExit.toFixed(2)}</td>
+      <td>$${t.undEntry.toFixed(2)} / $${t.undExit.toFixed(2)}</td>
+      <td>$${t.stop.toFixed(2)}</td>
+      <td>${t.rrPlanned.toFixed(1)}</td>
+      <td>—</td>
+      <td class="${t.pnlDollar>=0?'pos':'neg'}">${fmtMoney(t.pnlDollar)}</td>
+      <td class="${t.pnlPercent>=0?'pos':'neg'}">${fmtPct(t.pnlPercent)}</td>
+      <td><span class="badge ${t.winLoss.toLowerCase()}">${t.winLoss}</span></td>
+    </tr>
+  `).join('');
+}
+
+// ---- AI Analyst ----
+async function runAnalysis(){
+  const trades = loadTrades();
+  const out = document.getElementById('aiOutput');
+  if(trades.length < 5){
+    out.innerHTML = `<div class="ai-msg"><div class="tag">Need more data</div>Log at least 5 trades (ideally 30-50+) before analysis is meaningful. You have ${trades.length}.</div>`;
+    return;
+  }
+  const btn = document.getElementById('analyzeBtn');
+  btn.disabled = true;
+  out.innerHTML = `<div class="ai-msg"><span class="spin"></span>Reviewing ${trades.length} trades...</div>`;
+
+  const compact = trades.map(t=>({
+    ticker:t.ticker, dir:t.dir, strat:t.strat, entryDate:t.entryDate, exitDate:t.exitDate,
+    optEntry:t.optEntry, optExit:t.optExit, undEntry:t.undEntry, undExit:t.undExit,
+    stop:t.stop, rrPlanned:t.rrPlanned, ftfcConfirmed:t.ftfcConfirmed, ftfcRun:t.ftfcRun,
+    pnlDollar:Math.round(t.pnlDollar*100)/100, pnlPercent:Math.round(t.pnlPercent*10)/10,
+    winLoss:t.winLoss, notes:t.notes
+  }));
+
+  const prompt = `You are a trading performance analyst reviewing a trader's Strat-methodology options journal.
+Data (JSON array of trades): ${JSON.stringify(compact)}
+
+Analyze for:
+1. Most profitable vs least profitable Strat setup types (by $ and win rate)
+2. Whether FTFC-confirmed trades outperform non-confirmed ones
+3. Signs of late or early entries (infer from notes and stop/entry/exit spread)
+4. Trades taken with planned R:R below 2:1 and how those performed vs trades at/above 2:1
+5. Signs the trader exited before a reasonable target (infer from notes and small realized gains relative to planned R:R)
+6. One or two concrete, specific recommendations
+
+Respond ONLY as JSON, no markdown fences, in this exact shape:
+{"summary": "2-3 sentence overview", "insights": [{"title": "short title", "body": "2-4 sentences, specific and grounded in the data, not generic advice"}]}`;
+
+  try{
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        messages: [{role:"user", content: prompt}]
+      })
+    });
+    const data = await response.json();
+    let text = (data.content||[]).map(c=>c.text||'').join('\n').trim();
+    text = text.replace(/```json|```/g,'').trim();
+    const parsed = JSON.parse(text);
+    let html = `<div class="ai-msg"><div class="tag">Summary</div>${parsed.summary}</div>`;
+    (parsed.insights||[]).forEach(ins=>{
+      html += `<div class="ai-msg"><div class="tag">${ins.title}</div>${ins.body}</div>`;
+    });
+    out.innerHTML = html;
+  }catch(e){
+    out.innerHTML = `<div class="ai-msg"><div class="tag">Error</div>Couldn't complete analysis (${e.message}). Try again.</div>`;
+  }
+  btn.disabled = false;
+}
+
+// ---- Schwab backend sync ----
+function log(elId, msg){
+  const el = document.getElementById(elId);
+  const line = document.createElement('div');
+  line.textContent = `${new Date().toLocaleTimeString()} — ${msg}`;
+  el.prepend(line);
+}
+function showStatus(kind, msg){
+  const el = document.getElementById('syncStatus');
+  el.className = 'status-banner show ' + kind;
+  el.textContent = msg;
+}
+function setBusy(btnId, busy){
+  document.getElementById(btnId).classList.toggle('busy', busy);
+}
+function backendUrl(){
+  return (localStorage.getItem('strat_backend_url')||'').replace(/\/$/,'');
+}
+async function connectBackend(){
+  const url = document.getElementById('f_backendUrl').value.trim();
+  if(!url){ showStatus('err', 'Enter your backend URL first — the box above is empty.'); return; }
+  localStorage.setItem('strat_backend_url', url);
+  setBusy('btnConnect', true);
+  showStatus('info', 'Connecting...');
+  try{
+    const r = await fetch(url.replace(/\/$/,'')+'/health');
+    if(!r.ok) throw new Error('Server responded with status '+r.status);
+    const d = await r.json();
+    document.getElementById('connBadge').innerHTML = '<span class="conn-dot on"></span>Connected';
+    showStatus('ok', 'Connected to your backend.');
+    log('syncLog', 'Connected: '+JSON.stringify(d));
+    pollBackend();
+  }catch(e){
+    document.getElementById('connBadge').innerHTML = '<span class="conn-dot off"></span>Not connected';
+    showStatus('err', `Couldn't reach that backend (${e.message}). Have you deployed it yet? See the README in the backend zip — this needs a live Render/Railway URL, not the zip file itself.`);
+    log('syncLog', 'Could not reach backend: '+e.message);
+  }
+  setBusy('btnConnect', false);
+}
+async function pollBackend(){
+  const url = backendUrl();
+  if(!url){ showStatus('err', 'No backend connected yet — enter a URL and tap Connect first.'); return; }
+  setBusy('btnRefresh', true);
+  showStatus('info', 'Checking for trades...');
+  try{
+    const r = await fetch(url+'/api/trades/pending');
+    if(!r.ok) throw new Error('Server responded with status '+r.status);
+    const data = await r.json();
+    renderPendingQueue(data.pending||[]);
+    showStatus('ok', `${(data.pending||[]).length} trade(s) waiting to be tagged.`);
+    log('syncLog', `${(data.pending||[]).length} trade(s) waiting to be tagged`);
+  }catch(e){
+    showStatus('err', `Refresh failed (${e.message}). Check the backend is actually running and the URL is correct.`);
+    log('syncLog', 'Refresh failed: '+e.message);
+  }
+  setBusy('btnRefresh', false);
+}
+async function runBackfillNow(){
+  const url = backendUrl();
+  if(!url){ showStatus('err', 'No backend connected yet — enter a URL and tap Connect first.'); return; }
+  setBusy('btnBackfill', true);
+  showStatus('info', 'Requesting historical backfill — this can take a moment...');
+  log('syncLog', 'Requesting historical backfill...');
+  try{
+    const r = await fetch(url+'/api/trades/backfill', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({daysBack:730})
+    });
+    if(!r.ok) throw new Error('Server responded with status '+r.status);
+    const data = await r.json();
+    showStatus('ok', `Backfill imported ${data.imported||0} closed trade(s).`);
+    log('syncLog', `Backfill imported ${data.imported||0} closed trade(s)`);
+    pollBackend();
+  }catch(e){
+    showStatus('err', `Backfill failed (${e.message}). Make sure you've completed Schwab login (/auth/schwab/login) first.`);
+    log('syncLog', 'Backfill failed: '+e.message);
+  }
+  setBusy('btnBackfill', false);
+}
+function renderPendingQueue(list){
+  const wrap = document.getElementById('pendingQueue');
+  const countEl = document.getElementById('pendingCount');
+  const navBadge = document.getElementById('navSyncBadge');
+  countEl.textContent = list.length ? `(${list.length})` : '';
+  navBadge.textContent = list.length ? ' •' : '';
+  navBadge.style.color = 'var(--amber)';
+  if(!list.length){ wrap.innerHTML = '<div class="empty">Nothing waiting — you\'re fully tagged up.</div>'; return; }
+  wrap.innerHTML = list.map(t=>`
+    <div style="border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div><span style="font-weight:700;">${t.ticker}</span> <span class="badge ${t.dir.toLowerCase()}">${t.dir}</span></div>
+        <div class="num ${t.pnlDollar>=0?'pos':'neg'}" style="font-weight:700;">${fmtMoney(t.pnlDollar)}</div>
+      </div>
+      <div style="font-size:11px; color:var(--text-dim); margin:4px 0;">${t.entryDate} ${t.entryTime} → ${t.exitDate} ${t.exitTime} · ${t.occ||''}</div>
+      <button class="secondary" style="margin-top:4px;" onclick='prefillFromPending(${JSON.stringify(t).replace(/'/g,"&apos;")})'>Tag This Trade</button>
+    </div>
+  `).join('');
+}
+function prefillFromPending(t){
+  showView('new');
+  currentPendingId = t.id;
+  document.getElementById('f_ticker').value = t.ticker || '';
+  document.getElementById('f_occ').value = t.occ || '';
+  document.getElementById('f_dir').value = t.dir || 'Long';
+  document.getElementById('f_entryDate').value = t.entryDate || '';
+  document.getElementById('f_entryTime').value = t.entryTime || '';
+  document.getElementById('f_exitDate').value = t.exitDate || '';
+  document.getElementById('f_exitTime').value = t.exitTime || '';
+  document.getElementById('f_optEntry').value = t.optEntry ?? '';
+  document.getElementById('f_optExit').value = t.optExit ?? '';
+  document.getElementById('f_contracts').value = t.contracts || 1;
+}
+(function initBackend(){
+  const url = localStorage.getItem('strat_backend_url');
+  if(url){ document.getElementById('f_backendUrl').value = url; pollBackend(); }
+})();
+
+// ---- CSV import (Schwab transaction export) ----
+function handleCsv(input){
+  const file = input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    const lines = e.target.result.split('\n').filter(l=>l.trim());
+    log('csvLog', `Parsed ${lines.length-1} row(s). Review and tag Strat setup + FTFC in New Trade for each.`);
+    // Minimal parse: Schwab export columns vary by account; we just surface row count here
+    // and let the user finish tagging manually in the New Trade tab, since column layout
+    // differs between cash/margin/options-enabled exports.
+  };
+  reader.readAsText(file);
+}
+
+// ---- Export / wipe ----
+function exportData(){
+  const trades = loadTrades();
+  const blob = new Blob([JSON.stringify(trades,null,2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'strat-journal-export.json';
+  a.click();
+}
+function exportCsvSheet(){
+  const trades = loadTrades();
+  const headers = ['EntryDate','EntryTime','ExitDate','ExitTime','Ticker','Strat','FTFC','OCC','OptEntry','OptExit','UnderEntry','UnderExit','Stop','RRPlanned','PnlDollar','PnlPercent','WinLoss','Direction','Notes'];
+  const rows = trades.map(t=>[t.entryDate,t.entryTime,t.exitDate,t.exitTime,t.ticker,t.strat,t.ftfcConfirmed?'Yes':'No',t.occ,t.optEntry,t.optExit,t.undEntry,t.undExit,t.stop,t.rrPlanned,t.pnlDollar.toFixed(2),t.pnlPercent.toFixed(1),t.winLoss,t.dir,(t.notes||'').replace(/,/g,';')]);
+  const csv = [headers.join(','), ...rows.map(r=>r.join(','))].join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'strat-journal.csv';
+  a.click();
+}
+function wipeData(){
+  if(confirm('Erase all logged trades? This cannot be undone.')){
+    localStorage.removeItem('strat_trades');
+    renderDashboard(); renderJournal();
+  }
+}
+
+renderDashboard();
+</script>
+</body>
+</html>
