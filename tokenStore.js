@@ -1,43 +1,41 @@
-// Simple single-user token store, persisted to disk as JSON.
-// Fine for a personal-use backend with one Schwab account.
-// If you deploy to a platform with an ephemeral filesystem (most serverless
-// functions), swap this for a small hosted KV/Redis instead — the file
-// will get wiped on redeploy otherwise.
-const fs = require('fs');
-const path = require('path');
+// Single-user token store, persisted to Upstash Redis (survives restarts,
+// unlike local disk on Render's free tier which gets wiped).
+const { Redis } = require('@upstash/redis');
 
-const STORE_PATH = path.join(__dirname, 'tokens.json');
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
 
-function readStore() {
-  try {
-    return JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
-  } catch (e) {
-    return {};
-  }
+const KEY = 'schwab:tokens';
+
+async function readStore() {
+  const data = await redis.get(KEY);
+  return data || {};
 }
 
-function writeStore(data) {
-  fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2));
+async function writeStore(data) {
+  await redis.set(KEY, data);
 }
 
-function saveTokens({ access_token, refresh_token, expires_in }) {
-  const store = readStore();
+async function saveTokens({ access_token, refresh_token, expires_in }) {
+  const store = await readStore();
   store.access_token = access_token;
   store.refresh_token = refresh_token || store.refresh_token;
   store.expires_at = Date.now() + (expires_in * 1000) - 30000; // 30s safety margin
   store.last_transaction_check = store.last_transaction_check || null;
-  writeStore(store);
+  await writeStore(store);
   return store;
 }
 
-function getTokens() {
-  return readStore();
+async function getTokens() {
+  return await readStore();
 }
 
-function setLastCheck(iso) {
-  const store = readStore();
+async function setLastCheck(iso) {
+  const store = await readStore();
   store.last_transaction_check = iso;
-  writeStore(store);
+  await writeStore(store);
 }
 
 module.exports = { saveTokens, getTokens, setLastCheck };
