@@ -47,7 +47,7 @@ router.get('/schwab/callback', async (req, res) => {
       }
     );
 
-    saveTokens(resp.data);
+    await saveTokens(resp.data);
     res.send('Schwab connected. You can close this tab and return to the Strat Journal app.');
   } catch (err) {
     console.error('OAuth callback failed:', err.response?.data || err.message);
@@ -59,7 +59,7 @@ router.get('/schwab/callback', async (req, res) => {
 // Schwab refresh tokens are long-lived but do expire — if this starts
 // failing, you'll need to repeat the /schwab/login flow manually.
 async function refreshAccessToken() {
-  const store = getTokens();
+  const store = await getTokens();
   if (!store.refresh_token) throw new Error('No refresh token on file — run /auth/schwab/login first.');
 
   const basicAuth = Buffer.from(
@@ -79,11 +79,11 @@ async function refreshAccessToken() {
       },
     }
   );
-  return saveTokens(resp.data);
+  return await saveTokens(resp.data);
 }
 
 async function getValidAccessToken() {
-  const store = getTokens();
+  const store = await getTokens();
   if (!store.access_token) throw new Error('Not connected — run /auth/schwab/login first.');
   if (Date.now() > (store.expires_at || 0)) {
     const refreshed = await refreshAccessToken();
