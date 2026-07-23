@@ -1,79 +1,95 @@
 const express = require('express');
 const axios = require('axios');
-const { getValidAccessToken } = require('./auth');
-const { getTokens, setLastCheck } = require('./tokenStore');
-const tradeStore = require('./tradeStore');
-const { runBackfill, runSyncCheck } = require('./cron');
+const { saveTokens, getTokens } = require('./tokenStore');
 
 const router = express.Router();
 
-// Schwab Trader API base, per developer.schwab.com. Verify exact paths
-// (they're versioned and have changed before) against current docs.
-const TRADER_BASE = 'https://api.schwabapi.com/trader/v1';
+// Schwab's OAuth endpoints, per developer.schwab.com. Verify these against
+// current Schwab docs before going live — API paths have shifted before.
+const AUTH_BASE = 'https://api.schwabapi.com/v1/oauth';
 
-async function schwabGet(pathname, accessToken, params = {}) {
-  const resp = await axios.get(`${TRADER_BASE}${pathname}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    params,
+// Step 1: send the user to Schwab to approve access.
+// Visit this route once in a browser logged into your Schwab account.
+router.get('/schwab/login', (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: process.env.SCHWAB_CLIENT_ID,
+    redirect_uri: process.env.SCHWAB_REDIRECT_URI,
   });
-  return resp.data;
+  res.redirect(`${AUTH_BASE}/authorize?${params.toString()}`);
+});
+
+// Step 2: Schwab redirects back here with a one-time code.
+router.get('/schwab/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send('Missing authorization code');
+
+  try {
+    const basicAuth = Buffer.from(
+      `${process.env.SCHWAB_CLIENT_ID}:${process.env.SCHWAB_CLIENT_SECRET}`
+    ).toString('base64');
+
+    const resp = await axios.post(
+      `${AUTH_BASE}/token`,
+      new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: process.env.SCHWAB_REDIRECT_URI,
+      }),
+      {
+        headers: {
+          Authorization: `Basic ${basicAuth}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      }
+    );
+
+    await saveTokens(resp.data);
+    res.send('Schwab connected. You can close this tab and return to the Strat Journal app.');
+  } catch (err) {
+    console.error('OAuth callback failed:', err.response?.data || err.message);
+    res.status(500).send('OAuth exchange failed — check server logs.');
+  }
+});
+
+// Refreshes the access token using the stored refresh token.
+// Schwab refresh tokens are long-lived but do expire — if this starts
+// failing, you'll need to repeat the /schwab/login flow manually.
+async function refreshAccessToken() {
+  const store = await getTokens();
+  if (!store.refresh_token) throw new Error('No refresh token on file — run /auth/schwab/login first.');
+
+  const basicAuth = Buffer.from(
+    `${process.env.SCHWAB_CLIENT_ID}:${process.env.SCHWAB_CLIENT_SECRET}`
+  ).toString('base64');
+
+  const resp = await axios.post(
+    `${AUTH_BASE}/token`,
+    new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: store.refresh_token,
+    }),
+    {
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    }
+  );
+  return await saveTokens(resp.data);
 }
 
-// Returns the account's current open positions.
-router.get('/positions', async (req, res) => {
-  try {
-    const token = await getValidAccessToken();
-    const accountsHash = await schwabGet('/accounts/accountNumbers', token);
-    const accountNumber = accountsHash?.[0]?.hashValue;
-    if (!accountNumber) return res.json({ positions: [] });
-
-    const data = await schwabGet(`/accounts/${accountNumber}`, token, { fields: 'positions' });
-    res.json({ positions: data?.securitiesAccount?.positions || [] });
-  } catch (err) {
-    console.error('positions error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to fetch positions' });
+async function getValidAccessToken() {
+  const store = await getTokens();
+  if (!store.access_token) throw new Error('Not connected — run /auth/schwab/login first.');
+  if (Date.now() > (store.expires_at || 0)) {
+    const refreshed = await refreshAccessToken();
+    return refreshed.access_token;
   }
-});
+  return store.access_token;
+}
 
-// Closed trades the cron job has already matched (open+close paired) and
-// which are waiting for you to tag with Strat setup / FTFC / stop / shots.
-// This is what makes sync feel automatic: by the time you open the app,
-// the background job has already done the matching — you're just tagging.
-router.get('/trades/pending', (req, res) => {
-  const state = tradeStore.getState();
-  res.json({ pending: state.pending || [] });
-});
-
-// Call once the trade has been tagged and saved into the app's own
-// journal (localStorage), so the backend stops surfacing it again.
-router.delete('/trades/pending/:id', (req, res) => {
-  tradeStore.removePendingTrade(req.params.id);
-  res.json({ ok: true });
-});
-
-// One-time historical pull. daysBack defaults to ~2 years; Schwab's own
-// transaction history window may be shorter — whatever's available comes back.
-router.post('/trades/backfill', async (req, res) => {
-  try {
-    const daysBack = parseInt(req.body?.daysBack, 10) || 730;
-    const newPending = await runBackfill(daysBack);
-    res.json({ imported: newPending.length });
-  } catch (err) {
-    console.error('backfill error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Backfill failed' });
-  }
-});
-
-// Manual trigger for an immediate check, same logic the cron job runs
-// on its own every few minutes.
-router.post('/trades/sync-now', async (req, res) => {
-  try {
-    await runSyncCheck();
-    const state = tradeStore.getState();
-    res.json({ pending: state.pending || [] });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-module.exports = router;
+module.exports = { router, getValidAccessToken };
