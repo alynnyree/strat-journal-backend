@@ -1,42 +1,43 @@
 // Stores raw open legs (waiting for a matching close) and fully-matched
 // closed trades that are ready for the user to tag with Strat setup/FTFC
-// in the app. Same persistence caveat as tokenStore.js: fine for a small
-// personal server with a real disk, not for stateless serverless functions.
-const fs = require('fs');
-const path = require('path');
+// in the app. Persisted to Upstash Redis so it survives Render restarts.
+const { Redis } = require('@upstash/redis');
 
-const STORE_PATH = path.join(__dirname, 'trades_pending.json');
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
 
-function read() {
-  try {
-    return JSON.parse(fs.readFileSync(STORE_PATH, 'utf8'));
-  } catch (e) {
-    return { openLegs: [], pending: [], lastProcessedIds: [] };
-  }
+const KEY = 'trades:state';
+const DEFAULT_STATE = { openLegs: [], pending: [], lastProcessedIds: [] };
+
+async function read() {
+  const data = await redis.get(KEY);
+  return data || { ...DEFAULT_STATE };
 }
 
-function write(data) {
-  fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2));
+async function write(data) {
+  await redis.set(KEY, data);
 }
 
-function getState() {
-  return read();
+async function getState() {
+  return await read();
 }
 
-function saveState(state) {
-  write(state);
+async function saveState(state) {
+  await write(state);
 }
 
-function addPendingTrade(trade) {
-  const state = read();
+async function addPendingTrade(trade) {
+  const state = await read();
   state.pending.unshift(trade);
-  write(state);
+  await write(state);
 }
 
-function removePendingTrade(id) {
-  const state = read();
+async function removePendingTrade(id) {
+  const state = await read();
   state.pending = state.pending.filter(t => t.id !== id);
-  write(state);
+  await write(state);
 }
 
 module.exports = { getState, saveState, addPendingTrade, removePendingTrade };
