@@ -8,7 +8,7 @@ const { getTokens, setLastCheck } = require('./tokenStore');
 async function runSyncCheck() {
   try {
     const token = await getValidAccessToken();
-    const store = getTokens();
+    const store = await getTokens();
     const since = store.last_transaction_check
       ? new Date(store.last_transaction_check)
       : new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -20,7 +20,7 @@ async function runSyncCheck() {
       now.toISOString().slice(0, 10)
     );
 
-    const state = tradeStore.getState();
+    const state = await tradeStore.getState();
     const alreadySeen = new Set(state.lastProcessedIds || []);
     const freshFills = fills.filter(f => !alreadySeen.has(f.transactionId));
 
@@ -30,13 +30,13 @@ async function runSyncCheck() {
         ...(state.lastProcessedIds || []).slice(-500), // keep this list bounded
         ...freshFills.map(f => f.transactionId),
       ];
-      tradeStore.saveState(updatedState);
+      await tradeStore.saveState(updatedState);
       if (newPending.length) {
         console.log(`Auto-sync: ${newPending.length} closed trade(s) ready for tagging.`);
       }
     }
 
-    setLastCheck(now.toISOString());
+    await setLastCheck(now.toISOString());
   } catch (err) {
     // Most common cause: not connected yet (no refresh token on file).
     console.log('Auto-sync check skipped:', err.message);
@@ -55,7 +55,7 @@ async function runBackfill(daysBack = 730) {
     now.toISOString().slice(0, 10)
   );
 
-  const state = tradeStore.getState();
+  const state = await tradeStore.getState();
   const alreadySeen = new Set(state.lastProcessedIds || []);
   const freshFills = fills.filter(f => !alreadySeen.has(f.transactionId));
 
@@ -67,7 +67,7 @@ async function runBackfill(daysBack = 730) {
     ...(state.lastProcessedIds || []),
     ...freshFills.map(f => f.transactionId),
   ];
-  tradeStore.saveState(updatedState);
+  await tradeStore.saveState(updatedState);
   return newPending;
 }
 
