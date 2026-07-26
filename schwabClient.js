@@ -27,6 +27,14 @@ function toSchwabTimestamp(dateStr, endOfDay = false) {
 }
 
 // Normalizes Schwab's transaction shape into flat option fills.
+//
+// Confirmed real shape (as of July 2026): each transaction has a
+// `transferItems` ARRAY (not a single `transactionItem` object). Fee lines
+// have instrument.assetType 'CURRENCY'; the actual option leg has
+// instrument.assetType 'OPTION', plus `positionEffect` ('OPENING' or
+// 'CLOSING'), `price`, and a signed `cost` (positive = money received,
+// negative = money paid). Combining positionEffect + cost sign gives the
+// full BUY/SELL_TO_OPEN/CLOSE instruction.
 async function getOptionFills(accessToken, startDate, endDate) {
   const accountNumber = await getAccountNumber(accessToken);
   if (!accountNumber) return [];
@@ -37,37 +45,36 @@ async function getOptionFills(accessToken, startDate, endDate) {
     types: 'TRADE',
   });
 
-  // Temporary diagnostic — remove once we confirm the real shape of Schwab's response.
-  console.log(`Schwab returned ${Array.isArray(raw) ? raw.length : 'non-array: ' + typeof raw} transaction(s) for account ${accountNumber}`);
-  if (Array.isArray(raw) && raw.length > 0) {
-    const optionTxn = raw.find(t =>
-      (t.transferItems || []).some(ti => ti.instrument?.assetType === 'OPTION')
-    );
-    if (optionTxn) {
-      console.log('Found an OPTION transaction, full shape:', JSON.stringify(optionTxn));
-    } else {
-      console.log('No transaction with an OPTION transferItem found in this batch of', raw.length);
-    }
-  }
+  const fills = [];
+  for (const t of (raw || [])) {
+    const items = t.transferItems || [];
+    for (const ti of items) {
+      if (ti.instrument?.assetType !== 'OPTION') continue;
+      const quantity = Math.abs(ti.amount || 0);
+      if (!quantity) continue;
 
-  return (raw || [])
-    .filter(t => t.transactionItem?.instrument?.assetType === 'OPTION')
-    .map(t => {
-      const item = t.transactionItem;
-      const dt = new Date(t.transactionDate);
-      return {
-        transactionId: t.activityId || t.transactionId,
-        occ: item.instrument?.symbol,
-        ticker: item.instrument?.underlyingSymbol || item.instrument?.symbol,
-        instruction: item.instruction, // BUY_TO_OPEN / SELL_TO_OPEN / BUY_TO_CLOSE / SELL_TO_CLOSE
-        price: item.price,
-        quantity: Math.abs(item.amount || item.quantity || 1),
+      const isOpening = ti.positionEffect === 'OPENING';
+      const receivedMoney = (ti.cost || 0) > 0;
+      let instruction;
+      if (isOpening) instruction = receivedMoney ? 'SELL_TO_OPEN' : 'BUY_TO_OPEN';
+      else instruction = receivedMoney ? 'SELL_TO_CLOSE' : 'BUY_TO_CLOSE';
+
+      const dt = new Date(t.tradeDate || t.time);
+      fills.push({
+        transactionId: t.activityId || t.orderId,
+        occ: ti.instrument.symbol,
+        ticker: ti.instrument.underlyingSymbol || ti.instrument.symbol,
+        instruction,
+        price: ti.price,
+        quantity,
         date: dt.toISOString().slice(0, 10),
         time: dt.toISOString().slice(11, 16),
         timestamp: dt.getTime(),
-      };
-    })
-    .sort((a, b) => a.timestamp - b.timestamp);
+      });
+    }
+  }
+
+  return fills.sort((a, b) => a.timestamp - b.timestamp);
 }
 
 module.exports = { getAccountNumber, getOptionFills };
