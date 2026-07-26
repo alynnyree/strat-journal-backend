@@ -44,7 +44,9 @@ async function runSyncCheck() {
 }
 
 // One-time (or on-demand) wide-range pull for historical backfill.
-async function runBackfill(daysBack = 730) {
+// Schwab rejects any startDate/endDate range spanning more than one year,
+// so this defaults to 365 days back (not the ~2 years used previously).
+async function runBackfill(daysBack = 365) {
   const token = await getValidAccessToken();
   const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
   const now = new Date();
