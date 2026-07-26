@@ -17,14 +17,23 @@ async function getAccountNumber(accessToken) {
   return accountsHash?.[0]?.hashValue || null;
 }
 
+// Schwab's transaction history endpoint requires full ISO-8601 timestamps
+// (e.g. 2024-07-26T00:00:00.000Z), not bare dates (e.g. 2024-07-26) — a
+// plain date string gets rejected with "is not a valid value for startDate".
+function toSchwabTimestamp(dateStr, endOfDay = false) {
+  return endOfDay
+    ? `${dateStr}T23:59:59.000Z`
+    : `${dateStr}T00:00:00.000Z`;
+}
+
 // Normalizes Schwab's transaction shape into flat option fills.
 async function getOptionFills(accessToken, startDate, endDate) {
   const accountNumber = await getAccountNumber(accessToken);
   if (!accountNumber) return [];
 
   const raw = await schwabGet(`/accounts/${accountNumber}/transactions`, accessToken, {
-    startDate,
-    endDate,
+    startDate: toSchwabTimestamp(startDate, false),
+    endDate: toSchwabTimestamp(endDate, true),
     types: 'TRADE',
   });
 
