@@ -40,7 +40,14 @@ async function getOptionFills(accessToken, startDate, endDate) {
   // Temporary diagnostic — remove once we confirm the real shape of Schwab's response.
   console.log(`Schwab returned ${Array.isArray(raw) ? raw.length : 'non-array: ' + typeof raw} transaction(s) for account ${accountNumber}`);
   if (Array.isArray(raw) && raw.length > 0) {
-    console.log('Sample transaction shape:', JSON.stringify(raw[0]).slice(0, 500));
+    const optionTxn = raw.find(t =>
+      (t.transferItems || []).some(ti => ti.instrument?.assetType === 'OPTION')
+    );
+    if (optionTxn) {
+      console.log('Found an OPTION transaction, full shape:', JSON.stringify(optionTxn));
+    } else {
+      console.log('No transaction with an OPTION transferItem found in this batch of', raw.length);
+    }
   }
 
   return (raw || [])
