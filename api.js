@@ -55,7 +55,7 @@ router.delete('/trades/pending/:id', async (req, res) => {
 // transaction history window may be shorter — whatever's available comes back.
 router.post('/trades/backfill', async (req, res) => {
   try {
-    const daysBack = parseInt(req.body?.daysBack, 10) || 730;
+    const daysBack = parseInt(req.body?.daysBack, 10) || 365;
     const newPending = await runBackfill(daysBack);
     res.json({ imported: newPending.length });
   } catch (err) {
