@@ -60,6 +60,7 @@ function extractOptionFills(transaction) {
       occ: ti.instrument.symbol,
       ticker: ti.instrument.underlyingSymbol || ti.instrument.symbol,
       instruction,
+      putCall: ti.instrument.putCall, // 'CALL' or 'PUT' — used for Long/Short, not buy/sell
       price: ti.price,
       quantity,
       date: dt.toISOString().slice(0, 10),
