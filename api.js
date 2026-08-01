@@ -95,4 +95,19 @@ router.post('/ftfc/check', async (req, res) => {
   }
 });
 
+// Wipes the entire pending queue AND the memory of which Schwab
+// transactions have already been processed — use this before re-running
+// backfill after a matching-logic fix, so every trade gets freshly
+// re-matched instead of keeping old (possibly wrong) results around.
+// This does NOT touch your saved Journal (that's local to the app).
+router.post('/trades/reset', async (req, res) => {
+  try {
+    await tradeStore.saveState({ openLegs: [], pending: [], lastProcessedIds: [] });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('reset error:', err.message);
+    res.status(500).json({ error: 'Reset failed' });
+  }
+});
+
 module.exports = router;
