@@ -4,6 +4,7 @@ const { getValidAccessToken } = require('./auth');
 const { getTokens, setLastCheck } = require('./tokenStore');
 const tradeStore = require('./tradeStore');
 const { runBackfill, runSyncCheck } = require('./cron');
+const { getFtfcForTrade } = require('./ftfcCheck');
 
 const router = express.Router();
 
@@ -73,6 +74,24 @@ router.post('/trades/sync-now', async (req, res) => {
     res.json({ pending: state.pending || [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Auto-checks Full Time Frame Continuity for one ticker at one trade's
+// entry time, using Schwab's own candle data. Returns bull/bear per
+// timeframe (or leaves a timeframe out if Schwab has no data that far back).
+router.post('/ftfc/check', async (req, res) => {
+  try {
+    const { ticker, entryTimestamp } = req.body || {};
+    if (!ticker || !entryTimestamp) {
+      return res.status(400).json({ error: 'ticker and entryTimestamp are required' });
+    }
+    const token = await getValidAccessToken();
+    const result = await getFtfcForTrade(token, ticker, entryTimestamp);
+    res.json({ ftfc: result.timeframes, confirmed: result.confirmed, runLength: result.runLength, direction: result.direction });
+  } catch (err) {
+    console.error('ftfc check error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'FTFC check failed' });
   }
 });
 
