@@ -33,6 +33,26 @@ function toSchwabTimestamp(dateStr, endOfDay = false) {
     : `${dateStr}T00:00:00.000Z`;
 }
 
+// Schwab's own timestamps are in UTC. Schwab's UI and exports (like order
+// history) display everything in US Eastern time — so trades must be
+// converted here too, or every displayed entry/exit time is off by 4-5
+// hours (whatever the UTC/Eastern offset happens to be that day, since
+// this shifts with daylight saving). Uses Node's built-in Intl support —
+// no extra package needed — and handles the DST shift automatically.
+function toEasternParts(dt) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(dt).map(p => [p.type, p.value]));
+  const hour = parts.hour === '24' ? '00' : parts.hour; // some locales report midnight as '24'
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${hour}:${parts.minute}`,
+  };
+}
+
 // Turns one raw Schwab transaction into flat option fills. Each transaction
 // has a `transferItems` ARRAY (not a single `transactionItem` object). Fee
 // lines have instrument.assetType 'CURRENCY'; the actual option leg has
@@ -55,6 +75,7 @@ function extractOptionFills(transaction) {
     else instruction = receivedMoney ? 'SELL_TO_CLOSE' : 'BUY_TO_CLOSE';
 
     const dt = new Date(transaction.tradeDate || transaction.time);
+    const { date, time } = toEasternParts(dt);
     fills.push({
       transactionId: transaction.activityId || transaction.orderId,
       occ: ti.instrument.symbol,
@@ -63,9 +84,9 @@ function extractOptionFills(transaction) {
       putCall: ti.instrument.putCall, // 'CALL' or 'PUT' — used for Long/Short, not buy/sell
       price: ti.price,
       quantity,
-      date: dt.toISOString().slice(0, 10),
-      time: dt.toISOString().slice(11, 16),
-      timestamp: dt.getTime(),
+      date,
+      time,
+      timestamp: dt.getTime(), // kept as true UTC epoch ms for sorting/comparison
     });
   }
   return fills;
