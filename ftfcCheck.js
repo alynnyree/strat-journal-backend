@@ -53,6 +53,34 @@ function lastCandleBefore(candles, beforeMs) {
   return eligible.length ? eligible[eligible.length - 1] : null;
 }
 
+// Schwab's option transaction data never includes what the underlying
+// stock itself was trading at — only the option's own price. This looks
+// up the underlying's actual price at a specific moment (a trade's entry
+// or exit) using the same 1-minute candle data as the FTFC check. Falls
+// back to a daily candle if 1-minute history isn't available that far
+// back (Schwab doesn't retain minute data indefinitely).
+async function getUnderlyingPriceAt(accessToken, ticker, timestampMs) {
+  try {
+    const oneMin = await fetchCandles(accessToken, ticker, {
+      periodType: 'day', period: 10, frequencyType: 'minute', frequency: 1, endDate: timestampMs,
+    }).catch(() => []);
+    const candle = lastCandleBefore(oneMin, timestampMs);
+    if (candle) return candle.close;
+  } catch (err) {
+    console.log(`Underlying price lookup (1m) failed for ${ticker}:`, err.message);
+  }
+  try {
+    const daily = await fetchCandles(accessToken, ticker, {
+      periodType: 'year', period: 2, frequencyType: 'daily', frequency: 1, endDate: timestampMs,
+    }).catch(() => []);
+    const candle = lastCandleBefore(daily, timestampMs);
+    return candle ? candle.close : null;
+  } catch (err) {
+    console.log(`Underlying price lookup (daily) failed for ${ticker}:`, err.message);
+    return null;
+  }
+}
+
 // Full Time Frame Continuity rule: walk the timeframes in order (from the
 // TIMEFRAMES list above — 6M down to 1m) and find the longest run of
 // CONSECUTIVE timeframes that are all the same direction (all bull or all
@@ -142,4 +170,4 @@ async function getFtfcForTrade(accessToken, ticker, entryTimestampMs) {
   return { timeframes: result, ...computeFtfcConfirmation(result) };
 }
 
-module.exports = { getFtfcForTrade, TIMEFRAMES };
+module.exports = { getFtfcForTrade, getUnderlyingPriceAt, TIMEFRAMES };
