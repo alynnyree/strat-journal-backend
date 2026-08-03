@@ -33,6 +33,8 @@ function processFills(fills, state) {
         openPrice: fill.price,
         openDate: fill.date,
         openTime: fill.time,
+        openTimestamp: fill.timestamp,
+        totalQuantity: fill.quantity, // how many contracts were opened in total
         remaining: fill.quantity,
       });
       continue;
@@ -51,25 +53,35 @@ function processFills(fills, state) {
         const perContractDiff = (fill.price - leg.openPrice);
         const pnlDollar = perContractDiff * 100 * qtyMatched;
         const pnlPercent = leg.openPrice ? (perContractDiff / leg.openPrice) * 100 : 0;
+        const remainingAfterThis = leg.remaining - qtyMatched;
         newPending.push({
           id: `${fill.occ}-${leg.openTime}-${fill.time}-${Math.random().toString(36).slice(2, 7)}`,
           ticker: leg.ticker,
           occ: leg.occ,
           dir: leg.dir,
           contracts: qtyMatched,
+          contractsOpened: leg.totalQuantity,
+          // 'Closed' once every contract from the original opening has been
+          // matched to a close (possibly across several closing fills);
+          // 'Partial Fill' if some of the original position is still open.
+          fillStatus: remainingAfterThis === 0 ? 'Closed' : 'Partial Fill',
           entryDate: leg.openDate,
           entryTime: leg.openTime,
+          entryTimestamp: leg.openTimestamp,
           exitDate: fill.date,
           exitTime: fill.time,
+          exitTimestamp: fill.timestamp,
           optEntry: leg.openPrice,
           optExit: fill.price,
+          undEntry: null, // filled in by cron.js after matching, via a separate underlying-price lookup
+          undExit: null,
           pnlDollar: Math.round(pnlDollar * 100) / 100,
           pnlPercent: Math.round(pnlPercent * 10) / 10,
           winLoss: pnlDollar >= 0 ? 'Win' : 'Loss',
           source: 'schwab-auto',
           needsTagging: true,
         });
-        leg.remaining -= qtyMatched;
+        leg.remaining = remainingAfterThis;
         qtyToClose -= qtyMatched;
       }
     }
