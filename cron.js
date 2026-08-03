@@ -4,6 +4,27 @@ const { getOptionFills } = require('./schwabClient');
 const { processFills } = require('./matcher');
 const tradeStore = require('./tradeStore');
 const { getTokens, setLastCheck } = require('./tokenStore');
+const { getUnderlyingPriceAt } = require('./ftfcCheck');
+
+// Looks up the underlying stock's actual price at entry and exit for each
+// newly-matched trade, since Schwab's option data never includes it. Runs
+// one at a time (not in parallel) to stay comfortably within Schwab's rate
+// limits during a large backfill.
+async function enrichWithUnderlyingPrices(token, trades) {
+  for (const trade of trades) {
+    try {
+      if (trade.entryTimestamp) {
+        trade.undEntry = await getUnderlyingPriceAt(token, trade.ticker, trade.entryTimestamp);
+      }
+      if (trade.exitTimestamp) {
+        trade.undExit = await getUnderlyingPriceAt(token, trade.ticker, trade.exitTimestamp);
+      }
+    } catch (err) {
+      console.log(`Underlying price enrichment failed for ${trade.ticker}:`, err.message);
+    }
+  }
+  return trades;
+}
 
 async function runSyncCheck() {
   try {
@@ -26,6 +47,9 @@ async function runSyncCheck() {
 
     if (freshFills.length) {
       const { updatedState, newPending } = processFills(freshFills, state);
+      if (newPending.length) {
+        await enrichWithUnderlyingPrices(token, newPending);
+      }
       updatedState.lastProcessedIds = [
         ...(state.lastProcessedIds || []).slice(-500), // keep this list bounded
         ...freshFills.map(f => f.transactionId),
@@ -65,6 +89,9 @@ async function runBackfill(daysBack = 90) {
     openLegs: [],
     pending: state.pending, // keep any trades already queued
   });
+  if (newPending.length) {
+    await enrichWithUnderlyingPrices(token, newPending);
+  }
   updatedState.lastProcessedIds = [
     ...(state.lastProcessedIds || []),
     ...freshFills.map(f => f.transactionId),
