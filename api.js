@@ -52,17 +52,24 @@ router.delete('/trades/pending/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-// One-time historical pull. daysBack defaults to ~2 years; Schwab's own
+// One-time historical pull. daysBack defaults to ~90 days; Schwab's own
 // transaction history window may be shorter — whatever's available comes back.
+//
+// This responds immediately once the backfill has STARTED rather than
+// waiting for it to fully finish — with a lot of matched trades, each one
+// needs ~15+ sequential Schwab API calls (FTFC across 13 timeframes,
+// underlying price, replay candles), which easily takes minutes. Making
+// the phone hold a request open that long reliably times out (shows as a
+// generic "Load failed" client-side) even though the backend is still
+// working correctly. The backfill keeps running after this responds;
+// check /trades/pending (or tap "Check for New Trades") a bit later to
+// see the results land.
 router.post('/trades/backfill', async (req, res) => {
-  try {
-    const daysBack = parseInt(req.body?.daysBack, 10) || 90;
-    const newPending = await runBackfill(daysBack);
-    res.json({ imported: newPending.length });
-  } catch (err) {
-    console.error('backfill error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Backfill failed' });
-  }
+  const daysBack = parseInt(req.body?.daysBack, 10) || 90;
+  res.json({ started: true, daysBack });
+  runBackfill(daysBack)
+    .then(newPending => console.log(`Background backfill complete: ${newPending.length} trade(s) imported.`))
+    .catch(err => console.error('Background backfill failed:', err.response?.data || err.message));
 });
 
 // Manual trigger for an immediate check, same logic the cron job runs
