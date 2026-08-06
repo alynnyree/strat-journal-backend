@@ -56,18 +56,33 @@ function lastCandleBefore(candles, beforeMs) {
 // Schwab's option transaction data never includes what the underlying
 // stock itself was trading at — only the option's own price. This looks
 // up the underlying's actual price at a specific moment (a trade's entry
-// or exit) using the same 1-minute candle data as the FTFC check. Falls
-// back to a daily candle if 1-minute history isn't available that far
-// back (Schwab doesn't retain minute data indefinitely).
-async function getUnderlyingPriceAt(accessToken, ticker, timestampMs) {
+// or exit).
+//
+// Schwab's price-history API only retains 1-minute candles for roughly
+// 30-35 days — trades older than that will always come back empty at
+// 1-minute resolution, that's a hard ceiling on Schwab's side, not a bug
+// here. Rather than jumping straight from 1-minute to a daily candle (which
+// gives every trade on the same day the exact same price and looks
+// obviously wrong), this cascades through progressively coarser intraday
+// bars first — 5-minute, then 30-minute — since Schwab retains those
+// longer than raw 1-minute data. Daily is the last resort, only used once
+// the trade is old enough that even 30-minute history is gone.
+async function tryIntradayLookup(accessToken, ticker, timestampMs, frequency) {
   try {
-    const oneMin = await fetchCandles(accessToken, ticker, {
-      periodType: 'day', period: 10, frequencyType: 'minute', frequency: 1, endDate: timestampMs,
+    const candles = await fetchCandles(accessToken, ticker, {
+      periodType: 'day', period: 10, frequencyType: 'minute', frequency, endDate: timestampMs,
     }).catch(() => []);
-    const candle = lastCandleBefore(oneMin, timestampMs);
-    if (candle) return candle.close;
+    const candle = lastCandleBefore(candles, timestampMs);
+    return candle ? candle.close : null;
   } catch (err) {
-    console.log(`Underlying price lookup (1m) failed for ${ticker}:`, err.message);
+    console.log(`Underlying price lookup (${frequency}m) failed for ${ticker}:`, err.message);
+    return null;
+  }
+}
+async function getUnderlyingPriceAt(accessToken, ticker, timestampMs) {
+  for (const frequency of [1, 5, 30]) {
+    const price = await tryIntradayLookup(accessToken, ticker, timestampMs, frequency);
+    if (price != null) return price;
   }
   try {
     const daily = await fetchCandles(accessToken, ticker, {
@@ -180,4 +195,4 @@ async function getFtfcForTrade(accessToken, ticker, entryTimestampMs) {
   return { timeframes: result, ...computeFtfcConfirmation(result) };
 }
 
-module.exports = { getFtfcForTrade, getUnderlyingPriceAt, TIMEFRAMES };
+module.exports = { getFtfcForTrade, getUnderlyingPriceAt, fetchCandles, TIMEFRAMES };
