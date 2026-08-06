@@ -5,6 +5,7 @@ const { processFills } = require('./matcher');
 const tradeStore = require('./tradeStore');
 const { getTokens, setLastCheck } = require('./tokenStore');
 const { getUnderlyingPriceAt } = require('./ftfcCheck');
+const { getReplayCandles } = require('./replayData');
 
 // Looks up the underlying stock's actual price at entry and exit for each
 // newly-matched trade, since Schwab's option data never includes it. Runs
@@ -21,6 +22,25 @@ async function enrichWithUnderlyingPrices(token, trades) {
       }
     } catch (err) {
       console.log(`Underlying price enrichment failed for ${trade.ticker}:`, err.message);
+    }
+  }
+  return trades;
+}
+
+// Pulls the 1-minute candle window around each newly-matched trade for the
+// bar-replay feature (a candle-by-candle playback of the trade, used as a
+// substitute for video screen recording — see replayData.js). Same
+// one-at-a-time approach as the underlying-price enrichment, for the same
+// rate-limit reason. Stores null on trades too old for Schwab's minute-data
+// retention rather than leaving the field missing, so the frontend can
+// tell "no replay available" apart from "not checked yet".
+async function enrichWithReplayData(token, trades) {
+  for (const trade of trades) {
+    try {
+      trade.replayData = await getReplayCandles(token, trade.ticker, trade.entryTimestamp, trade.exitTimestamp);
+    } catch (err) {
+      console.log(`Replay data enrichment failed for ${trade.ticker}:`, err.message);
+      trade.replayData = null;
     }
   }
   return trades;
@@ -49,6 +69,7 @@ async function runSyncCheck() {
       const { updatedState, newPending } = processFills(freshFills, state);
       if (newPending.length) {
         await enrichWithUnderlyingPrices(token, newPending);
+        await enrichWithReplayData(token, newPending);
       }
       updatedState.lastProcessedIds = [
         ...(state.lastProcessedIds || []).slice(-500), // keep this list bounded
@@ -91,6 +112,7 @@ async function runBackfill(daysBack = 90) {
   });
   if (newPending.length) {
     await enrichWithUnderlyingPrices(token, newPending);
+    await enrichWithReplayData(token, newPending);
   }
   updatedState.lastProcessedIds = [
     ...(state.lastProcessedIds || []),
