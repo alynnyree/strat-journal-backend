@@ -4,8 +4,30 @@ const { getOptionFills } = require('./schwabClient');
 const { processFills } = require('./matcher');
 const tradeStore = require('./tradeStore');
 const { getTokens, setLastCheck } = require('./tokenStore');
-const { getUnderlyingPriceAt } = require('./ftfcCheck');
+const { getUnderlyingPriceAt, getFtfcForTrade } = require('./ftfcCheck');
 const { getReplayCandles } = require('./replayData');
+
+// Runs the Full Time Frame Continuity check for each newly-matched trade,
+// same logic used everywhere else in the app — now run automatically at
+// match time instead of waiting for the trade to be manually tagged, since
+// the Journal no longer has a separate tagging step.
+async function enrichWithFtfc(token, trades) {
+  for (const trade of trades) {
+    try {
+      if (trade.entryTimestamp) {
+        const result = await getFtfcForTrade(token, trade.ticker, trade.entryTimestamp);
+        trade.ftfc = result.timeframes;
+        trade.ftfcRun = result.runLength;
+        trade.ftfcConfirmed = result.confirmed;
+        trade.ftfcDirection = result.direction;
+        trade.ftfcTimeframesInRun = result.timeframesInRun;
+      }
+    } catch (err) {
+      console.log(`FTFC enrichment failed for ${trade.ticker}:`, err.message);
+    }
+  }
+  return trades;
+}
 
 // Looks up the underlying stock's actual price at entry and exit for each
 // newly-matched trade, since Schwab's option data never includes it. Runs
@@ -69,6 +91,7 @@ async function runSyncCheck() {
       const { updatedState, newPending } = processFills(freshFills, state);
       if (newPending.length) {
         await enrichWithUnderlyingPrices(token, newPending);
+        await enrichWithFtfc(token, newPending);
         await enrichWithReplayData(token, newPending);
       }
       updatedState.lastProcessedIds = [
@@ -112,6 +135,7 @@ async function runBackfill(daysBack = 90) {
   });
   if (newPending.length) {
     await enrichWithUnderlyingPrices(token, newPending);
+    await enrichWithFtfc(token, newPending);
     await enrichWithReplayData(token, newPending);
   }
   updatedState.lastProcessedIds = [
