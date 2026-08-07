@@ -4,7 +4,8 @@ const { getValidAccessToken } = require('./auth');
 const { getTokens, setLastCheck } = require('./tokenStore');
 const tradeStore = require('./tradeStore');
 const { runBackfill, runSyncCheck } = require('./cron');
-const { getFtfcForTrade } = require('./ftfcCheck');
+const { getFtfcForTrade, getUnderlyingPriceAt } = require('./ftfcCheck');
+const { getReplayCandles } = require('./replayData');
 
 const router = express.Router();
 
@@ -114,6 +115,30 @@ router.post('/trades/reset', async (req, res) => {
   } catch (err) {
     console.error('reset error:', err.message);
     res.status(500).json({ error: 'Reset failed' });
+  }
+});
+
+// Lets a manually-entered trade (typed into the New Trade form, not pulled
+// from Schwab auto-sync) get the same underlying price + replay data that
+// auto-synced trades get automatically. Only works within Schwab's normal
+// minute-data retention window (~30-35 days) — same limit as everywhere
+// else this data comes from.
+router.post('/trade-data/enrich', async (req, res) => {
+  try {
+    const { ticker, entryTimestamp, exitTimestamp } = req.body || {};
+    if (!ticker || !entryTimestamp) {
+      return res.status(400).json({ error: 'ticker and entryTimestamp are required' });
+    }
+    const token = await getValidAccessToken();
+    const [undEntry, undExit, replayData] = await Promise.all([
+      getUnderlyingPriceAt(token, ticker, entryTimestamp),
+      exitTimestamp ? getUnderlyingPriceAt(token, ticker, exitTimestamp) : Promise.resolve(null),
+      getReplayCandles(token, ticker, entryTimestamp, exitTimestamp),
+    ]);
+    res.json({ undEntry, undExit, replayData });
+  } catch (err) {
+    console.error('trade-data enrich error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Enrichment failed' });
   }
 });
 
