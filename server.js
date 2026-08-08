@@ -4,6 +4,7 @@ const cors = require('cors');
 
 const { router: authRouter } = require('./auth');
 const apiRouter = require('./api');
+const streamerTestRouter = require('./streamerTest');
 const { startAutoSync } = require('./cron');
 
 const app = express();
@@ -17,6 +18,7 @@ app.get('/health', (req, res) => {
 
 app.use('/auth', authRouter);
 app.use('/api', apiRouter);
+app.use('/debug', streamerTestRouter);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
