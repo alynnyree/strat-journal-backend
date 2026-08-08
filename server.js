@@ -6,6 +6,7 @@ const { router: authRouter } = require('./auth');
 const apiRouter = require('./api');
 const streamerTestRouter = require('./streamerTest');
 const { startAutoSync } = require('./cron');
+const { startStreamer } = require('./schwabStreamer');
 
 const app = express();
 
@@ -23,5 +24,6 @@ app.use('/debug', streamerTestRouter);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Strat Journal backend listening on port ${PORT}`);
-  startAutoSync(process.env.SYNC_CRON || '*/5 * * * *');
+  startAutoSync(process.env.SYNC_CRON || '*/5 * * * *'); // stays running as a safety net alongside the streamer
+  startStreamer();
 });
