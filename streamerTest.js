@@ -2,9 +2,23 @@ const express = require('express');
 const axios = require('axios');
 const WebSocket = require('ws');
 const { getValidAccessToken } = require('./auth');
+const { getStreamerStatus } = require('./schwabStreamer');
 
 const router = express.Router();
 const TRADER_BASE = 'https://api.schwabapi.com/trader/v1';
+
+// Live view of the persistent streamer's connection state — whether it's
+// currently connected, when it last heard from Schwab, and how many times
+// it's had to reconnect. This is also a good target for an external
+// keep-alive ping, since a real response here also confirms the streamer
+// itself is alive, not just that the server process is up.
+router.get('/streamer-status', (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  res.json(getStreamerStatus());
+});
+
 
 // One-time diagnostic: confirms whether Schwab's ACCT_ACTIVITY streaming
 // service actually works for this account, before any real-time capture
