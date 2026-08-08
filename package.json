@@ -13,7 +13,8 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "node-cron": "^3.0.3",
-    "@upstash/redis": "^1.34.3"
+    "@upstash/redis": "^1.34.3",
+    "ws": "^8.18.0"
   },
   "engines": {
     "node": ">=18"
