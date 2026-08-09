@@ -6,6 +6,7 @@ const tradeStore = require('./tradeStore');
 const { getTokens, setLastCheck } = require('./tokenStore');
 const { getUnderlyingPriceAt, getFtfcForTrade } = require('./ftfcCheck');
 const { getReplayCandles } = require('./replayData');
+const { classifyStrategy } = require('./aiClient');
 
 // Runs the Full Time Frame Continuity check for each newly-matched trade,
 // same logic used everywhere else in the app — now run automatically at
@@ -68,6 +69,28 @@ async function enrichWithReplayData(token, trades) {
   return trades;
 }
 
+// Auto-tags each newly-matched trade with one of the trader's own defined
+// Strat setups, using the FTFC/price data and replay candles gathered by
+// the enrichment steps above — must run after those, not before. Left null
+// (same as before — shows the "Needs Setup" badge) whenever the model
+// isn't confident, rather than force a guess onto a trade the trader will
+// see in their Journal.
+async function enrichWithStrategy(trades) {
+  for (const trade of trades) {
+    try {
+      const result = await classifyStrategy(trade);
+      if (result) {
+        trade.strat = result.strategy;
+        trade.stratConfidence = result.confidence;
+        trade.stratReasoning = result.reasoning;
+      }
+    } catch (err) {
+      console.log(`Strategy classification failed for ${trade.ticker}:`, err.message);
+    }
+  }
+  return trades;
+}
+
 async function runSyncCheck() {
   try {
     const token = await getValidAccessToken();
@@ -93,6 +116,7 @@ async function runSyncCheck() {
         await enrichWithUnderlyingPrices(token, newPending);
         await enrichWithFtfc(token, newPending);
         await enrichWithReplayData(token, newPending);
+        await enrichWithStrategy(newPending);
       }
       updatedState.lastProcessedIds = [
         ...(state.lastProcessedIds || []).slice(-500), // keep this list bounded
@@ -137,6 +161,7 @@ async function runBackfill(daysBack = 90) {
     await enrichWithUnderlyingPrices(token, newPending);
     await enrichWithFtfc(token, newPending);
     await enrichWithReplayData(token, newPending);
+    await enrichWithStrategy(newPending);
   }
   updatedState.lastProcessedIds = [
     ...(state.lastProcessedIds || []),
