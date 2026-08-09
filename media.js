@@ -15,22 +15,26 @@ const LIST_KEY = 'screenshots:pending';
 const SCREENSHOT_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days — long enough for a slow-to-close trade to still get matched, short enough not to let stray/unmatched uploads pile up forever
 
 // Called by the Shortcut right after it takes and compresses a screenshot.
-// Body: { image: "data:image/jpeg;base64,....", timestamp: <unix SECONDS> }
-// Stored independently of any specific trade — at the moment an ENTRY
-// screenshot is taken, the matching Journal entry usually doesn't exist
-// yet (a trade only becomes a Journal entry once it's closed and matched).
-// The frontend claims these later by timestamp proximity once a trade
-// shows up. See matchPendingScreenshots() in index.html.
-router.post('/upload', async (req, res) => {
+// The image is sent as the RAW request body (the Text action's output
+// directly — no JSON wrapping needed), and the timestamp travels as a URL
+// query parameter instead of a body field. This sidesteps building a JSON
+// body inside Shortcuts entirely, which turned out to be an unreliable
+// step in the Shortcuts editor.
+// URL: POST /media/upload?key=...&timestamp=<unix SECONDS>
+// Body (raw text, Content-Type doesn't matter): data:image/jpeg;base64,....
+router.post('/upload', express.text({ limit: '5mb', type: () => true }), async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
-  const { image, timestamp } = req.body || {};
-  if (!image || typeof image !== 'string' || !image.startsWith('data:image/')) {
-    return res.status(400).json({ error: 'Missing or invalid "image" — expected a data:image/... base64 string.' });
+  const image = typeof req.body === 'string' ? req.body.trim() : '';
+  const timestampRaw = req.query.timestamp;
+  const timestamp = timestampRaw ? Number(timestampRaw) : NaN;
+
+  if (!image || !image.startsWith('data:image/')) {
+    return res.status(400).json({ error: 'Missing or invalid image body — expected a data:image/... base64 string as the raw POST body.' });
   }
-  if (!timestamp || typeof timestamp !== 'number') {
-    return res.status(400).json({ error: 'Missing or invalid "timestamp" — expected unix seconds.' });
+  if (!timestampRaw || Number.isNaN(timestamp)) {
+    return res.status(400).json({ error: 'Missing or invalid "timestamp" query parameter — expected unix seconds, e.g. ?timestamp=1723150000.' });
   }
   // Rough sanity cap on the decoded size (base64 is ~4/3 the size of raw
   // bytes) — protects both Upstash's per-value limits and the free
