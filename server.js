@@ -6,6 +6,7 @@ const { router: authRouter } = require('./auth');
 const apiRouter = require('./api');
 const streamerTestRouter = require('./streamerTest');
 const mediaRouter = require('./media');
+const aiRoutes = require('./aiRoutes');
 const { startAutoSync } = require('./cron');
 const { startStreamer } = require('./schwabStreamer');
 
@@ -25,6 +26,7 @@ app.use('/auth', authRouter);
 app.use('/api', apiRouter);
 app.use('/debug', streamerTestRouter);
 app.use('/media', mediaRouter);
+app.use('/ai', aiRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
