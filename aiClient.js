@@ -1,25 +1,29 @@
 const axios = require('axios');
 
-const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
-// Corrected from the old frontend code's 'claude-sonnet-4-6', which isn't
-// a current model string — the current Sonnet-tier model is 'claude-sonnet-5'.
-const MODEL = 'claude-sonnet-5';
+// Gemini's free tier — no billing required. Uses schema-enforced JSON mode
+// (responseSchema below), which guarantees the response matches the shape
+// we ask for rather than just hoping the model formats it correctly.
+const MODEL = 'gemini-2.5-flash';
+const GEMINI_API = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
-async function callClaude(prompt, maxTokens = 1000) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set on the server.');
-  const resp = await axios.post(ANTHROPIC_API, {
-    model: MODEL,
-    max_tokens: maxTokens,
-    messages: [{ role: 'user', content: prompt }],
+async function callGemini(prompt, responseSchema, maxOutputTokens = 1000) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY is not set on the server.');
+  const resp = await axios.post(GEMINI_API, {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema,
+      maxOutputTokens,
+    },
   }, {
     headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
+      'x-goog-api-key': apiKey,
       'content-type': 'application/json',
     },
   });
-  return (resp.data.content || []).map(c => c.text || '').join('\n').trim();
+  const parts = (resp.data?.candidates?.[0]?.content?.parts) || [];
+  return parts.map(p => p.text || '').join('').trim();
 }
 
 // Must match the exact data-v values used in index.html's Strat Setup
@@ -30,6 +34,16 @@ const STRATEGIES = [
   { key: 'FTFC Continuation', desc: 'Setup in the direction of Full Time Frame Continuity, targeting setup completion, unfilled gaps, or pivots.' },
   { key: 'Broadening Reversal', desc: 'Clear broadening formation on a higher TF (15m-4H) + liquidity taken out, reversing on a lower TF Strat setup (1m-5m).' },
 ];
+
+const CLASSIFY_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    strategy: { type: 'STRING', enum: [...STRATEGIES.map(s => s.key), 'unclear'] },
+    confidence: { type: 'STRING', enum: ['high', 'medium', 'low'] },
+    reasoning: { type: 'STRING' },
+  },
+  required: ['strategy', 'confidence', 'reasoning'],
+};
 
 // Classifies a single newly-matched trade against the trader's own defined
 // Strat setups. Uses the real candle shapes from the bar-replay data around
@@ -44,7 +58,7 @@ async function classifyStrategy(trade) {
   const candles = ((trade.replayData && trade.replayData.candles) || []).slice(-15);
   const candleSummary = candles.map(c => `O:${c.open} H:${c.high} L:${c.low} C:${c.close}`).join(' | ');
 
-  const prompt = `You are classifying a single options trade against a trader's own pre-defined Strat-methodology setups. Only classify if the evidence clearly matches — if the data is ambiguous or doesn't clearly support any of them, say so honestly rather than guessing.
+  const prompt = `You are classifying a single options trade against a trader's own pre-defined Strat-methodology setups. Only classify with high confidence if the evidence clearly matches — if the data is ambiguous or doesn't clearly support any of them, say "unclear" honestly rather than guessing.
 
 Defined setups:
 ${STRATEGIES.map(s => `- "${s.key}": ${s.desc}`).join('\n')}
@@ -53,16 +67,12 @@ Trade data:
 - Direction: ${trade.dir}
 - FTFC confirmed: ${trade.ftfcConfirmed} (direction: ${trade.ftfcDirection || 'n/a'}, run: ${(trade.ftfcTimeframesInRun || []).join('→') || 'n/a'})
 - Underlying price at entry: ${trade.undEntry}, at exit: ${trade.undExit}
-- Last ~15 one-minute candles into entry: ${candleSummary || 'not available'}
-
-Respond ONLY as JSON, no markdown fences:
-{"strategy": "<one of the exact setup key strings above, or null if unclear>", "confidence": "<high|medium|low>", "reasoning": "<1-2 sentences>"}`;
+- Last ~15 one-minute candles into entry: ${candleSummary || 'not available'}`;
 
   try {
-    let text = await callClaude(prompt, 300);
-    text = text.replace(/```json|```/g, '').trim();
+    const text = await callGemini(prompt, CLASSIFY_SCHEMA, 300);
     const parsed = JSON.parse(text);
-    if (parsed.strategy && parsed.confidence === 'high' && STRATEGIES.some(s => s.key === parsed.strategy)) {
+    if (parsed.strategy && parsed.strategy !== 'unclear' && parsed.confidence === 'high' && STRATEGIES.some(s => s.key === parsed.strategy)) {
       return { strategy: parsed.strategy, confidence: parsed.confidence, reasoning: parsed.reasoning };
     }
     console.log(`Strategy classification: not confident enough to auto-tag (confidence=${parsed.confidence}, strategy=${parsed.strategy}).`);
@@ -73,11 +83,27 @@ Respond ONLY as JSON, no markdown fences:
   }
 }
 
-// The AI Analyst feature — moved server-side. The previous frontend
-// implementation called Anthropic directly from the browser with no API
-// key attached at all, which is why "Analyze My Trades" never actually
-// worked; browsers also can't call Anthropic's API directly regardless,
-// due to CORS.
+const ANALYSIS_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    summary: { type: 'STRING' },
+    insights: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          title: { type: 'STRING' },
+          body: { type: 'STRING' },
+        },
+        required: ['title', 'body'],
+      },
+    },
+  },
+  required: ['summary', 'insights'],
+};
+
+// The AI Analyst feature — server-side, same as classification, so the key
+// never has to live in the browser.
 async function runPortfolioAnalysis(trades) {
   const compact = trades.map(t => ({
     ticker: t.ticker, dir: t.dir, strat: t.strat, entryDate: t.entryDate, exitDate: t.exitDate,
@@ -99,11 +125,9 @@ Analyze for:
 5. Signs the trader exited before a reasonable target (infer from notes and small realized gains relative to planned R:R)
 6. One or two concrete, specific recommendations
 
-Respond ONLY as JSON, no markdown fences, in this exact shape:
-{"summary": "2-3 sentence overview", "insights": [{"title": "short title", "body": "2-4 sentences, specific and grounded in the data, not generic advice"}]}`;
+Write "summary" as a 2-3 sentence overview, and "insights" as a list of specific, data-grounded findings — not generic advice.`;
 
-  let text = await callClaude(prompt, 1200);
-  text = text.replace(/```json|```/g, '').trim();
+  const text = await callGemini(prompt, ANALYSIS_SCHEMA, 1200);
   return JSON.parse(text);
 }
 
