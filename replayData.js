@@ -5,9 +5,25 @@ const { fetchCandles } = require('./ftfcCheck');
 // exactly on the entry candle with no setup visible beforehand.
 const PADDING_MINUTES = 15;
 
+// Hard ceiling on how much of the trade window the replay will cover.
+// Without this, a mis-paired trade (an entry matched to an exit days or
+// weeks later) produces a replay of thousands of candles spanning the
+// whole gap — which is unusable, and is what caused a NIO "trade" dated
+// Jun 24 to load ~3,700 candles running through Jul 23.
+//
+// These are scalps/day-trades, so anything beyond a few hours is a
+// pairing problem, not a real hold. Capping here keeps the replay useful
+// no matter what the matcher hands us.
+const MAX_WINDOW_MINUTES = 240; // 4 hours
+
 // Finds the index of the last candle at or before a given timestamp — used
 // to place the entry/exit markers on the exact right bar in the replay.
+// Returns null when the timestamp falls outside the candle range entirely,
+// so a marker is left off rather than being pinned to the wrong bar.
 function findClosestIndex(candles, timestampMs) {
+  if (!candles.length) return null;
+  if (timestampMs < candles[0].datetime) return null;
+  if (timestampMs > candles[candles.length - 1].datetime) return null;
   let closest = 0;
   for (let i = 0; i < candles.length; i++) {
     if (candles[i].datetime <= timestampMs) closest = i;
@@ -26,8 +42,16 @@ function findClosestIndex(candles, timestampMs) {
 // only.
 async function getReplayCandles(accessToken, ticker, entryTimestampMs, exitTimestampMs) {
   if (!entryTimestampMs) return null;
-  const exitMs = exitTimestampMs || entryTimestampMs;
   const paddingMs = PADDING_MINUTES * 60 * 1000;
+  const maxSpanMs = MAX_WINDOW_MINUTES * 60 * 1000;
+
+  let exitMs = exitTimestampMs || entryTimestampMs;
+  // Clamp an implausibly long entry-to-exit span down to the cap. The
+  // replay then covers the entry and the hours after it, which is the part
+  // actually worth reviewing, instead of every candle up to a far-off exit.
+  const spanWasClamped = exitMs - entryTimestampMs > maxSpanMs;
+  if (spanWasClamped) exitMs = entryTimestampMs + maxSpanMs;
+
   const windowStart = entryTimestampMs - paddingMs;
   const windowEnd = exitMs + paddingMs;
 
@@ -48,9 +72,17 @@ async function getReplayCandles(accessToken, ticker, entryTimestampMs, exitTimes
   if (!candles.length) return null;
 
   const entryIndex = findClosestIndex(candles, entryTimestampMs);
-  const exitIndex = exitTimestampMs ? findClosestIndex(candles, exitTimestampMs) : null;
+  // If the exit was clamped away, there's no real exit bar inside this
+  // window — leave the marker off rather than pointing at the wrong candle.
+  const exitIndex = (exitTimestampMs && !spanWasClamped)
+    ? findClosestIndex(candles, exitTimestampMs)
+    : null;
 
-  return { candles, entryIndex, exitIndex };
+  // entryIndex null means the entry itself fell outside whatever Schwab
+  // returned — the replay would have no anchor, so it isn't worth showing.
+  if (entryIndex == null) return null;
+
+  return { candles, entryIndex, exitIndex, windowClamped: spanWasClamped };
 }
 
 module.exports = { getReplayCandles };
