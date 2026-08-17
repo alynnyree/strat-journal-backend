@@ -35,6 +35,15 @@ not a fix.
 5. **Say when you're wrong.** If a previous fix was aimed at the wrong
    cause, name that plainly rather than quietly moving on.
 
+6. **End every response with an "In plain English" section.** It must
+   contain: what was done (1-2 sentences, no technical terms), what he
+   should do next (numbered steps), and anything he needs to click, tap,
+   or check. Everything above that section can be as technical as needed —
+   but the section itself must be understandable to someone who has never
+   coded. Avoid the words commit, repo, function, variable, parameter,
+   syntax, console, deploy, or any filename ending in .js/.html without
+   explaining what it means in plain terms, in the same sentence.
+
 ## Architecture
 
 **Frontend** — repo `alynnyree/strat-journal-app`, hosted on GitHub Pages at
