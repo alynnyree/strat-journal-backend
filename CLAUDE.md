@@ -35,14 +35,20 @@ not a fix.
 5. **Say when you're wrong.** If a previous fix was aimed at the wrong
    cause, name that plainly rather than quietly moving on.
 
-6. **End every response with an "In plain English" section.** It must
-   contain: what was done (1-2 sentences, no technical terms), what he
-   should do next (numbered steps), and anything he needs to click, tap,
-   or check. Everything above that section can be as technical as needed —
-   but the section itself must be understandable to someone who has never
-   coded. Avoid the words commit, repo, function, variable, parameter,
-   syntax, console, deploy, or any filename ending in .js/.html without
-   explaining what it means in plain terms, in the same sentence.
+6. **The entire response must be understandable with zero coding or
+   computer background — not just a trailing section.** Owner confirmed
+   (2026-08-17) he has no technical or computer terminology knowledge at
+   all, so this applies throughout a response, not only below a divider.
+   When a technical detail genuinely has to come up, explain what it means
+   in plain terms in that same sentence rather than assuming familiarity.
+   Avoid the words commit, repo, function, variable, parameter, syntax,
+   console, deploy, or any filename ending in .js/.html without explaining
+   it in plain terms right there.
+
+   Still end every response with an "In plain English" section containing:
+   what was done (1-2 sentences), what he should do next (numbered steps),
+   and anything he needs to click, tap, or check — but the rest of the
+   response should already meet the same bar, not require translating.
 
 ## Architecture
 
