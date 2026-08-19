@@ -3,6 +3,7 @@ const axios = require('axios');
 const WebSocket = require('ws');
 const { getValidAccessToken } = require('./auth');
 const { getStreamerStatus } = require('./schwabStreamer');
+const { getAccountNumber, getOptionFills } = require('./schwabClient');
 
 const router = express.Router();
 const TRADER_BASE = 'https://api.schwabapi.com/trader/v1';
@@ -17,6 +18,41 @@ router.get('/streamer-status', (req, res) => {
     return res.status(403).send('Forbidden');
   }
   res.json(getStreamerStatus());
+});
+
+// One-time diagnostic: asks Schwab directly for option transactions in the
+// given window and reports exactly what comes back — bypassing the
+// matcher, FTFC checks, and everything else the app normally does with
+// that data. Traces "no trades appear in the Journal" back to its actual
+// first cause (token still broken vs. Schwab genuinely has nothing to
+// report vs. something past this point) instead of guessing.
+//
+// Visit once in a browser: /debug/fills-check?key=YOUR_APP_SECRET&days=90
+router.get('/fills-check', async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  const days = parseInt(req.query.days, 10) || 90;
+  try {
+    const token = await getValidAccessToken();
+    const accountNumber = await getAccountNumber(token);
+    const start = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const now = new Date();
+    const fills = await getOptionFills(
+      token,
+      start.toISOString().slice(0, 10),
+      now.toISOString().slice(0, 10)
+    );
+    res.json({
+      ok: true,
+      accountNumberFound: !!accountNumber,
+      daysBack: days,
+      totalOptionFillsFound: fills.length,
+      sample: fills.slice(0, 5),
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message, details: err.response?.data || null });
+  }
 });
 
 
