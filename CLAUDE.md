@@ -77,7 +77,8 @@ Backend files and what they do:
   underlying price lookup, shared `fetchCandles`
 - `replayData.js` — pulls the 1-minute candle window for Bar Replay
 - `media.js` — screenshot upload/pending/delete (multipart, multer)
-- `aiClient.js` / `aiRoutes.js` — Gemini API calls, `/ai/analyze` route
+- `aiClient.js` / `aiRoutes.js` — Gemini API calls, `/ai/analyze` and
+  `/ai/classify` routes
 
 **Environment variables on Render:** `SCHWAB_CLIENT_ID`, `SCHWAB_SECRET`,
 `SCHWAB_REDIRECT_URI`, `FRONTEND_ORIGIN`, `APP_SECRET`, `SYNC_CRON`,
@@ -120,12 +121,23 @@ Uses **The Strat**. Key concepts the code implements:
 - Realized R:R calculation
 - AI Analyst (server-side, Gemini)
 - PWA install
+- **AI strategy auto-classification (server-side, Gemini)** — corrected
+  2026-08-18: this was already built (since 2026-08-09) and runs
+  automatically on newly-synced trades via `cron.js`'s
+  `enrichWithStrategy`; the "not built" note below was stale. What was
+  actually missing — and was added 2026-08-18 — was a way to run it
+  against trades logged *before* that existed: a "Classify Trades" button
+  on the Dashboard (shows only when trades are untagged) sends each one
+  to a new `POST /ai/classify` backend route, one trade per request so no
+  single phone request runs long. Deliberately conservative: only tags a
+  trade when the model itself reports high confidence, so some trades
+  will keep showing "Needs Setup" — that's expected, not a bug. Not yet
+  confirmed against real trade data or on a real phone.
 
 **Not working / not built:**
 - **Screenshot capture pipeline** — Pushcut → iOS Shortcut → backend →
   auto-attach by timestamp. Owner confirmed this is NOT complete. Note it
   is inherently one-tap-per-trade, not zero-tap.
-- **AI strategy auto-classification** — owner confirmed NOT actually built.
 - **Backtesting** — never started.
 - **Native iOS app** for zero-tap session recording — fully scoped, not
   started. Needs Xcode + free Apple ID (Personal Team signing avoids the
