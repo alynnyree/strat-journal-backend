@@ -4,6 +4,27 @@ const { saveTokens, getTokens } = require('./tokenStore');
 
 const router = express.Router();
 
+// Read-only check for whether Schwab is actually linked — no secrets in
+// the response, just booleans. Sync and backfill both swallow a missing
+// Schwab connection as a silent no-op (by design, so a routine 5-minute
+// check doesn't spam errors when the token simply hasn't been set up
+// yet), which means "up to date, no new trades" can print even when
+// Schwab was never connected at all. This gives a direct way to tell
+// those two situations apart without digging through server logs.
+router.get('/status', async (req, res) => {
+  try {
+    const store = await getTokens();
+    res.json({
+      hasRefreshToken: !!store.refresh_token,
+      hasAccessToken: !!store.access_token,
+      accessTokenExpired: store.expires_at ? Date.now() > store.expires_at : null,
+      lastTransactionCheck: store.last_transaction_check || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not read token status: ' + err.message });
+  }
+});
+
 // Schwab's OAuth endpoints, per developer.schwab.com. Verify these against
 // current Schwab docs before going live — API paths have shifted before.
 const AUTH_BASE = 'https://api.schwabapi.com/v1/oauth';
