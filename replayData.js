@@ -5,16 +5,19 @@ const { fetchCandles } = require('./ftfcCheck');
 // exactly on the entry candle with no setup visible beforehand.
 const PADDING_MINUTES = 15;
 
-// Hard ceiling on how much of the trade window the replay will cover.
-// Without this, a mis-paired trade (an entry matched to an exit days or
-// weeks later) produces a replay of thousands of candles spanning the
-// whole gap — which is unusable, and is what caused a NIO "trade" dated
-// Jun 24 to load ~3,700 candles running through Jul 23.
-//
-// These are scalps/day-trades, so anything beyond a few hours is a
-// pairing problem, not a real hold. Capping here keeps the replay useful
-// no matter what the matcher hands us.
-const MAX_WINDOW_MINUTES = 240; // 4 hours
+// Schwab's day+minute price-history endpoint caps out at 10 days of
+// 1-minute candles per request. A hold longer than that needs multiple
+// requests walked backward from the window's end and stitched together —
+// same chunking approach getOptionFills() uses in schwabClient.js, and for
+// the same reason (a per-request cap on Schwab's side, not a limit on how
+// long a real trade can run).
+const CHUNK_DAYS = 10;
+
+// Sanity ceiling on how many chunk requests one replay build will make —
+// not a limit on real trade duration (options always expire, so a
+// legitimate hold is bounded on its own), just a guard against looping
+// forever if a caller ever passes a corrupt/nonsensical timestamp pair.
+const MAX_CHUNKS = 500;
 
 // Finds the index of the last candle at or before a given timestamp — used
 // to place the entry/exit markers on the exact right bar in the replay.
@@ -32,57 +35,63 @@ function findClosestIndex(candles, timestampMs) {
   return closest;
 }
 
-// Pulls the 1-minute candle window covering a trade's entry through exit
-// (plus padding on both sides) for the bar-replay feature. Returns null if
-// Schwab has no minute data for that window (same ~30-35 day retention
-// limit as the underlying-price lookup) so the frontend can skip showing
-// a replay player rather than showing a broken one.
+// Pulls the full 1-minute candle window covering a trade's entry through
+// exit (plus padding on both sides) for the bar-replay feature, no matter
+// how long the hold — walking backward in Schwab-sized pages to cover the
+// whole span. Returns null if Schwab has none of that window left at
+// 1-minute resolution (its ~30-35 day retention limit, the same one the
+// underlying-price lookup runs into) — that's a hard ceiling on Schwab's
+// side once the data has aged out; no request pattern gets it back. A long
+// hold that straddles the edge of that window will come back with
+// whatever portion of it Schwab still has, rather than nothing at all.
 //
 // For a still-open trade (no exitTimestampMs yet), pads around the entry
 // only.
 async function getReplayCandles(accessToken, ticker, entryTimestampMs, exitTimestampMs) {
   if (!entryTimestampMs) return null;
   const paddingMs = PADDING_MINUTES * 60 * 1000;
-  const maxSpanMs = MAX_WINDOW_MINUTES * 60 * 1000;
 
-  let exitMs = exitTimestampMs || entryTimestampMs;
-  // Clamp an implausibly long entry-to-exit span down to the cap. The
-  // replay then covers the entry and the hours after it, which is the part
-  // actually worth reviewing, instead of every candle up to a far-off exit.
-  const spanWasClamped = exitMs - entryTimestampMs > maxSpanMs;
-  if (spanWasClamped) exitMs = entryTimestampMs + maxSpanMs;
-
+  const exitMs = exitTimestampMs || entryTimestampMs;
   const windowStart = entryTimestampMs - paddingMs;
   const windowEnd = exitMs + paddingMs;
 
-  // A trade's entry-to-exit window is always well under Schwab's 10-day
-  // per-request cap for minute data, so one call anchored at windowEnd
-  // covers the whole thing.
-  const raw = await fetchCandles(accessToken, ticker, {
-    periodType: 'day', period: 10, frequencyType: 'minute', frequency: 1, endDate: windowEnd,
-  }).catch(() => []);
-
-  const candles = raw
-    .filter(c => c.datetime >= windowStart && c.datetime <= windowEnd)
-    .map(c => ({
-      open: c.open, high: c.high, low: c.low, close: c.close,
-      volume: c.volume || 0, datetime: c.datetime,
-    }));
+  const seen = new Set();
+  const candles = [];
+  let chunkEndMs = windowEnd;
+  let chunks = 0;
+  while (chunkEndMs > windowStart && chunks < MAX_CHUNKS) {
+    chunks++;
+    let raw;
+    try {
+      raw = await fetchCandles(accessToken, ticker, {
+        periodType: 'day', period: CHUNK_DAYS, frequencyType: 'minute', frequency: 1, endDate: chunkEndMs,
+      });
+    } catch (e) {
+      raw = [];
+    }
+    for (const c of raw) {
+      if (c.datetime < windowStart || c.datetime > windowEnd) continue;
+      if (seen.has(c.datetime)) continue;
+      seen.add(c.datetime);
+      candles.push({
+        open: c.open, high: c.high, low: c.low, close: c.close,
+        volume: c.volume || 0, datetime: c.datetime,
+      });
+    }
+    chunkEndMs -= CHUNK_DAYS * 24 * 60 * 60 * 1000;
+  }
 
   if (!candles.length) return null;
+  candles.sort((a, b) => a.datetime - b.datetime);
 
   const entryIndex = findClosestIndex(candles, entryTimestampMs);
-  // If the exit was clamped away, there's no real exit bar inside this
-  // window — leave the marker off rather than pointing at the wrong candle.
-  const exitIndex = (exitTimestampMs && !spanWasClamped)
-    ? findClosestIndex(candles, exitTimestampMs)
-    : null;
+  const exitIndex = exitTimestampMs ? findClosestIndex(candles, exitTimestampMs) : null;
 
   // entryIndex null means the entry itself fell outside whatever Schwab
   // returned — the replay would have no anchor, so it isn't worth showing.
   if (entryIndex == null) return null;
 
-  return { candles, entryIndex, exitIndex, windowClamped: spanWasClamped };
+  return { candles, entryIndex, exitIndex };
 }
 
 module.exports = { getReplayCandles };
