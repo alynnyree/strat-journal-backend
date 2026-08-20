@@ -7,6 +7,7 @@ const { getTokens, setLastCheck } = require('./tokenStore');
 const { getUnderlyingPriceAt, getFtfcForTrade } = require('./ftfcCheck');
 const { getReplayCandles } = require('./replayData');
 const { classifyStrategy } = require('./aiClient');
+const { notifyTradeClosed } = require('./pushcut');
 
 // Runs the Full Time Frame Continuity check for each newly-matched trade,
 // same logic used everywhere else in the app — now run automatically at
@@ -125,6 +126,12 @@ async function runSyncCheck() {
       await tradeStore.saveState(updatedState);
       if (newPending.length) {
         console.log(`Auto-sync: ${newPending.length} closed trade(s) ready for tagging.`);
+        // Only here, in the live 5-minute check — never from runBackfill()
+        // below, which can surface a hundred-plus historical trades at
+        // once and would spam a notification for every one of them.
+        for (const trade of newPending) {
+          notifyTradeClosed(trade).catch(() => {}); // notifyTradeClosed already logs its own failures
+        }
       }
     }
 
