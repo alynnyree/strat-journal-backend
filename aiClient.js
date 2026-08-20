@@ -30,8 +30,8 @@ async function callGemini(prompt, responseSchema, maxOutputTokens = 1000) {
 // cards — this is what lets an auto-classified trade show up correctly
 // tagged in the Journal without any frontend changes.
 const STRATEGIES = [
-  { key: '2-2 Reversal', desc: 'A "2" candle turning into a "3" (outside bar) on the working timeframe.' },
-  { key: 'FTFC Continuation', desc: 'Setup in the direction of Full Time Frame Continuity, targeting setup completion, unfilled gaps, or pivots.' },
+  { key: '2-2 Reversal', desc: 'On the working timeframe, a candle breaks past either the high or the low of the PREVIOUS candle (a "2"). It then fails to continue that direction and instead retraces back to the 50% (halfway) level of that previous candle\'s range. Once price reaches that 50% level, the expectation is a reversal that takes out the OPPOSITE side of that candle\'s range — forming a "3" (outside bar), but in the reversal direction from the initial break.' },
+  { key: 'FTFC Continuation', desc: 'Any Strat setup taken in the same direction as Full Time Frame Continuity (FTFC) — 4 or more consecutive timeframes all aligned the same direction, with price expected to keep moving that direction — targeting setup completion, a gap fill, or a pivot point.' },
   { key: 'Broadening Reversal', desc: 'Clear broadening formation on a higher TF (15m-4H) + liquidity taken out, reversing on a lower TF Strat setup (1m-5m).' },
 ];
 
