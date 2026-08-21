@@ -6,11 +6,17 @@ const axios = require('axios');
 const MODEL = 'gemini-2.5-flash';
 const GEMINI_API = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
-async function callGemini(prompt, responseSchema, maxOutputTokens = 1000) {
+// imageParts (optional): array of {mimeType, data} (data = raw base64, no
+// "data:...;base64," prefix) — Gemini reads these as inlineData parts
+// alongside the text prompt, same request, same model. Order doesn't
+// matter to the model; text goes first here just to keep the request body
+// readable in logs.
+async function callGemini(prompt, responseSchema, maxOutputTokens = 1000, imageParts = []) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set on the server.');
+  const parts = [{ text: prompt }, ...imageParts.map(p => ({ inlineData: { mimeType: p.mimeType, data: p.data } }))];
   const resp = await axios.post(GEMINI_API, {
-    contents: [{ parts: [{ text: prompt }] }],
+    contents: [{ parts }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema,
@@ -22,8 +28,22 @@ async function callGemini(prompt, responseSchema, maxOutputTokens = 1000) {
       'content-type': 'application/json',
     },
   });
-  const parts = (resp.data?.candidates?.[0]?.content?.parts) || [];
-  return parts.map(p => p.text || '').join('').trim();
+  const responseParts = (resp.data?.candidates?.[0]?.content?.parts) || [];
+  return responseParts.map(p => p.text || '').join('').trim();
+}
+
+// Screenshots arrive from the frontend as data: URLs (e.g.
+// "data:image/jpeg;base64,/9j/4AAQ...") — the same format the phone-side
+// Shortcut's upload gets converted to on the way in (see media.js) and
+// then carried on the trade object from that point on. Splits that back
+// into the {mimeType, data} shape Gemini's inlineData wants. Returns null
+// for anything that isn't a well-formed image data URL, so a corrupt or
+// unexpected value just gets skipped rather than crashing the request.
+function parseImageDataUrl(dataUrl) {
+  if (typeof dataUrl !== 'string') return null;
+  const match = /^data:([^;]+);base64,(.+)$/s.exec(dataUrl);
+  if (!match) return null;
+  return { mimeType: match[1], data: match[2] };
 }
 
 // Must match the exact data-v values used in index.html's Strat Setup
@@ -62,6 +82,12 @@ const CLASSIFY_SCHEMA = {
 // Strat setups. Uses the real candle shapes from the bar-replay data around
 // entry — since these setups are literally defined by candle patterns,
 // that's the most relevant signal available, more so than FTFC/price alone.
+// When a screenshot of the trade exists (trade.shotEntry, or trade.shotExit
+// as a fallback — both only ever present on a trade the frontend already
+// holds locally, never on the backend's own automatic newly-synced-trade
+// pass), it's sent to Gemini alongside the candle data as extra visual
+// evidence — the trader's own eyes-on-the-chart view of the setup at the
+// moment it was taken, on top of raw OHLC numbers.
 // Deliberately conservative: only returns a strategy when the model itself
 // reports high confidence. A wrong auto-tag silently sitting in the
 // Journal is worse than leaving a trade flagged "Needs Setup" for the
@@ -71,7 +97,14 @@ async function classifyStrategy(trade) {
   const candles = ((trade.replayData && trade.replayData.candles) || []).slice(-15);
   const candleSummary = candles.map(c => `O:${c.open} H:${c.high} L:${c.low} C:${c.close}`).join(' | ');
 
-  const prompt = `You are classifying a single options trade against a trader's own pre-defined Strat-methodology candle patterns. Each pattern below is defined purely by candle shape (numbered "1"=inside bar, "2"=directional bar, "3"=outside bar, per the trader's own rules). Only classify with high confidence if the candle evidence clearly matches — if the data is ambiguous or doesn't clearly support any of them, say "unclear" honestly rather than guessing.
+  // Entry screenshot preferred — it's the chart at the moment the setup was
+  // actually taken, matching what the candle data above already looks at.
+  // Falls back to the exit screenshot only if no entry shot exists, since
+  // some visual context is better than none.
+  const screenshotSource = trade.shotEntry ? 'entry' : (trade.shotExit ? 'exit' : null);
+  const imagePart = screenshotSource ? parseImageDataUrl(trade.shotEntry || trade.shotExit) : null;
+
+  const prompt = `You are classifying a single options trade against a trader's own pre-defined Strat-methodology candle patterns. Each pattern below is defined purely by candle shape (numbered "1"=inside bar, "2"=directional bar, "3"=outside bar, per the trader's own rules). Only classify with high confidence if the evidence clearly matches — if the data is ambiguous or doesn't clearly support any of them, say "unclear" honestly rather than guessing.
 
 Defined patterns:
 ${STRATEGIES.map(s => `- "${s.key}": ${s.desc}`).join('\n')}
@@ -82,15 +115,16 @@ Trade data:
 - Direction: ${trade.dir}
 - FTFC confirmed: ${trade.ftfcConfirmed} (direction: ${trade.ftfcDirection || 'n/a'}, run: ${(trade.ftfcTimeframesInRun || []).join('→') || 'n/a'})
 - Underlying price at entry: ${trade.undEntry}, at exit: ${trade.undExit}
-- Last ~15 one-minute candles into entry: ${candleSummary || 'not available'}`;
+- Last ~15 one-minute candles into entry: ${candleSummary || 'not available'}
+${imagePart ? `- An attached screenshot of the trader's own chart at ${screenshotSource === 'entry' ? 'entry' : 'exit (no entry screenshot was available)'} is included below — use it as supporting visual evidence for the candle pattern and any drawn lines/indicators visible on it, weighed together with the candle data above, not in place of it.` : '- No screenshot is available for this trade — classify from the candle data alone.'}`;
 
   try {
-    const text = await callGemini(prompt, CLASSIFY_SCHEMA, 300);
+    const text = await callGemini(prompt, CLASSIFY_SCHEMA, 300, imagePart ? [imagePart] : []);
     const parsed = JSON.parse(text);
     if (parsed.strategy && parsed.strategy !== 'unclear' && parsed.confidence === 'high' && STRATEGIES.some(s => s.key === parsed.strategy)) {
-      return { strategy: parsed.strategy, confidence: parsed.confidence, reasoning: parsed.reasoning };
+      return { strategy: parsed.strategy, confidence: parsed.confidence, reasoning: parsed.reasoning, usedScreenshot: !!imagePart };
     }
-    console.log(`Strategy classification: not confident enough to auto-tag (confidence=${parsed.confidence}, strategy=${parsed.strategy}).`);
+    console.log(`Strategy classification: not confident enough to auto-tag (confidence=${parsed.confidence}, strategy=${parsed.strategy}, usedScreenshot=${!!imagePart}).`);
     return null;
   } catch (err) {
     console.log('Strategy classification failed:', err.response?.data || err.message);
