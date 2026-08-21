@@ -30,10 +30,23 @@ async function callGemini(prompt, responseSchema, maxOutputTokens = 1000) {
 // cards — this is what lets an auto-classified trade show up correctly
 // tagged in the Journal without any frontend changes.
 const STRATEGIES = [
-  { key: '2-2 Reversal', desc: 'On the working timeframe, a candle breaks past either the high or the low of the PREVIOUS candle (a "2"). It then fails to continue that direction and instead retraces back to the 50% (halfway) level of that previous candle\'s range. Once price reaches that 50% level, the expectation is a reversal that takes out the OPPOSITE side of that candle\'s range — forming a "3" (outside bar), but in the reversal direction from the initial break.' },
-  { key: 'FTFC Continuation', desc: 'Any Strat setup taken in the same direction as Full Time Frame Continuity (FTFC) — 4 or more consecutive timeframes all aligned the same direction, with price expected to keep moving that direction — targeting setup completion, a gap fill, or a pivot point.' },
-  { key: 'Broadening Reversal', desc: 'Clear broadening formation on a higher TF (15m-4H) + liquidity taken out, reversing on a lower TF Strat setup (1m-5m).' },
+  { key: '2-1-2 Continuation', desc: 'An inside bar (1, price consolidating, neither side in control) forms after consolidation, then a directional bar (2, one side aggressive enough to take out one side of the previous bar) breaks one side, followed by another directional bar (2) continuing that SAME direction.' },
+  { key: '2-1-2 Reversal', desc: 'An inside bar (1) forms after consolidation, then a directional bar (2) breaks one side, followed by a directional bar (2) breaking the OPPOSITE side instead.' },
+  { key: '3-1-2 Reversal', desc: 'Played the same as a 2-1-2, but the first candle is an outside bar (3, takes out both sides of the previous candle\'s range) instead of a directional bar.' },
+  { key: '2-2 Continuation', desc: 'Two directional bars (2) back to back in the SAME direction, with no inside bar between them.' },
+  { key: '2-2 Reversal', desc: 'A directional bar (2) in one direction, immediately followed by a directional bar (2) in the OPPOSITE direction (e.g. a "2 down" candle then a "2 up" candle, or vice versa).' },
+  { key: '3-2-2 Reversal', desc: 'Played the same as a 2-2 Reversal, but preceded by an outside bar (3). Stop is placed at 50% of the trigger candle.' },
+  { key: '1-2-2 Rev Strat', desc: 'Played the same as a 2-2 Reversal, but starting from an inside bar (1) rather than directly from a directional bar — has an extra target because of that. Stop is placed at 50% of the trigger candle.' },
+  { key: '1 Bar Rev Strat', desc: 'One single candle retraces to the 50% (halfway) level of the PREVIOUS candle\'s range, then reverses to take out the OPPOSITE side of that previous candle\'s range. Can occur after either a "2" or a "3" candle. This is the "50% Rule."' },
+  { key: 'PMG', desc: 'Pivot Machine Gun — a reversal occurring after 5 or more consecutive lower highs, or 5 or more consecutive higher lows.' },
 ];
+
+// FTFC alignment and Broadening Formation context are tracked separately
+// from which of the above patterns was taken (ftfcConfirmed is already
+// computed elsewhere, and offBroadeningFormation is a trader-set toggle) —
+// they are NOT strategy names of their own. Taking any pattern above in
+// FTFC's direction, or off a Broadening Formation, is still that pattern;
+// this list only needs to identify the candle pattern itself.
 
 const CLASSIFY_SCHEMA = {
   type: 'OBJECT',
@@ -58,10 +71,12 @@ async function classifyStrategy(trade) {
   const candles = ((trade.replayData && trade.replayData.candles) || []).slice(-15);
   const candleSummary = candles.map(c => `O:${c.open} H:${c.high} L:${c.low} C:${c.close}`).join(' | ');
 
-  const prompt = `You are classifying a single options trade against a trader's own pre-defined Strat-methodology setups. Only classify with high confidence if the evidence clearly matches — if the data is ambiguous or doesn't clearly support any of them, say "unclear" honestly rather than guessing.
+  const prompt = `You are classifying a single options trade against a trader's own pre-defined Strat-methodology candle patterns. Each pattern below is defined purely by candle shape (numbered "1"=inside bar, "2"=directional bar, "3"=outside bar, per the trader's own rules). Only classify with high confidence if the candle evidence clearly matches — if the data is ambiguous or doesn't clearly support any of them, say "unclear" honestly rather than guessing.
 
-Defined setups:
+Defined patterns:
 ${STRATEGIES.map(s => `- "${s.key}": ${s.desc}`).join('\n')}
+
+FTFC alignment and whether this was taken off a Broadening Formation are tracked separately elsewhere — they are not one of the choices above and should not affect which pattern you pick. They're included below only as extra context about the trade.
 
 Trade data:
 - Direction: ${trade.dir}
