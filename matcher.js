@@ -98,13 +98,14 @@ function pickLegForClose(openLegs, fill) {
 function processFills(fills, state) {
   const openLegs = [...state.openLegs];
   const newPending = [];
+  const newlyOpenedLegs = []; // legs opened THIS call only — for a one-time "trade opened" notification, not a repeat on every leg still sitting open from before
   let latestTimestamp = 0;
 
   for (const fill of fills) {
     if (fill.timestamp > latestTimestamp) latestTimestamp = fill.timestamp;
 
     if (isOpen(fill.instruction)) {
-      openLegs.push({
+      const leg = {
         occ: fill.occ,
         ticker: fill.ticker,
         dir: dirFromPutCall(fill.putCall),
@@ -114,7 +115,9 @@ function processFills(fills, state) {
         openTimestamp: fill.timestamp,
         totalQuantity: fill.quantity, // how many contracts were opened in total
         remaining: fill.quantity,
-      });
+      };
+      openLegs.push(leg);
+      newlyOpenedLegs.push(leg);
       continue;
     }
     if (isClose(fill.instruction)) {
@@ -161,6 +164,7 @@ function processFills(fills, state) {
           // this should essentially never fire — if it does, the match is
           // worth a look rather than being trusted silently.
           suspectPairing: heldMs > DAY_MS,
+          heldMs, // used to decide video-vs-screenshot for the trade-capture pipeline — see pushcut.js
           source: 'schwab-auto',
           needsTagging: true,
         });
@@ -182,6 +186,7 @@ function processFills(fills, state) {
       pending: [...newPending, ...state.pending],
     },
     newPending,
+    newlyOpenedLegs,
   };
 }
 module.exports = { processFills, expirationFromOcc, isLegDead };

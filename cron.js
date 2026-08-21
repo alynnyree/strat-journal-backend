@@ -7,7 +7,33 @@ const { getTokens, setLastCheck } = require('./tokenStore');
 const { getUnderlyingPriceAt, getFtfcForTrade } = require('./ftfcCheck');
 const { getReplayCandles } = require('./replayData');
 const { classifyStrategy } = require('./aiClient');
-const { notifyTradeClosed } = require('./pushcut');
+const { notifyTradeClosed, notifyTradeOpened, notifyTradeStillOpen } = require('./pushcut');
+
+const SHORT_TRADE_SAFETY_NET_MS = 15 * 60 * 1000; // matches pushcut.js's SHORT_TRADE_MS
+
+// Runs once, 15 minutes after a leg opens: if it's STILL sitting unmatched
+// in openLegs at that point, the trade has run past the video-vs-screenshot
+// cutoff, so it's time to bail out of recording. If it already closed (and
+// so is no longer in openLegs), this is a silent no-op — notifyTradeClosed
+// already handled that trade via the normal close path.
+// In-memory only (a plain setTimeout, not a durable job) — if the server
+// restarts in the middle of this 15-minute window, the check is lost and
+// that one trade's recording (if the owner is still mid-trade) won't get
+// the automatic "still open" nudge. Acceptable for a personal app at this
+// scale; worth revisiting only if it turns out to happen often in practice.
+function scheduleStillOpenCheck(leg) {
+  setTimeout(async () => {
+    try {
+      const state = await tradeStore.getState();
+      const stillOpen = (state.openLegs || []).some(
+        l => l.occ === leg.occ && l.openTimestamp === leg.openTimestamp
+      );
+      if (stillOpen) await notifyTradeStillOpen(leg);
+    } catch (err) {
+      console.log('Still-open safety-net check failed:', err.message);
+    }
+  }, SHORT_TRADE_SAFETY_NET_MS);
+}
 
 // Runs the Full Time Frame Continuity check for each newly-matched trade,
 // same logic used everywhere else in the app — now run automatically at
@@ -112,7 +138,7 @@ async function runSyncCheck() {
     const freshFills = fills.filter(f => !alreadySeen.has(f.transactionId));
 
     if (freshFills.length) {
-      const { updatedState, newPending } = processFills(freshFills, state);
+      const { updatedState, newPending, newlyOpenedLegs } = processFills(freshFills, state);
       if (newPending.length) {
         await enrichWithUnderlyingPrices(token, newPending);
         await enrichWithFtfc(token, newPending);
@@ -124,11 +150,18 @@ async function runSyncCheck() {
         ...freshFills.map(f => f.transactionId),
       ];
       await tradeStore.saveState(updatedState);
+      // Only here, in the live 5-minute/streamer-triggered check — never
+      // from runBackfill() below, which can surface a hundred-plus
+      // historical trades/legs at once and would spam notifications.
+      if (newlyOpenedLegs.length) {
+        console.log(`Auto-sync: ${newlyOpenedLegs.length} newly-opened position(s).`);
+        for (const leg of newlyOpenedLegs) {
+          notifyTradeOpened(leg).catch(() => {});
+          scheduleStillOpenCheck(leg);
+        }
+      }
       if (newPending.length) {
         console.log(`Auto-sync: ${newPending.length} closed trade(s) ready for tagging.`);
-        // Only here, in the live 5-minute check — never from runBackfill()
-        // below, which can surface a hundred-plus historical trades at
-        // once and would spam a notification for every one of them.
         for (const trade of newPending) {
           notifyTradeClosed(trade).catch(() => {}); // notifyTradeClosed already logs its own failures
         }
