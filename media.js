@@ -204,4 +204,71 @@ router.get('/video-url', async (req, res) => {
   }
 });
 
+// A plain web page (not JSON) so the owner can actually look at what a
+// Shortcut has uploaded, straight from Safari, without any extra app or
+// technical steps — just visiting this address with the App Key on the
+// end shows every screenshot/video still waiting to be matched to a trade,
+// newest first. Nothing here is deleted or changed; it's read-only.
+// URL: GET /media/preview?key=...
+function escapeAttr(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+router.get('/preview', async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+
+  const shotIds = await redis.lrange(LIST_KEY, 0, -1);
+  const shotRaw = shotIds.length ? await Promise.all(shotIds.map(id => redis.get(`screenshot:${id}`))) : [];
+  const screenshots = shotRaw
+    .map(r => { try { return typeof r === 'string' ? JSON.parse(r) : r; } catch (e) { return null; } })
+    .filter(Boolean)
+    .sort((a, b) => b.timestamp - a.timestamp);
+
+  const videoIds = await redis.lrange(VIDEO_LIST_KEY, 0, -1);
+  const videoRaw = videoIds.length ? await Promise.all(videoIds.map(id => redis.get(`video:${id}`))) : [];
+  const videos = videoRaw
+    .map(r => { try { return typeof r === 'string' ? JSON.parse(r) : r; } catch (e) { return null; } })
+    .filter(Boolean)
+    .sort((a, b) => b.timestamp - a.timestamp);
+
+  let videoLinks = [];
+  if (videos.length && isVideoStorageConfigured()) {
+    videoLinks = await Promise.all(videos.map(async v => {
+      try { return await getPlaybackUrl(v.r2Key); } catch (e) { return null; }
+    }));
+  }
+
+  const shotCards = screenshots.map(s => `
+    <div class="card">
+      <img src="${escapeAttr(s.image)}" alt="screenshot">
+      <div class="meta">${escapeAttr(new Date(s.timestamp).toLocaleString())}</div>
+    </div>`).join('');
+
+  const videoCards = videos.map((v, i) => `
+    <div class="card">
+      <div class="meta">${escapeAttr(new Date(v.timestamp).toLocaleString())} — ${Math.round((v.sizeBytes||0)/1024/1024)}MB</div>
+      ${videoLinks[i] ? `<a href="${escapeAttr(videoLinks[i])}">Play video</a>` : '<div class="meta">(playback link unavailable)</div>'}
+    </div>`).join('');
+
+  res.set('Content-Type', 'text/html').send(`<!doctype html>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pending uploads</title>
+<style>
+body{font-family:-apple-system,sans-serif;background:#111;color:#eee;margin:0;padding:16px;}
+h2{margin-top:24px;}
+.card{background:#1c1c1c;border-radius:10px;padding:10px;margin-bottom:12px;}
+.card img{max-width:100%;border-radius:6px;display:block;}
+.meta{color:#aaa;font-size:13px;margin-top:6px;}
+a{color:#4da3ff;}
+</style></head>
+<body>
+<h2>Screenshots waiting to be matched (${screenshots.length})</h2>
+${shotCards || '<div class="meta">None right now.</div>'}
+<h2>Videos waiting to be matched (${videos.length})</h2>
+${videoCards || '<div class="meta">None right now.</div>'}
+</body></html>`);
+});
+
 module.exports = router;
