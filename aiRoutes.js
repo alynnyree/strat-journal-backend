@@ -1,7 +1,9 @@
 const express = require('express');
-const { runPortfolioAnalysis, classifyStrategy } = require('./aiClient');
+const { runPortfolioAnalysis, classifyStrategy, testClassifyStrategy } = require('./aiClient');
+const testFeedbackRouter = require('./aiTestFeedback');
 
 const router = express.Router();
+router.use(testFeedbackRouter);
 
 router.post('/analyze', async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
@@ -41,6 +43,42 @@ router.post('/classify', async (req, res) => {
     res.json({ result });
   } catch (err) {
     console.log('AI classification failed:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Classification failed — check server logs.' });
+  }
+});
+
+// Sandbox classification against a made-up chart — no real trade required.
+// Lets the owner sanity-check/practice with the AI classifier while not
+// currently in any real trades, using a drawn/AI-generated/internet
+// picture, a typed description, or both. Never touches real trade data;
+// nothing here is saved to the Journal. Always returns the model's real
+// answer (even "unclear" or low confidence) rather than hiding it the way
+// the real auto-tagging does, since the whole point is to see what the AI
+// actually thinks.
+router.post('/test-classify', async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  const body = req.body || {};
+  const image = typeof body.image === 'string' ? body.image : null;
+  const description = typeof body.description === 'string' ? body.description.trim() : '';
+  if (!image && !description) {
+    return res.status(400).json({ error: 'Provide an image, a description, or both.' });
+  }
+
+  const fakeTrade = {
+    dir: body.dir || null,
+    ftfcConfirmed: !!body.ftfcConfirmed,
+    offBroadeningFormation: body.offBroadeningFormation == null ? null : !!body.offBroadeningFormation,
+    shotEntry: image || undefined,
+    testDescription: description || undefined,
+  };
+
+  try {
+    const result = await testClassifyStrategy(fakeTrade);
+    res.json({ result });
+  } catch (err) {
+    console.log('Test classification failed:', err.response?.data || err.message);
     res.status(500).json({ error: 'Classification failed — check server logs.' });
   }
 });

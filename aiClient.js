@@ -78,22 +78,21 @@ const CLASSIFY_SCHEMA = {
   required: ['strategy', 'confidence', 'reasoning'],
 };
 
-// Classifies a single newly-matched trade against the trader's own defined
-// Strat setups. Uses the real candle shapes from the bar-replay data around
-// entry — since these setups are literally defined by candle patterns,
-// that's the most relevant signal available, more so than FTFC/price alone.
-// When a screenshot of the trade exists (trade.shotEntry, or trade.shotExit
-// as a fallback — both only ever present on a trade the frontend already
-// holds locally, never on the backend's own automatic newly-synced-trade
-// pass), it's sent to Gemini alongside the candle data as extra visual
-// evidence — the trader's own eyes-on-the-chart view of the setup at the
-// moment it was taken, on top of raw OHLC numbers.
-// Deliberately conservative: only returns a strategy when the model itself
-// reports high confidence. A wrong auto-tag silently sitting in the
-// Journal is worse than leaving a trade flagged "Needs Setup" for the
-// trader to confirm by hand — this hasn't been tested at scale yet, so it
-// should fail toward asking rather than guessing.
-async function classifyStrategy(trade) {
+// Shared by both the real automatic classifier and the sandbox "Test
+// Classification" tool — builds the same prompt, calls Gemini, and always
+// returns the raw result (never null), so callers decide for themselves
+// whether/how to act on a low-confidence or "unclear" answer. Throws on a
+// genuine failure (network error, malformed response) rather than
+// swallowing it, so a caller that wants to surface real errors (like the
+// test tool) can.
+//
+// Uses the real candle shapes from the bar-replay data around entry —
+// since these setups are literally defined by candle patterns, that's the
+// most relevant signal available, more so than FTFC/price alone. When a
+// screenshot exists (trade.shotEntry, or trade.shotExit as a fallback), or
+// a freeform description (trade.testDescription — only ever set by the
+// test tool, never a real trade), it's included as extra evidence.
+async function runClassification(trade) {
   const candles = ((trade.replayData && trade.replayData.candles) || []).slice(-15);
   const candleSummary = candles.map(c => `O:${c.open} H:${c.high} L:${c.low} C:${c.close}`).join(' | ');
 
@@ -112,24 +111,46 @@ ${STRATEGIES.map(s => `- "${s.key}": ${s.desc}`).join('\n')}
 FTFC alignment and whether this was taken off a Broadening Formation are tracked separately elsewhere — they are not one of the choices above and should not affect which pattern you pick. They're included below only as extra context about the trade.
 
 Trade data:
-- Direction: ${trade.dir}
-- FTFC confirmed: ${trade.ftfcConfirmed} (direction: ${trade.ftfcDirection || 'n/a'}, run: ${(trade.ftfcTimeframesInRun || []).join('→') || 'n/a'})
-- Underlying price at entry: ${trade.undEntry}, at exit: ${trade.undExit}
+- Direction: ${trade.dir || 'n/a'}
+- FTFC confirmed: ${trade.ftfcConfirmed == null ? 'n/a' : (trade.ftfcConfirmed ? 'Yes' : 'No')} (direction: ${trade.ftfcDirection || 'n/a'}, run: ${(trade.ftfcTimeframesInRun || []).join('→') || 'n/a'})
+- Taken off a Broadening Formation: ${trade.offBroadeningFormation == null ? 'n/a' : (trade.offBroadeningFormation ? 'Yes' : 'No')}
+- Underlying price at entry: ${trade.undEntry ?? 'n/a'}, at exit: ${trade.undExit ?? 'n/a'}
 - Last ~15 one-minute candles into entry: ${candleSummary || 'not available'}
-${imagePart ? `- An attached screenshot of the trader's own chart at ${screenshotSource === 'entry' ? 'entry' : 'exit (no entry screenshot was available)'} is included below — use it as supporting visual evidence for the candle pattern and any drawn lines/indicators visible on it, weighed together with the candle data above, not in place of it.` : '- No screenshot is available for this trade — classify from the candle data alone.'}`;
+${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${screenshotSource === 'entry' ? 'entry' : 'exit (no entry screenshot was available)'} is included below — use it as supporting visual evidence for the candle pattern and any drawn lines/indicators visible on it, weighed together with the candle data above, not in place of it.` : '- No screenshot is available for this trade — classify from the candle data alone.'}${trade.testDescription ? `\n- The trader's own written description of the setup: "${trade.testDescription}"` : ''}`;
 
+  const text = await callGemini(prompt, CLASSIFY_SCHEMA, 300, imagePart ? [imagePart] : []);
+  const parsed = JSON.parse(text);
+  return { strategy: parsed.strategy, confidence: parsed.confidence, reasoning: parsed.reasoning, usedScreenshot: !!imagePart };
+}
+
+// Classifies a single newly-matched trade against the trader's own defined
+// Strat setups. Deliberately conservative: only returns a strategy when
+// the model itself reports high confidence. A wrong auto-tag silently
+// sitting in the Journal is worse than leaving a trade flagged "Needs
+// Setup" for the trader to confirm by hand — this hasn't been tested at
+// scale yet, so it should fail toward asking rather than guessing.
+async function classifyStrategy(trade) {
   try {
-    const text = await callGemini(prompt, CLASSIFY_SCHEMA, 300, imagePart ? [imagePart] : []);
-    const parsed = JSON.parse(text);
-    if (parsed.strategy && parsed.strategy !== 'unclear' && parsed.confidence === 'high' && STRATEGIES.some(s => s.key === parsed.strategy)) {
-      return { strategy: parsed.strategy, confidence: parsed.confidence, reasoning: parsed.reasoning, usedScreenshot: !!imagePart };
+    const result = await runClassification(trade);
+    if (result.strategy && result.strategy !== 'unclear' && result.confidence === 'high' && STRATEGIES.some(s => s.key === result.strategy)) {
+      return result;
     }
-    console.log(`Strategy classification: not confident enough to auto-tag (confidence=${parsed.confidence}, strategy=${parsed.strategy}, usedScreenshot=${!!imagePart}).`);
+    console.log(`Strategy classification: not confident enough to auto-tag (confidence=${result.confidence}, strategy=${result.strategy}, usedScreenshot=${result.usedScreenshot}).`);
     return null;
   } catch (err) {
     console.log('Strategy classification failed:', err.response?.data || err.message);
     return null;
   }
+}
+
+// Sandbox version for the "Test Classification" tool (index.html) — always
+// returns the model's real answer, even "unclear" or low confidence, since
+// the whole point is to see what the AI actually thinks so the owner can
+// judge it, not to silently hide anything below the high-confidence bar.
+// Errors are NOT swallowed here — they're left for the route calling this
+// to report back to whoever's testing, instead of failing silently.
+async function testClassifyStrategy(trade) {
+  return runClassification(trade);
 }
 
 const ANALYSIS_SCHEMA = {
@@ -180,4 +201,4 @@ Write "summary" as a 2-3 sentence overview, and "insights" as a list of specific
   return JSON.parse(text);
 }
 
-module.exports = { classifyStrategy, runPortfolioAnalysis, STRATEGIES };
+module.exports = { classifyStrategy, testClassifyStrategy, runPortfolioAnalysis, STRATEGIES };
