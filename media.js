@@ -18,6 +18,20 @@ const SCREENSHOT_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days — long enough for
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 3 * 1024 * 1024 } });
 
+// Accepts either a raw Unix-seconds number (e.g. "1723150000") or an ISO
+// 8601 date string (e.g. "2026-08-22T13:49:00Z") and returns milliseconds
+// since epoch, or null if neither parses. Added because not every iOS
+// version's Shortcuts app offers "Unix Time" as a date format choice —
+// ISO 8601 is available everywhere, so accepting both means the Shortcut
+// doesn't have to fight with whatever format list happens to be on screen.
+function parseTimestampToMs(raw) {
+  if (!raw) return null;
+  const asSeconds = Number(raw);
+  if (!Number.isNaN(asSeconds) && raw.trim() !== '') return asSeconds * 1000;
+  const asDate = Date.parse(raw);
+  return Number.isNaN(asDate) ? null : asDate;
+}
+
 // Videos are a completely different size class from a screenshot — a
 // generous cap here, well beyond what a 15-minute (the owner's own
 // video-vs-screenshot cutoff) screen recording should realistically need.
@@ -34,7 +48,7 @@ const VIDEO_TTL_SECONDS = 30 * 24 * 60 * 60; // matches SCREENSHOT_TTL_SECONDS's
 // itself directly as a File-type field, which is far more reliable in the
 // Shortcuts editor than trying to hand-build a JSON body with a text
 // variable. The timestamp travels as a URL query parameter.
-// URL: POST /media/upload?key=...&timestamp=<unix SECONDS>
+// URL: POST /media/upload?key=...&timestamp=<unix SECONDS, or an ISO 8601 date>
 // Form field: "image" (type File) = the Resized Image
 router.post('/upload', upload.single('image'), async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
@@ -43,10 +57,9 @@ router.post('/upload', upload.single('image'), async (req, res) => {
   if (!req.file || !req.file.buffer || !req.file.buffer.length) {
     return res.status(400).json({ error: 'Missing "image" file — expected a Form field named "image" with Type set to File.' });
   }
-  const timestampRaw = req.query.timestamp;
-  const timestamp = timestampRaw ? Number(timestampRaw) : NaN;
-  if (!timestampRaw || Number.isNaN(timestamp)) {
-    return res.status(400).json({ error: 'Missing or invalid "timestamp" query parameter — expected unix seconds, e.g. ?timestamp=1723150000.' });
+  const timestampMs = parseTimestampToMs(req.query.timestamp);
+  if (timestampMs == null) {
+    return res.status(400).json({ error: 'Missing or invalid "timestamp" query parameter — expected unix seconds (e.g. ?timestamp=1723150000) or an ISO 8601 date (e.g. ?timestamp=2026-08-22T13:49:00Z).' });
   }
 
   // Converted to a data: URL here so the rest of the app (Journal display,
@@ -57,11 +70,11 @@ router.post('/upload', upload.single('image'), async (req, res) => {
   const image = `data:${mime};base64,${req.file.buffer.toString('base64')}`;
 
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const record = { id, image, timestamp: timestamp * 1000 }; // store as ms internally, matches trade timestamps used elsewhere
+  const record = { id, image, timestamp: timestampMs }; // stored as ms internally, matches trade timestamps used elsewhere
   await redis.set(`screenshot:${id}`, JSON.stringify(record), { ex: SCREENSHOT_TTL_SECONDS });
   await redis.lpush(LIST_KEY, id);
 
-  console.log(`Screenshot uploaded: ${id} (~${Math.round(req.file.buffer.length/1024)}KB, ts=${new Date(timestamp*1000).toISOString()})`);
+  console.log(`Screenshot uploaded: ${id} (~${Math.round(req.file.buffer.length/1024)}KB, ts=${new Date(timestampMs).toISOString()})`);
   res.json({ ok: true, id });
 });
 
@@ -101,7 +114,7 @@ router.delete('/:id', async (req, res) => {
 // store screenshots use. Only a small pointer record (which R2 object,
 // what timestamp) is kept in Redis, for the same timestamp-based matching
 // the frontend already does for screenshots.
-// URL: POST /media/upload-video?key=...&timestamp=<unix SECONDS>
+// URL: POST /media/upload-video?key=...&timestamp=<unix SECONDS, or an ISO 8601 date>
 // Form field: "video" (type File)
 router.post('/upload-video', uploadVideoMw.single('video'), async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
@@ -113,10 +126,9 @@ router.post('/upload-video', uploadVideoMw.single('video'), async (req, res) => 
   if (!req.file || !req.file.buffer || !req.file.buffer.length) {
     return res.status(400).json({ error: 'Missing "video" file — expected a Form field named "video" with Type set to File.' });
   }
-  const timestampRaw = req.query.timestamp;
-  const timestamp = timestampRaw ? Number(timestampRaw) : NaN;
-  if (!timestampRaw || Number.isNaN(timestamp)) {
-    return res.status(400).json({ error: 'Missing or invalid "timestamp" query parameter — expected unix seconds, e.g. ?timestamp=1723150000.' });
+  const timestampMs = parseTimestampToMs(req.query.timestamp);
+  if (timestampMs == null) {
+    return res.status(400).json({ error: 'Missing or invalid "timestamp" query parameter — expected unix seconds (e.g. ?timestamp=1723150000) or an ISO 8601 date (e.g. ?timestamp=2026-08-22T13:49:00Z).' });
   }
 
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -130,11 +142,11 @@ router.post('/upload-video', uploadVideoMw.single('video'), async (req, res) => 
     return res.status(502).json({ error: 'Upload to storage failed — check server logs.' });
   }
 
-  const record = { id, r2Key, timestamp: timestamp * 1000, sizeBytes: req.file.buffer.length };
+  const record = { id, r2Key, timestamp: timestampMs, sizeBytes: req.file.buffer.length };
   await redis.set(`video:${id}`, JSON.stringify(record), { ex: VIDEO_TTL_SECONDS });
   await redis.lpush(VIDEO_LIST_KEY, id);
 
-  console.log(`Video uploaded: ${id} (~${Math.round(req.file.buffer.length / 1024 / 1024)}MB, ts=${new Date(timestamp * 1000).toISOString()})`);
+  console.log(`Video uploaded: ${id} (~${Math.round(req.file.buffer.length / 1024 / 1024)}MB, ts=${new Date(timestampMs).toISOString()})`);
   res.json({ ok: true, id });
 });
 
