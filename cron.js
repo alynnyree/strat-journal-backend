@@ -8,6 +8,7 @@ const { getUnderlyingPriceAt, getFtfcForTrade } = require('./ftfcCheck');
 const { getReplayCandles } = require('./replayData');
 const { classifyStrategy } = require('./aiClient');
 const { notifyTradeClosed, notifyTradeOpened, notifyTradeStillOpen } = require('./pushcut');
+const { queueBrowserEvent } = require('./browserEvents');
 
 const SHORT_TRADE_SAFETY_NET_MS = 15 * 60 * 1000; // matches pushcut.js's SHORT_TRADE_MS
 
@@ -28,7 +29,10 @@ function scheduleStillOpenCheck(leg) {
       const stillOpen = (state.openLegs || []).some(
         l => l.occ === leg.occ && l.openTimestamp === leg.openTimestamp
       );
-      if (stillOpen) await notifyTradeStillOpen(leg);
+      if (stillOpen) {
+        await notifyTradeStillOpen(leg);
+        queueBrowserEvent('stillOpen', { ticker: leg.ticker, dir: leg.dir, timestamp: leg.openTimestamp }).catch(() => {});
+      }
     } catch (err) {
       console.log('Still-open safety-net check failed:', err.message);
     }
@@ -157,6 +161,7 @@ async function runSyncCheck() {
         console.log(`Auto-sync: ${newlyOpenedLegs.length} newly-opened position(s).`);
         for (const leg of newlyOpenedLegs) {
           notifyTradeOpened(leg).catch(() => {});
+          queueBrowserEvent('opened', { ticker: leg.ticker, dir: leg.dir, timestamp: leg.openTimestamp }).catch(() => {});
           scheduleStillOpenCheck(leg);
         }
       }
@@ -164,6 +169,7 @@ async function runSyncCheck() {
         console.log(`Auto-sync: ${newPending.length} closed trade(s) ready for tagging.`);
         for (const trade of newPending) {
           notifyTradeClosed(trade).catch(() => {}); // notifyTradeClosed already logs its own failures
+          queueBrowserEvent('closed', { ticker: trade.ticker, dir: trade.dir, timestamp: trade.exitTimestamp }).catch(() => {});
         }
       }
     }
