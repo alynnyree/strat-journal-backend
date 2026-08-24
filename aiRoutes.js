@@ -83,8 +83,15 @@ router.post('/test-classify', async (req, res) => {
     const result = await testClassifyStrategy(fakeTrade);
     res.json({ result });
   } catch (err) {
-    console.log('Test classification failed:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Classification failed — check server logs.' });
+    // The owner has no way to "check server logs" himself — this is his
+    // only route to finding out what actually went wrong, so the real
+    // detail needs to reach the screen, not just this console line.
+    const detail = err.response?.data?.error?.message
+      || (typeof err.response?.data === 'string' ? err.response.data : null)
+      || err.message
+      || 'Unknown error';
+    console.log('Test classification failed:', detail);
+    res.status(500).json({ error: `Classification failed: ${detail}` });
   }
 });
 
