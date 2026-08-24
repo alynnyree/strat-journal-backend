@@ -48,13 +48,18 @@ router.post('/classify', async (req, res) => {
 });
 
 // Sandbox classification against a made-up chart — no real trade required.
-// Lets the owner sanity-check/practice with the AI classifier while not
-// currently in any real trades, using a drawn/AI-generated/internet
-// picture, a typed description, or both. Never touches real trade data;
-// nothing here is saved to the Journal. Always returns the model's real
-// answer (even "unclear" or low confidence) rather than hiding it the way
-// the real auto-tagging does, since the whole point is to see what the AI
-// actually thinks.
+// Deliberately gives the classifier NOTHING but the picture and/or typed
+// description — no direction, no FTFC, no Broadening Formation. The point
+// is to test whether the AI can read the candle pattern itself, purely
+// from what's visible, the same way the owner is testing his own eye —
+// not to hand it answer-adjacent hints a real trade wouldn't need. If
+// dir/ftfcConfirmed/offBroadeningFormation are ever omitted (the frontend
+// no longer sends them), they stay genuinely absent (null/"n/a" in the
+// prompt) rather than silently becoming an explicit "false" claim.
+// Never touches real trade data; nothing here is saved to the Journal.
+// Always returns the model's real answer (even "unclear" or low
+// confidence) rather than hiding it the way the real auto-tagging does,
+// since the whole point is to see what the AI actually thinks.
 router.post('/test-classify', async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
@@ -68,7 +73,7 @@ router.post('/test-classify', async (req, res) => {
 
   const fakeTrade = {
     dir: body.dir || null,
-    ftfcConfirmed: !!body.ftfcConfirmed,
+    ftfcConfirmed: body.ftfcConfirmed == null ? null : !!body.ftfcConfirmed,
     offBroadeningFormation: body.offBroadeningFormation == null ? null : !!body.offBroadeningFormation,
     shotEntry: image || undefined,
     testDescription: description || undefined,
