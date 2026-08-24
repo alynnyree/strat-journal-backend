@@ -118,8 +118,19 @@ Trade data:
 - Last ~15 one-minute candles into entry: ${candleSummary || 'not available'}
 ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${screenshotSource === 'entry' ? 'entry' : 'exit (no entry screenshot was available)'} is included below — use it as supporting visual evidence for the candle pattern and any drawn lines/indicators visible on it, weighed together with the candle data above, not in place of it.` : '- No screenshot is available for this trade — classify from the candle data alone.'}${trade.testDescription ? `\n- The trader's own written description of the setup: "${trade.testDescription}"` : ''}`;
 
-  const text = await callGemini(prompt, CLASSIFY_SCHEMA, 300, imagePart ? [imagePart] : []);
-  const parsed = JSON.parse(text);
+  // 300 was too tight — a real image plus a full "reasoning" explanation
+  // can run past that and get cut off mid-JSON, which then fails to parse
+  // and looks like a mystery server error with no useful detail. Never
+  // caught in testing before this, since every test here used a short,
+  // hand-written stand-in response instead of a real Gemini call against
+  // a real photo.
+  const text = await callGemini(prompt, CLASSIFY_SCHEMA, 800, imagePart ? [imagePart] : []);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`Gemini's response wasn't valid JSON (likely cut off before finishing) — raw response: ${text.slice(0, 300)}`);
+  }
   return { strategy: parsed.strategy, confidence: parsed.confidence, reasoning: parsed.reasoning, usedScreenshot: !!imagePart };
 }
 
