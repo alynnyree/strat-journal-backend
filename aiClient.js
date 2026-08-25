@@ -3,7 +3,10 @@ const axios = require('axios');
 // Gemini's free tier — no billing required. Uses schema-enforced JSON mode
 // (responseSchema below), which guarantees the response matches the shape
 // we ask for rather than just hoping the model formats it correctly.
-const MODEL = 'gemini-2.5-flash';
+// Updated 2026-08-23: gemini-2.5-flash started rejecting requests from
+// newer API keys/projects with "no longer available to new users" —
+// Google's own error response named this replacement directly.
+const MODEL = 'gemini-3.6-flash';
 const GEMINI_API = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
 // imageParts (optional): array of {mimeType, data} (data = raw base64, no
