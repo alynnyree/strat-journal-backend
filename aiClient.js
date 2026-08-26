@@ -9,30 +9,72 @@ const axios = require('axios');
 const MODEL = 'gemini-3.6-flash';
 const GEMINI_API = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
+// Which failures are worth trying again on their own, versus which are a
+// real problem no amount of retrying will fix.
+//
+// Retry: Gemini capacity/rate limits (429, 503 "high demand" — the exact
+// message the owner hit on 2026-08-23), Google-side server errors (500,
+// 502, 504), and raw network failures (no HTTP response at all — timeouts,
+// dropped connections).
+// Never retry: a bad API key (401/403), a malformed request (400), or a
+// model that doesn't exist (404) — those fail identically every time, and
+// retrying only delays showing the owner the real reason.
+function isRetryableGeminiError(err) {
+  const status = err.response?.status;
+  if (status == null) return true; // no response at all = network/timeout
+  return status === 429 || status >= 500;
+}
+
+const RETRY_DELAYS_MS = [1000, 2500]; // 3 attempts total; kept short so the phone's own request doesn't time out waiting on us
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // imageParts (optional): array of {mimeType, data} (data = raw base64, no
 // "data:...;base64," prefix) — Gemini reads these as inlineData parts
 // alongside the text prompt, same request, same model. Order doesn't
 // matter to the model; text goes first here just to keep the request body
 // readable in logs.
+//
+// Retries transient failures automatically (see isRetryableGeminiError).
+// Added 2026-08-23 after the owner hit Gemini's "currently experiencing
+// high demand" response and had to sit and manually retry — exactly the
+// kind of thing the server should absorb silently instead of surfacing.
 async function callGemini(prompt, responseSchema, maxOutputTokens = 1000, imageParts = []) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set on the server.');
   const parts = [{ text: prompt }, ...imageParts.map(p => ({ inlineData: { mimeType: p.mimeType, data: p.data } }))];
-  const resp = await axios.post(GEMINI_API, {
-    contents: [{ parts }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema,
-      maxOutputTokens,
-    },
-  }, {
-    headers: {
-      'x-goog-api-key': apiKey,
-      'content-type': 'application/json',
-    },
-  });
-  const responseParts = (resp.data?.candidates?.[0]?.content?.parts) || [];
-  return responseParts.map(p => p.text || '').join('').trim();
+
+  let lastErr;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const resp = await axios.post(GEMINI_API, {
+        contents: [{ parts }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema,
+          maxOutputTokens,
+        },
+      }, {
+        headers: {
+          'x-goog-api-key': apiKey,
+          'content-type': 'application/json',
+        },
+        timeout: 60000, // don't hang forever on a stalled connection; a real call with an image is well under this
+      });
+      const responseParts = (resp.data?.candidates?.[0]?.content?.parts) || [];
+      return responseParts.map(p => p.text || '').join('').trim();
+    } catch (err) {
+      lastErr = err;
+      const canRetry = attempt < RETRY_DELAYS_MS.length && isRetryableGeminiError(err);
+      if (!canRetry) break;
+      const detail = err.response?.data?.error?.message || err.message;
+      console.log(`Gemini call failed (attempt ${attempt + 1}), retrying in ${RETRY_DELAYS_MS[attempt]}ms: ${detail}`);
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw lastErr;
 }
 
 // Screenshots arrive from the frontend as data: URLs (e.g.
