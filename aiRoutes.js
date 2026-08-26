@@ -50,12 +50,12 @@ router.post('/classify', async (req, res) => {
 // Sandbox classification against a made-up chart — no real trade required.
 // Deliberately gives the classifier NOTHING but the picture and/or typed
 // description — no direction, no FTFC, no Broadening Formation. The point
-// is to test whether the AI can read the candle pattern itself, purely
-// from what's visible, the same way the owner is testing his own eye —
-// not to hand it answer-adjacent hints a real trade wouldn't need. If
-// dir/ftfcConfirmed/offBroadeningFormation are ever omitted (the frontend
-// no longer sends them), they stay genuinely absent (null/"n/a" in the
-// prompt) rather than silently becoming an explicit "false" claim.
+// is to test whether the AI can read the chart itself, purely from what's
+// visible, the same way the owner is testing his own eye. Returns three
+// layered answers (candle combo, FTFC, Broadening Formation), each
+// independently allowed to be "unclear" — see testClassifyStrategy in
+// aiClient.js for why this uses its own chart-reading prompt rather than
+// the real trade classifier's trade-oriented one.
 // Never touches real trade data; nothing here is saved to the Journal.
 // Always returns the model's real answer (even "unclear" or low
 // confidence) rather than hiding it the way the real auto-tagging does,
@@ -71,16 +71,8 @@ router.post('/test-classify', async (req, res) => {
     return res.status(400).json({ error: 'Provide an image, a description, or both.' });
   }
 
-  const fakeTrade = {
-    dir: body.dir || null,
-    ftfcConfirmed: body.ftfcConfirmed == null ? null : !!body.ftfcConfirmed,
-    offBroadeningFormation: body.offBroadeningFormation == null ? null : !!body.offBroadeningFormation,
-    shotEntry: image || undefined,
-    testDescription: description || undefined,
-  };
-
   try {
-    const result = await testClassifyStrategy(fakeTrade);
+    const result = await testClassifyStrategy({ image, description });
     res.json({ result });
   } catch (err) {
     // The owner has no way to "check server logs" himself — this is his

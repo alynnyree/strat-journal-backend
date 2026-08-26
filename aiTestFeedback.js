@@ -34,8 +34,17 @@ router.post('/test-classify-feedback', async (req, res) => {
     predictedStrategy: body.predictedStrategy || null,
     predictedConfidence: body.predictedConfidence || null,
     predictedReasoning: body.predictedReasoning || null,
+    // What the model read for the other two layers, so a wrong call can be
+    // reviewed on all three fronts later, not just the combo name.
+    predictedFtfc: body.predictedFtfc || null,
+    predictedBroadeningFormation: body.predictedBroadeningFormation || null,
     wasCorrect: body.wasCorrect,
     actualStrategy: body.actualStrategy || null,
+    // The owner's own corrections for the other two layers — stored as
+    // true/false/null (null = he didn't say), not coerced, so "he didn't
+    // correct this" stays distinguishable from "he said no."
+    actualFtfc: body.actualFtfc == null ? null : !!body.actualFtfc,
+    actualBroadeningFormation: body.actualBroadeningFormation == null ? null : !!body.actualBroadeningFormation,
     userNotes: body.userNotes || null,
   };
   await redis.set(`aiTestFeedback:${id}`, JSON.stringify(record), { ex: FEEDBACK_TTL_SECONDS });

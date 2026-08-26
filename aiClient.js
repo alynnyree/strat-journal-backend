@@ -81,6 +81,33 @@ const CLASSIFY_SCHEMA = {
   required: ['strategy', 'confidence', 'reasoning'],
 };
 
+// The Test Classification tool's own schema — three separate layered
+// answers instead of one, matching how the trader actually thinks about a
+// setup: which candle combo it is, whether the timeframes are aligned
+// (FTFC), and whether it's happening inside a Broadening Formation. All
+// three are read from the chart itself here.
+//
+// This is a deliberate departure from the real trade classifier, where
+// FTFC is computed mechanically from Schwab candle data and Broadening
+// Formation is a manual toggle the trader sets himself (see task 10's
+// finding that a Broadening Formation is a genuine multi-step judgment
+// call). Here there is no Schwab data and no trade — only a picture — so
+// the model is asked to read all three visually, and to say "unclear"
+// rather than guess on any of them independently.
+const TEST_CLASSIFY_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    strategy: { type: 'STRING', enum: [...STRATEGIES.map(s => s.key), 'unclear'] },
+    confidence: { type: 'STRING', enum: ['high', 'medium', 'low'] },
+    reasoning: { type: 'STRING' },
+    ftfc: { type: 'STRING', enum: ['yes', 'no', 'unclear'] },
+    ftfcReasoning: { type: 'STRING' },
+    broadeningFormation: { type: 'STRING', enum: ['yes', 'no', 'unclear'] },
+    broadeningReasoning: { type: 'STRING' },
+  },
+  required: ['strategy', 'confidence', 'reasoning', 'ftfc', 'ftfcReasoning', 'broadeningFormation', 'broadeningReasoning'],
+};
+
 // Shared by both the real automatic classifier and the sandbox "Test
 // Classification" tool — builds the same prompt, calls Gemini, and always
 // returns the raw result (never null), so callers decide for themselves
@@ -157,14 +184,65 @@ async function classifyStrategy(trade) {
   }
 }
 
-// Sandbox version for the "Test Classification" tool (index.html) — always
-// returns the model's real answer, even "unclear" or low confidence, since
-// the whole point is to see what the AI actually thinks so the owner can
-// judge it, not to silently hide anything below the high-confidence bar.
-// Errors are NOT swallowed here — they're left for the route calling this
-// to report back to whoever's testing, instead of failing silently.
-async function testClassifyStrategy(trade) {
-  return runClassification(trade);
+// Sandbox version for the "Test Classification" tool (index.html).
+//
+// Rewritten 2026-08-23 after the first real run came back "unclear," with
+// the model correctly explaining why: it was being handed the REAL TRADE
+// classifier's prompt, which asks "what setup was this trade?" and leans
+// on knowing which bar triggered the entry. In the test tool there is no
+// trade and no entry bar — only a picture — so that question was
+// unanswerable by construction, not a model failure.
+//
+// This prompt asks the actually-answerable question instead: "read this
+// chart and tell me what you see." It also returns three layered answers
+// rather than one — the candle combo, whether the timeframes look aligned
+// (FTFC), and whether this is happening inside a Broadening Formation —
+// each judged independently, each allowed to be "unclear" on its own.
+//
+// Always returns the model's real answer, even "unclear" or low
+// confidence, since the whole point is to see what the AI actually thinks
+// so the owner can judge it. Errors are NOT swallowed — they're left for
+// the route calling this to report back, instead of failing silently.
+async function testClassifyStrategy({ image, description }) {
+  const imagePart = image ? parseImageDataUrl(image) : null;
+
+  const prompt = `You are reading a candlestick chart and identifying what you actually see in it, using a trader's own Strat-methodology definitions. This is NOT a record of a specific trade — there is no entry marker, no direction, and no trade data. Do not ask for or assume any of that. Judge only from the chart itself (and the written description, if one is given).
+
+In the Strat, each candle is numbered by how it relates to the PREVIOUS candle:
+- "1" = inside bar (its high is lower than the previous high AND its low is higher than the previous low — neither side taken out)
+- "2" = directional bar (takes out exactly ONE side of the previous candle's range — "2 up" takes out the high, "2 down" takes out the low)
+- "3" = outside bar (takes out BOTH sides of the previous candle's range)
+
+Answer three separate questions independently:
+
+1. WHICH CANDLE COMBO is present? Choose from these, or "unclear":
+${STRATEGIES.map(s => `- "${s.key}": ${s.desc}`).join('\n')}
+Read the most recent/rightmost candles in the chart to find the combo. If several could fit, pick the clearest one and say so in your reasoning. Only say "unclear" if genuinely no combo above is identifiable from the candles shown.
+
+2. IS FULL TIME FRAME CONTINUITY (FTFC) VISIBLE? FTFC means multiple timeframes are all pointing the same direction. From a single chart image you usually CANNOT confirm this properly (it needs several timeframes compared side by side) — so answer "unclear" unless the image itself actually shows multiple timeframes or an explicit FTFC indicator. Do not infer FTFC from one timeframe's trend alone.
+
+3. IS THIS INSIDE A BROADENING FORMATION? A Broadening Formation is a compound outside bar structure — successively wider swings, each new high higher than the last high AND each new low lower than the last low, forming a visibly widening/megaphone shape. Answer "yes" only if that widening structure is genuinely visible; "no" if the range is flat or narrowing; "unclear" if there aren't enough swings shown to tell.
+
+Give an honest, specific reason for each of the three answers, referring to what you actually see in the chart. Never guess to be helpful — "unclear" is a perfectly good answer.
+${description ? `\nThe trader also wrote this description of the setup: "${description}"` : ''}${imagePart ? '\nThe chart image is attached below.' : '\nNo image was provided — judge only from the written description above.'}`;
+
+  const text = await callGemini(prompt, TEST_CLASSIFY_SCHEMA, 1200, imagePart ? [imagePart] : []);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`Gemini's response wasn't valid JSON (likely cut off before finishing) — raw response: ${text.slice(0, 300)}`);
+  }
+  return {
+    strategy: parsed.strategy,
+    confidence: parsed.confidence,
+    reasoning: parsed.reasoning,
+    ftfc: parsed.ftfc,
+    ftfcReasoning: parsed.ftfcReasoning,
+    broadeningFormation: parsed.broadeningFormation,
+    broadeningReasoning: parsed.broadeningReasoning,
+    usedScreenshot: !!imagePart,
+  };
 }
 
 const ANALYSIS_SCHEMA = {
