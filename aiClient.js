@@ -41,21 +41,46 @@ function sleep(ms) {
 // Added 2026-08-23 after the owner hit Gemini's "currently experiencing
 // high demand" response and had to sit and manually retry — exactly the
 // kind of thing the server should absorb silently instead of surfacing.
-async function callGemini(prompt, responseSchema, maxOutputTokens = 1000, imageParts = []) {
+// Marks an error as "the model ran out of room before finishing its
+// answer" so callers can retry with a bigger budget instead of treating it
+// like a permanent failure.
+class TruncatedResponseError extends Error {
+  constructor(message) {
+    super(message);
+    this.truncated = true;
+  }
+}
+
+async function callGemini(prompt, responseSchema, maxOutputTokens = 1000, imageParts = [], opts = {}) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set on the server.');
   const parts = [{ text: prompt }, ...imageParts.map(p => ({ inlineData: { mimeType: p.mimeType, data: p.data } }))];
+
+  // Newer Gemini models "think" before answering, and that internal
+  // reasoning is billed against the SAME maxOutputTokens budget as the
+  // visible answer. On 2026-08-23 this silently ate a 1200-token budget
+  // and left ~20 tokens for the real response, which then arrived cut off
+  // mid-word and failed to parse. These are structured classification
+  // calls with a schema already enforcing the shape — they don't need
+  // chain-of-thought — so thinking is disabled by default here.
+  //
+  // `disableThinking: false` opts back in (used automatically as a
+  // fallback if a model rejects the parameter outright).
+  const generationConfig = {
+    responseMimeType: 'application/json',
+    responseSchema,
+    maxOutputTokens,
+  };
+  if (opts.disableThinking !== false) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
 
   let lastErr;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
       const resp = await axios.post(GEMINI_API, {
         contents: [{ parts }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema,
-          maxOutputTokens,
-        },
+        generationConfig,
       }, {
         headers: {
           'x-goog-api-key': apiKey,
@@ -63,15 +88,74 @@ async function callGemini(prompt, responseSchema, maxOutputTokens = 1000, imageP
         },
         timeout: 60000, // don't hang forever on a stalled connection; a real call with an image is well under this
       });
-      const responseParts = (resp.data?.candidates?.[0]?.content?.parts) || [];
-      return responseParts.map(p => p.text || '').join('').trim();
+      const candidate = resp.data?.candidates?.[0];
+      const responseParts = candidate?.content?.parts || [];
+      const text = responseParts.map(p => p.text || '').join('').trim();
+
+      // Gemini says so explicitly when it stopped because it hit the
+      // ceiling. Catching it here means the caller can retry with more
+      // room, rather than the truncated text failing later as a confusing
+      // "not valid JSON" error the way it did on 2026-08-23.
+      if (candidate?.finishReason === 'MAX_TOKENS') {
+        throw new TruncatedResponseError(`Gemini ran out of output room (maxOutputTokens=${maxOutputTokens}) before finishing.`);
+      }
+      if (!text) {
+        throw new TruncatedResponseError(`Gemini returned an empty response (finishReason=${candidate?.finishReason || 'unknown'}).`);
+      }
+      return text;
     } catch (err) {
       lastErr = err;
+
+      // Some models may not accept thinkingConfig at all. Rather than fail
+      // outright, drop it once and try again the old way.
+      const rejectedThinkingConfig = err.response?.status === 400
+        && /thinking/i.test(err.response?.data?.error?.message || '')
+        && generationConfig.thinkingConfig;
+      if (rejectedThinkingConfig) {
+        console.log('Gemini rejected thinkingConfig — retrying without it.');
+        delete generationConfig.thinkingConfig;
+        continue;
+      }
+
+      // A truncated answer is not a transient network problem — retrying
+      // the same request unchanged would just truncate again. Hand it
+      // straight back so the caller can retry with a bigger budget.
+      if (err.truncated) break;
+
       const canRetry = attempt < RETRY_DELAYS_MS.length && isRetryableGeminiError(err);
       if (!canRetry) break;
       const detail = err.response?.data?.error?.message || err.message;
       console.log(`Gemini call failed (attempt ${attempt + 1}), retrying in ${RETRY_DELAYS_MS[attempt]}ms: ${detail}`);
       await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw lastErr;
+}
+
+// Calls Gemini and parses the JSON, automatically retrying with a bigger
+// output budget if the answer came back cut off. Every caller here wants
+// exactly this — a complete, parsed object — and the truncation failure
+// mode is the one that actually bit the owner in practice, so it's
+// handled once here rather than repeated (and forgotten) at each call.
+async function callGeminiJson(prompt, responseSchema, maxOutputTokens, imageParts = []) {
+  const budgets = [maxOutputTokens, maxOutputTokens * 2];
+  let lastErr;
+  for (const budget of budgets) {
+    try {
+      const text = await callGemini(prompt, responseSchema, budget, imageParts);
+      try {
+        return JSON.parse(text);
+      } catch (parseErr) {
+        // Schema-enforced JSON mode makes malformed-but-complete output
+        // very unlikely, so an unparseable body almost always means it was
+        // cut short. Treat it as truncation so the bigger-budget retry
+        // below gets a chance.
+        throw new TruncatedResponseError(`Gemini's response wasn't valid JSON (likely cut off before finishing) — raw response: ${text.slice(0, 300)}`);
+      }
+    } catch (err) {
+      lastErr = err;
+      if (!err.truncated) throw err; // a real failure — don't waste a second call on it
+      console.log(`Gemini response was cut off at ${budget} tokens; retrying with more room.`);
     }
   }
   throw lastErr;
@@ -196,13 +280,7 @@ ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${scr
   // caught in testing before this, since every test here used a short,
   // hand-written stand-in response instead of a real Gemini call against
   // a real photo.
-  const text = await callGemini(prompt, CLASSIFY_SCHEMA, 800, imagePart ? [imagePart] : []);
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch (err) {
-    throw new Error(`Gemini's response wasn't valid JSON (likely cut off before finishing) — raw response: ${text.slice(0, 300)}`);
-  }
+  const parsed = await callGeminiJson(prompt, CLASSIFY_SCHEMA, 2000, imagePart ? [imagePart] : []);
   return { strategy: parsed.strategy, confidence: parsed.confidence, reasoning: parsed.reasoning, usedScreenshot: !!imagePart };
 }
 
@@ -265,16 +343,12 @@ Read the most recent/rightmost candles in the chart to find the combo. If severa
 
 3. IS THIS INSIDE A BROADENING FORMATION? A Broadening Formation is a compound outside bar structure — successively wider swings, each new high higher than the last high AND each new low lower than the last low, forming a visibly widening/megaphone shape. Answer "yes" only if that widening structure is genuinely visible; "no" if the range is flat or narrowing; "unclear" if there aren't enough swings shown to tell.
 
-Give an honest, specific reason for each of the three answers, referring to what you actually see in the chart. Never guess to be helpful — "unclear" is a perfectly good answer.
+For each of the three answers give an honest, specific reason referring to what you actually see in the chart — but keep each reason SHORT, one or two sentences at most. Never guess to be helpful — "unclear" is a perfectly good answer.
 ${description ? `\nThe trader also wrote this description of the setup: "${description}"` : ''}${imagePart ? '\nThe chart image is attached below.' : '\nNo image was provided — judge only from the written description above.'}`;
 
-  const text = await callGemini(prompt, TEST_CLASSIFY_SCHEMA, 1200, imagePart ? [imagePart] : []);
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch (err) {
-    throw new Error(`Gemini's response wasn't valid JSON (likely cut off before finishing) — raw response: ${text.slice(0, 300)}`);
-  }
+  // Seven fields to fill, three of them free-text reasoning — the most
+  // output-hungry call in the app, so the most generous budget.
+  const parsed = await callGeminiJson(prompt, TEST_CLASSIFY_SCHEMA, 3000, imagePart ? [imagePart] : []);
   return {
     strategy: parsed.strategy,
     confidence: parsed.confidence,
@@ -331,8 +405,7 @@ Analyze for:
 
 Write "summary" as a 2-3 sentence overview, and "insights" as a list of specific, data-grounded findings — not generic advice.`;
 
-  const text = await callGemini(prompt, ANALYSIS_SCHEMA, 1200);
-  return JSON.parse(text);
+  return callGeminiJson(prompt, ANALYSIS_SCHEMA, 3000);
 }
 
 module.exports = { classifyStrategy, testClassifyStrategy, runPortfolioAnalysis, STRATEGIES };
