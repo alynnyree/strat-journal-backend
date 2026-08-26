@@ -106,14 +106,24 @@ async function callGemini(prompt, responseSchema, maxOutputTokens = 1000, imageP
     } catch (err) {
       lastErr = err;
 
-      // Some models may not accept thinkingConfig at all. Rather than fail
-      // outright, drop it once and try again the old way.
-      const rejectedThinkingConfig = err.response?.status === 400
-        && /thinking/i.test(err.response?.data?.error?.message || '')
-        && generationConfig.thinkingConfig;
-      if (rejectedThinkingConfig) {
-        console.log('Gemini rejected thinkingConfig — retrying without it.');
+      // Some models don't accept thinkingConfig. Drop it and retry on ANY
+      // 400 while it's set, rather than trying to pattern-match the error
+      // text: gemini-3.6-flash rejects it with a generic "Request contains
+      // an invalid argument" that says nothing about thinking, so an
+      // earlier version of this check (matching on the word "thinking")
+      // never fired and the whole call failed. thinkingConfig is by far
+      // the most likely cause of a 400 here — the rest of the request is
+      // unchanged from calls that were already working — and if the real
+      // cause is something else, the retry below simply fails the same
+      // way and surfaces the same message.
+      if (err.response?.status === 400 && generationConfig.thinkingConfig) {
+        const detail = err.response?.data?.error?.message || err.message;
+        console.log(`Gemini rejected the request with thinkingConfig set (${detail}) — retrying without it.`);
         delete generationConfig.thinkingConfig;
+        // Correcting the request isn't a "retry" — don't spend one of the
+        // transient-failure attempts on it. Safe from looping: the guard
+        // above requires thinkingConfig to be set, and it was just deleted.
+        attempt--;
         continue;
       }
 
@@ -280,7 +290,7 @@ ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${scr
   // caught in testing before this, since every test here used a short,
   // hand-written stand-in response instead of a real Gemini call against
   // a real photo.
-  const parsed = await callGeminiJson(prompt, CLASSIFY_SCHEMA, 2000, imagePart ? [imagePart] : []);
+  const parsed = await callGeminiJson(prompt, CLASSIFY_SCHEMA, 6000, imagePart ? [imagePart] : []);
   return { strategy: parsed.strategy, confidence: parsed.confidence, reasoning: parsed.reasoning, usedScreenshot: !!imagePart };
 }
 
@@ -348,7 +358,7 @@ ${description ? `\nThe trader also wrote this description of the setup: "${descr
 
   // Seven fields to fill, three of them free-text reasoning — the most
   // output-hungry call in the app, so the most generous budget.
-  const parsed = await callGeminiJson(prompt, TEST_CLASSIFY_SCHEMA, 3000, imagePart ? [imagePart] : []);
+  const parsed = await callGeminiJson(prompt, TEST_CLASSIFY_SCHEMA, 8000, imagePart ? [imagePart] : []);
   return {
     strategy: parsed.strategy,
     confidence: parsed.confidence,
@@ -405,7 +415,7 @@ Analyze for:
 
 Write "summary" as a 2-3 sentence overview, and "insights" as a list of specific, data-grounded findings — not generic advice.`;
 
-  return callGeminiJson(prompt, ANALYSIS_SCHEMA, 3000);
+  return callGeminiJson(prompt, ANALYSIS_SCHEMA, 8000);
 }
 
 module.exports = { classifyStrategy, testClassifyStrategy, runPortfolioAnalysis, STRATEGIES };
