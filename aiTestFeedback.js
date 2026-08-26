@@ -66,4 +66,38 @@ router.get('/test-classify-feedback', async (req, res) => {
   res.json({ feedback });
 });
 
+async function readAllFeedback() {
+  const ids = await redis.lrange(LIST_KEY, 0, -1);
+  if (!ids.length) return [];
+  const raw = await Promise.all(ids.map(id => redis.get(`aiTestFeedback:${id}`)));
+  return raw
+    .map(r => { try { return typeof r === 'string' ? JSON.parse(r) : r; } catch (e) { return null; } })
+    .filter(Boolean);
+}
+
+// How many past corrections travel with each classification request.
+// Every example is re-sent on EVERY call, so this is a real cost/latency
+// dial, not a free "more is better" — hence a deliberate cap rather than
+// sending the whole log.
+const MAX_TEACHING_EXAMPLES = 20;
+const MAX_CORRECT_EXAMPLES = 5; // the rest of the budget goes to corrections, which teach far more
+
+// Picks which past corrections are worth showing the model on the next
+// classification. Entries the trader marked WRONG are the valuable ones —
+// they show exactly where the model's reading diverges from his — so they
+// get most of the budget, newest first. A few confirmed-correct examples
+// are included too, so the model gets some signal about what it's already
+// reading right rather than only ever seeing failures.
+async function getTeachingExamples() {
+  const all = await readAllFeedback();
+  const byNewest = (a, b) => (b.timestamp || 0) - (a.timestamp || 0);
+  const wrong = all.filter(f => f.wasCorrect === false).sort(byNewest);
+  const right = all.filter(f => f.wasCorrect === true).sort(byNewest);
+  const correctSlice = right.slice(0, MAX_CORRECT_EXAMPLES);
+  const wrongSlice = wrong.slice(0, MAX_TEACHING_EXAMPLES - correctSlice.length);
+  return [...wrongSlice, ...correctSlice];
+}
+
 module.exports = router;
+module.exports.getTeachingExamples = getTeachingExamples;
+module.exports.readAllFeedback = readAllFeedback;
