@@ -297,13 +297,14 @@ const MAX_TEACHING_IMAGES = 4;
 const MAX_TEACHING_IMAGE_BYTES = 600 * 1024; // combined, base64 as sent
 
 function formatTeachingExamples(examples) {
-  return buildTeaching(examples).text;
+  return buildTeaching(Array.isArray(examples) ? { examples } : examples).text;
 }
 
 // Returns { text, imageParts } — the written corrections, plus whichever
 // of their charts earned a place inside the picture budget above.
-function buildTeaching(examples) {
-  if (!examples || !examples.length) return { text: '', imageParts: [] };
+function buildTeaching({ examples, digest = '', total = 0 } = {}) {
+  if ((!examples || !examples.length) && !digest) return { text: '', imageParts: [] };
+  examples = examples || [];
   const yn = v => v === true ? 'yes' : (v === false ? 'no' : v);
 
   // Decide the pictures FIRST, so each example's text can say whether its
@@ -341,11 +342,11 @@ function buildTeaching(examples) {
       + (f.description ? `\n   The chart was described as: "${f.description}"` : '');
   });
 
-  const text = `
+  const text = `${digest}${examples.length ? `
 
-THE TRADER'S OWN PAST CORRECTIONS — study these before answering.
-These are real charts this same AI classified previously, followed by the trader's own verdict. They show how HE reads these patterns, which matters more than any general definition. Where a past reading was marked wrong, do not repeat that same mistake here.
-${lines.join('\n')}${imageParts.length ? `
+THE MOST RECENT CORRECTIONS IN FULL — study these before answering.
+These are real charts this same AI classified previously, followed by the trader's own verdict. They show how HE reads these patterns, which matters more than any general definition. Where a past reading was marked wrong, do not repeat that same mistake here.${total > examples.length ? ` (These ${examples.length} are the latest of ${total}; the running summary above covers all of them.)` : ''}
+${lines.join('\n')}` : ''}${imageParts.length ? `
 Some of those corrections have their chart attached, labelled TEACHING CHART 1 to ${imageParts.length}. Those are PAST examples for reference only — never classify one of them. Your answer must be about the chart labelled as the one to classify (or, if none is attached, about the written description).` : ''}
 `;
   return { text, imageParts };

@@ -7,6 +7,7 @@ const apiRouter = require('./api');
 const streamerTestRouter = require('./streamerTest');
 const mediaRouter = require('./media');
 const aiRoutes = require('./aiRoutes');
+const { persistExistingFeedback } = require('./aiTestFeedback');
 const { router: browserEventsRouter } = require('./browserEvents');
 const { startAutoSync } = require('./cron');
 const { startStreamer } = require('./schwabStreamer');
@@ -39,4 +40,5 @@ app.listen(PORT, () => {
   console.log(`Strat Journal backend listening on port ${PORT}`);
   startAutoSync(process.env.SYNC_CRON || '*/5 * * * *'); // stays running as a safety net alongside the streamer
   startStreamer();
+  persistExistingFeedback(); // one-time: stop older test feedback ageing out
 });
