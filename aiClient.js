@@ -245,6 +245,63 @@ const TEST_CLASSIFY_SCHEMA = {
 };
 
 // Shared by both the real automatic classifier and the sandbox "Test
+// Turns the owner's saved Test Classification corrections into a block of
+// worked examples for the prompt.
+//
+// This is what makes the journal "learn" from the test tool, and it's
+// worth being precise about the mechanism: the AI model itself has NO
+// memory between calls and is never modified by anything we do. What
+// actually happens is that the journal remembers the corrections and
+// re-teaches the model on every single request. The practical effect
+// matches the goal — the more the owner corrects in the test tool, the
+// better real trades get classified — because these examples encode HIS
+// readings of these patterns, which generic instructions can't.
+//
+// Text only, deliberately: the chart images are already stored, but
+// examples are re-sent on EVERY call, so including 20 images would mean
+// 20 images transmitted and processed every time a trade closes. The
+// predicted-vs-actual plus the owner's own note carries most of the
+// teaching value at a tiny fraction of the cost.
+function formatTeachingExamples(examples) {
+  if (!examples || !examples.length) return '';
+  const yn = v => v === true ? 'yes' : (v === false ? 'no' : v);
+  const lines = examples.map((f, i) => {
+    const predicted = `combo ${f.predictedStrategy || 'unclear'}`
+      + (f.predictedFtfc ? `, FTFC ${f.predictedFtfc}` : '')
+      + (f.predictedBroadeningFormation ? `, Broadening Formation ${f.predictedBroadeningFormation}` : '');
+    if (f.wasCorrect === false) {
+      const actual = `combo ${f.actualStrategy || 'unclear'}`
+        + (f.actualFtfc != null ? `, FTFC ${yn(f.actualFtfc)}` : '')
+        + (f.actualBroadeningFormation != null ? `, Broadening Formation ${yn(f.actualBroadeningFormation)}` : '');
+      return `${i + 1}. WRONG — the AI read it as: ${predicted}\n   The trader says it was actually: ${actual}`
+        + (f.userNotes ? `\n   The trader's explanation: "${f.userNotes}"` : '')
+        + (f.description ? `\n   The chart was described as: "${f.description}"` : '');
+    }
+    return `${i + 1}. RIGHT — the AI read it as: ${predicted}, and the trader confirmed that was correct.`
+      + (f.description ? `\n   The chart was described as: "${f.description}"` : '');
+  });
+  return `
+
+THE TRADER'S OWN PAST CORRECTIONS — study these before answering.
+These are real charts this same AI classified previously, followed by the trader's own verdict. They show how HE reads these patterns, which matters more than any general definition. Where a past reading was marked wrong, do not repeat that same mistake here.
+${lines.join('\n')}
+`;
+}
+
+// Loads the corrections, never letting a failure there break the actual
+// classification — teaching examples are an improvement, not a
+// requirement, so a Redis hiccup should degrade to "classify without
+// them" rather than fail the trade.
+async function loadTeachingBlock() {
+  try {
+    const { getTeachingExamples } = require('./aiTestFeedback');
+    return formatTeachingExamples(await getTeachingExamples());
+  } catch (err) {
+    console.log('Could not load teaching examples (classifying without them):', err.message);
+    return '';
+  }
+}
+
 // Classification" tool — builds the same prompt, calls Gemini, and always
 // returns the raw result (never null), so callers decide for themselves
 // whether/how to act on a low-confidence or "unclear" answer. Throws on a
@@ -259,6 +316,7 @@ const TEST_CLASSIFY_SCHEMA = {
 // a freeform description (trade.testDescription — only ever set by the
 // test tool, never a real trade), it's included as extra evidence.
 async function runClassification(trade) {
+  const teaching = await loadTeachingBlock();
   const candles = ((trade.replayData && trade.replayData.candles) || []).slice(-15);
   const candleSummary = candles.map(c => `O:${c.open} H:${c.high} L:${c.low} C:${c.close}`).join(' | ');
 
@@ -282,7 +340,7 @@ Trade data:
 - Taken off a Broadening Formation: ${trade.offBroadeningFormation == null ? 'n/a' : (trade.offBroadeningFormation ? 'Yes' : 'No')}
 - Underlying price at entry: ${trade.undEntry ?? 'n/a'}, at exit: ${trade.undExit ?? 'n/a'}
 - Last ~15 one-minute candles into entry: ${candleSummary || 'not available'}
-${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${screenshotSource === 'entry' ? 'entry' : 'exit (no entry screenshot was available)'} is included below — use it as supporting visual evidence for the candle pattern and any drawn lines/indicators visible on it, weighed together with the candle data above, not in place of it.` : '- No screenshot is available for this trade — classify from the candle data alone.'}${trade.testDescription ? `\n- The trader's own written description of the setup: "${trade.testDescription}"` : ''}`;
+${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${screenshotSource === 'entry' ? 'entry' : 'exit (no entry screenshot was available)'} is included below — use it as supporting visual evidence for the candle pattern and any drawn lines/indicators visible on it, weighed together with the candle data above, not in place of it.` : '- No screenshot is available for this trade — classify from the candle data alone.'}${trade.testDescription ? `\n- The trader's own written description of the setup: "${trade.testDescription}"` : ''}${teaching}`;
 
   // 300 was too tight — a real image plus a full "reasoning" explanation
   // can run past that and get cut off mid-JSON, which then fails to parse
@@ -334,6 +392,7 @@ async function classifyStrategy(trade) {
 // so the owner can judge it. Errors are NOT swallowed — they're left for
 // the route calling this to report back, instead of failing silently.
 async function testClassifyStrategy({ image, description }) {
+  const teaching = await loadTeachingBlock();
   const imagePart = image ? parseImageDataUrl(image) : null;
 
   const prompt = `You are reading a candlestick chart and identifying what you actually see in it, using a trader's own Strat-methodology definitions. This is NOT a record of a specific trade — there is no entry marker, no direction, and no trade data. Do not ask for or assume any of that. Judge only from the chart itself (and the written description, if one is given).
@@ -354,7 +413,7 @@ Read the most recent/rightmost candles in the chart to find the combo. If severa
 3. IS THIS INSIDE A BROADENING FORMATION? A Broadening Formation is a compound outside bar structure — successively wider swings, each new high higher than the last high AND each new low lower than the last low, forming a visibly widening/megaphone shape. Answer "yes" only if that widening structure is genuinely visible; "no" if the range is flat or narrowing; "unclear" if there aren't enough swings shown to tell.
 
 For each of the three answers give an honest, specific reason referring to what you actually see in the chart — but keep each reason SHORT, one or two sentences at most. Never guess to be helpful — "unclear" is a perfectly good answer.
-${description ? `\nThe trader also wrote this description of the setup: "${description}"` : ''}${imagePart ? '\nThe chart image is attached below.' : '\nNo image was provided — judge only from the written description above.'}`;
+${description ? `\nThe trader also wrote this description of the setup: "${description}"` : ''}${imagePart ? '\nThe chart image is attached below.' : '\nNo image was provided — judge only from the written description above.'}${teaching}`;
 
   // Seven fields to fill, three of them free-text reasoning — the most
   // output-hungry call in the app, so the most generous budget.
