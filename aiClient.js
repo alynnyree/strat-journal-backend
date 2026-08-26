@@ -260,12 +260,20 @@ const TEST_CLASSIFY_SCHEMA = {
     strategy: { type: 'STRING', enum: [...STRATEGIES.map(s => s.key), 'unclear'] },
     confidence: { type: 'STRING', enum: ['high', 'medium', 'low'] },
     reasoning: { type: 'STRING' },
-    ftfc: { type: 'STRING', enum: ['yes', 'no', 'unclear'] },
+    // Timeframe continuity is not a yes/no question in the owner's method
+    // — his rule confirms it at any 4+ CONSECUTIVE timeframes agreeing,
+    // so a run of two or three is a real, readable state that a yes/no
+    // answer was throwing away. "partial" is that state.
+    ftfc: { type: 'STRING', enum: ['confirmed', 'partial', 'none', 'unclear'] },
+    // A short per-timeframe read ("1m up, 5m up, 15m up, 1H down"), so a
+    // wrong call can be corrected on the specific timeframe that was
+    // misread rather than on the verdict as a whole.
+    ftfcTimeframes: { type: 'STRING' },
     ftfcReasoning: { type: 'STRING' },
     broadeningFormation: { type: 'STRING', enum: ['yes', 'no', 'unclear'] },
     broadeningReasoning: { type: 'STRING' },
   },
-  required: ['strategy', 'confidence', 'reasoning', 'ftfc', 'ftfcReasoning', 'broadeningFormation', 'broadeningReasoning'],
+  required: ['strategy', 'confidence', 'reasoning', 'ftfc', 'ftfcTimeframes', 'ftfcReasoning', 'broadeningFormation', 'broadeningReasoning'],
 };
 
 // Shared by both the real automatic classifier and the sandbox "Test
@@ -306,6 +314,10 @@ function buildTeaching({ examples, digest = '', total = 0 } = {}) {
   if ((!examples || !examples.length) && !digest) return { text: '', imageParts: [] };
   examples = examples || [];
   const yn = v => v === true ? 'yes' : (v === false ? 'no' : v);
+  // Continuity answers changed from yes/no to a four-state answer, so old
+  // saved values are translated rather than dropped.
+  let ftfcOf = v => (v === true ? 'confirmed' : (v === false ? 'none' : v));
+  try { ftfcOf = require('./aiTestFeedback').normaliseFtfc || ftfcOf; } catch (e) { /* keep the local fallback */ }
 
   // Decide the pictures FIRST, so each example's text can say whether its
   // chart is attached and which numbered teaching chart it is.
@@ -326,11 +338,13 @@ function buildTeaching({ examples, digest = '', total = 0 } = {}) {
 
   const lines = examples.map((f, i) => {
     const predicted = `combo ${f.predictedStrategy || 'unclear'}`
-      + (f.predictedFtfc ? `, FTFC ${f.predictedFtfc}` : '')
+      + (f.predictedFtfc ? `, timeframe continuity ${ftfcOf(f.predictedFtfc)}` : '')
+      + (f.predictedFtfcTimeframes ? ` (read as: ${f.predictedFtfcTimeframes})` : '')
       + (f.predictedBroadeningFormation ? `, Broadening Formation ${f.predictedBroadeningFormation}` : '');
     if (f.wasCorrect === false) {
       const actual = `combo ${f.actualStrategy || 'unclear'}`
-        + (f.actualFtfc != null ? `, FTFC ${yn(f.actualFtfc)}` : '')
+        + (f.actualFtfc != null ? `, timeframe continuity ${ftfcOf(f.actualFtfc)}` : '')
+        + (f.actualFtfcTimeframes ? ` (he reads the timeframes as: ${f.actualFtfcTimeframes})` : '')
         + (f.actualBroadeningFormation != null ? `, Broadening Formation ${yn(f.actualBroadeningFormation)}` : '');
       const shotNo = attachedIndexById.get(f.id);
       return `${i + 1}. WRONG — the AI read it as: ${predicted}\n   The trader says it was actually: ${actual}`
@@ -479,9 +493,29 @@ Answer three separate questions independently:
 ${STRATEGIES.map(s => `- "${s.key}": ${s.desc}`).join('\n')}
 Read the most recent/rightmost candles in the chart to find the combo. If several could fit, pick the clearest one and say so in your reasoning. Only say "unclear" if genuinely no combo above is identifiable from the candles shown.
 
-2. IS FULL TIME FRAME CONTINUITY (FTFC) VISIBLE? FTFC means multiple timeframes are all pointing the same direction. From a single chart image you usually CANNOT confirm this properly (it needs several timeframes compared side by side) — so answer "unclear" unless the image itself actually shows multiple timeframes or an explicit FTFC indicator. Do not infer FTFC from one timeframe's trend alone.
+2. WHAT IS THE TIMEFRAME CONTINUITY? This trader's ladder runs 6M, 3M, 1M, 1W, 1D, 4H, 2H, 1H, 30m, 15m, 5m, 3m, 1m. A timeframe is "up" when price is above that period's open and "down" when below. His rule: continuity is CONFIRMED when any 4 or more CONSECUTIVE timeframes in that ladder agree — the run can start anywhere in the ladder, it does not have to begin at the largest.
 
-3. IS THIS INSIDE A BROADENING FORMATION? A Broadening Formation is a compound outside bar structure — successively wider swings, each new high higher than the last high AND each new low lower than the last low, forming a visibly widening/megaphone shape. Answer "yes" only if that widening structure is genuinely visible; "no" if the range is flat or narrowing; "unclear" if there aren't enough swings shown to tell.
+Work out every timeframe you can genuinely establish, then answer:
+- "confirmed" — you can see 4 or more consecutive timeframes agreeing.
+- "partial" — some agree but the longest agreeing run is only 2 or 3, or the ladder is split with larger and smaller timeframes disagreeing. This is a real and common state; say "partial" rather than forcing it to a yes or no.
+- "none" — the timeframes you can read visibly conflict with no run at all.
+- "unclear" — you genuinely cannot establish any timeframes from what is shown.
+
+A single-timeframe screenshot is NOT automatically "unclear". You can often read several timeframes off one chart, and you should try before giving up:
+- The chart's own timeframe, from its most recent candles.
+- Larger timeframes that the visible range covers — if a 5-minute chart spans the whole session, the current day's candle is visible in it (where price sits against the session open), and so are the current hour and 4-hour.
+- Any higher-timeframe levels, opens, or session markers drawn on the chart.
+Do not invent timeframes you cannot see. If the visible range only covers one hour, you cannot establish the daily or weekly — say so and answer from what you do have.
+
+In "ftfcTimeframes" list each timeframe you established and its direction, comma-separated, largest to smallest, e.g. "1D up, 4H up, 1H up, 15m up, 5m down". Put nothing else in that field. In "ftfcReasoning" say what the longest agreeing run was and why that gives the verdict you chose.
+
+3. IS THIS INSIDE A BROADENING FORMATION? A Broadening Formation is a compound outside bar structure — successively wider swings, each new high higher than the last high AND each new low lower than the last low, forming a visibly widening megaphone shape. It takes at least three swing points to establish and usually shows as price alternately taking out the previous high, then the previous low, then a higher high, then a lower low.
+
+Two things to weigh heavily:
+- If the trader has DRAWN diverging lines on the chart — two trendlines spreading apart around the price action, often dashed — that is him marking the formation himself, and it is strong evidence for "yes".
+- The widening does not have to be symmetrical. A formation that expands mostly on one side while the other stays roughly flat still counts as broadening, as long as the range is genuinely getting wider.
+
+Answer "yes" if that widening structure is genuinely there; "no" if the range is flat, narrowing, or in a clean one-directional trend; "unclear" if there aren't enough swings shown to tell.
 
 For each of the three answers give an honest, specific reason referring to what you actually see in the chart — but keep each reason SHORT, one or two sentences at most. Never guess to be helpful — "unclear" is a perfectly good answer.
 ${description ? `\nThe trader also wrote this description of the setup: "${description}"` : ''}${imagePart ? (isVideo
@@ -503,6 +537,7 @@ ${description ? `\nThe trader also wrote this description of the setup: "${descr
     confidence: parsed.confidence,
     reasoning: parsed.reasoning,
     ftfc: parsed.ftfc,
+    ftfcTimeframes: parsed.ftfcTimeframes,
     ftfcReasoning: parsed.ftfcReasoning,
     broadeningFormation: parsed.broadeningFormation,
     broadeningReasoning: parsed.broadeningReasoning,

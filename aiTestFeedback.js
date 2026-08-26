@@ -59,13 +59,21 @@ router.post('/test-classify-feedback', async (req, res) => {
     // What the model read for the other two layers, so a wrong call can be
     // reviewed on all three fronts later, not just the combo name.
     predictedFtfc: body.predictedFtfc || null,
+    // The per-timeframe read behind that verdict ("1D up, 4H up, 1H down"),
+    // so a correction can land on the specific timeframe misread rather
+    // than only on the overall verdict.
+    predictedFtfcTimeframes: body.predictedFtfcTimeframes || null,
+    actualFtfcTimeframes: body.actualFtfcTimeframes || null,
     predictedBroadeningFormation: body.predictedBroadeningFormation || null,
     wasCorrect: body.wasCorrect,
     actualStrategy: body.actualStrategy || null,
     // The owner's own corrections for the other two layers — stored as
     // true/false/null (null = he didn't say), not coerced, so "he didn't
     // correct this" stays distinguishable from "he said no."
-    actualFtfc: body.actualFtfc == null ? null : !!body.actualFtfc,
+    // Kept as text now that continuity has four states rather than two
+    // ("confirmed" / "partial" / "none" / "unclear"). Older entries saved
+    // this as true/false; normaliseFtfc below reads both.
+    actualFtfc: body.actualFtfc == null ? null : String(body.actualFtfc),
     actualBroadeningFormation: body.actualBroadeningFormation == null ? null : !!body.actualBroadeningFormation,
     userNotes: body.userNotes || null,
   };
@@ -98,6 +106,27 @@ router.get('/test-classify-feedback', async (req, res) => {
     f.image = fulls[i] || f.teachImage || null;
   });
   res.json({ feedback });
+});
+
+// Removing one entry. This matters more than an ordinary delete button
+// because corrections are permanent and every one of them influences
+// every future classification — so a mistaken correction that can't be
+// removed is a wrong lesson taught forever. Takes the entry out of the
+// index, the record itself, and its full-size picture, so nothing is
+// left teaching from beyond the grave.
+router.delete('/test-classify-feedback/:id', async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: 'Missing id.' });
+
+  // Index first: if a later step fails, a stranded record is harmless,
+  // whereas an index pointing at a deleted record shows a broken row.
+  await redis.lrem(LIST_KEY, 0, id);
+  await redis.del(`aiTestFeedback:${id}`);
+  await redis.del(fullImageKey(id));
+  res.json({ ok: true, id });
 });
 
 async function readAllFeedback() {
@@ -154,6 +183,21 @@ const MAX_DIGEST_PAIRS = 10;
 const MAX_DIGEST_ACCURACY_ROWS = 8;
 const MAX_NOTE_CHARS = 220; // one long note must not crowd out the others
 
+// Entries predate the four-state answer, so old values have to keep
+// meaning what they meant: a plain "yes"/true was a confirmed run, a
+// "no"/false was none. Without this an entire back-history of lessons
+// would read as unrecognised values and quietly stop counting.
+function normaliseFtfc(v) {
+  if (v == null || v === '') return null;
+  if (v === true) return 'confirmed';
+  if (v === false) return 'none';
+  const t = String(v).toLowerCase();
+  if (t === 'yes' || t === 'true') return 'confirmed';
+  if (t === 'no' || t === 'false') return 'none';
+  if (['confirmed', 'partial', 'none', 'unclear'].includes(t)) return t;
+  return t;
+}
+
 const actualComboOf = f => (f.wasCorrect ? f.predictedStrategy : f.actualStrategy) || null;
 const trimNote = n => {
   const t = String(n || '').trim();
@@ -200,11 +244,12 @@ function buildLessonsDigest(all) {
   // 3. The other two layers, which have their own recurring biases.
   const layerTally = (predKey, actKey) => {
     const t = new Map();
+    const isFtfc = actKey === 'actualFtfc';
     for (const f of wrong) {
       const a = f[actKey];
       if (a == null) continue;
-      const actual = a === true ? 'yes' : (a === false ? 'no' : String(a));
-      const predicted = f[predKey] || 'unclear';
+      const actual = isFtfc ? normaliseFtfc(a) : (a === true ? 'yes' : (a === false ? 'no' : String(a)));
+      const predicted = (isFtfc ? normaliseFtfc(f[predKey]) : f[predKey]) || 'unclear';
       if (actual === predicted) continue;
       const k = `said "${predicted}" when he said "${actual}"`;
       t.set(k, (t.get(k) || 0) + 1);
@@ -260,4 +305,5 @@ module.exports = router;
 module.exports.getTeachingExamples = getTeachingExamples;
 module.exports.readAllFeedback = readAllFeedback;
 module.exports.buildLessonsDigest = buildLessonsDigest;
+module.exports.normaliseFtfc = normaliseFtfc;
 module.exports.persistExistingFeedback = persistExistingFeedback;
