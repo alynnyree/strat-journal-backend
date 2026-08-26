@@ -12,7 +12,21 @@ const redis = Redis.fromEnv();
 // convention screenshots already use elsewhere) so a wrong call can
 // actually be looked back at, not just remembered as a strategy name.
 const LIST_KEY = 'aiTestFeedback:log';
-const FEEDBACK_TTL_SECONDS = 90 * 24 * 60 * 60; // longer than the 30-day screenshot TTL used elsewhere — this is meant to accumulate a small reviewable history, not just bridge a short matching window
+
+// Feedback records are kept FOREVER — no expiry. The owner's requirement
+// is that every chart he has ever judged keeps improving the journal, so
+// an entry quietly ageing out would silently undo work he had already
+// done. (This previously expired after 90 days, which was wrong for
+// exactly that reason.)
+//
+// The one thing that does still expire is the full-size picture, which
+// is the only part big enough to matter: a few hundred entries of
+// phone-sized screenshots would fill the storage plan on their own. The
+// small teaching copy is permanent, so after the original ages out the
+// entry still shows a picture in the log AND still teaches — it just
+// shows the smaller one. Nothing is ever forgotten, only downscaled.
+const FULL_IMAGE_TTL_SECONDS = 90 * 24 * 60 * 60;
+const fullImageKey = id => `aiTestFeedback:img:${id}`;
 
 router.post('/test-classify-feedback', async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
@@ -55,7 +69,14 @@ router.post('/test-classify-feedback', async (req, res) => {
     actualBroadeningFormation: body.actualBroadeningFormation == null ? null : !!body.actualBroadeningFormation,
     userNotes: body.userNotes || null,
   };
-  await redis.set(`aiTestFeedback:${id}`, JSON.stringify(record), { ex: FEEDBACK_TTL_SECONDS });
+  // The full-size picture is split out under its own key so it can expire
+  // on its own without taking the lesson with it.
+  const fullImage = record.image;
+  if (fullImage) {
+    await redis.set(fullImageKey(id), fullImage, { ex: FULL_IMAGE_TTL_SECONDS });
+    record.image = null;
+  }
+  await redis.set(`aiTestFeedback:${id}`, JSON.stringify(record));
   await redis.lpush(LIST_KEY, id);
   res.json({ ok: true, id });
 });
@@ -67,10 +88,15 @@ router.get('/test-classify-feedback', async (req, res) => {
   const ids = await redis.lrange(LIST_KEY, 0, -1);
   if (!ids.length) return res.json({ feedback: [] });
 
-  const raw = await Promise.all(ids.map(id => redis.get(`aiTestFeedback:${id}`)));
-  const feedback = raw
-    .map(r => { try { return typeof r === 'string' ? JSON.parse(r) : r; } catch (e) { return null; } })
-    .filter(Boolean);
+  const feedback = await readAllFeedback();
+  // Only the browsing view needs the full-size pictures — the teaching
+  // path deliberately never loads them.
+  const fulls = await Promise.all(feedback.map(f => redis.get(fullImageKey(f.id))));
+  feedback.forEach((f, i) => {
+    // Falls back to the small copy once the original has aged out, so an
+    // old entry still shows its chart rather than turning into a blank.
+    f.image = fulls[i] || f.teachImage || null;
+  });
   res.json({ feedback });
 });
 
@@ -83,12 +109,130 @@ async function readAllFeedback() {
     .filter(Boolean);
 }
 
-// How many past corrections travel with each classification request.
-// Every example is re-sent on EVERY call, so this is a real cost/latency
-// dial, not a free "more is better" — hence a deliberate cap rather than
-// sending the whole log.
+// Entries saved before records became permanent still carry an expiry
+// from the old behaviour, so they would vanish on their own schedule
+// even now. This strips that, once, at startup — turning the existing
+// history into part of the permanent record rather than leaving the
+// owner with a memory that only starts from today.
+async function persistExistingFeedback() {
+  try {
+    const ids = await redis.lrange(LIST_KEY, 0, -1);
+    let persisted = 0;
+    for (const id of ids) {
+      // -1 = already permanent, -2 = already gone. Only the rest need it.
+      const ttl = await redis.ttl(`aiTestFeedback:${id}`);
+      if (ttl > 0) { await redis.persist(`aiTestFeedback:${id}`); persisted++; }
+    }
+    if (persisted) console.log(`Test feedback: made ${persisted} existing entr${persisted === 1 ? 'y' : 'ies'} permanent.`);
+  } catch (err) {
+    console.log('Could not make existing test feedback permanent:', err.message);
+  }
+}
+
+// How many past corrections travel VERBATIM with each classification.
+// Every one is re-sent on EVERY call, so this is a real cost/latency
+// dial rather than a free "more is better" — which is why the full
+// history travels as the digest below instead, and this cap covers only
+// the recent ones worth quoting in full.
 const MAX_TEACHING_EXAMPLES = 20;
 const MAX_CORRECT_EXAMPLES = 5; // the rest of the budget goes to corrections, which teach far more
+
+// --- The digest: how EVERY correction ever made keeps teaching ---------
+//
+// The verbatim cap above is what the owner objected to, and rightly:
+// with only the newest 20 travelling, a lesson he taught months ago
+// stopped having any effect. The fix is not to send everything — that
+// grows without limit and eventually makes every classification slow —
+// but to send a summary of everything alongside the recent detail.
+//
+// The key property: this digest's size grows with the number of DISTINCT
+// KINDS of mistake, not the number of uploads. There are only nine
+// combos, so the confusion table can never be large no matter how many
+// hundreds of charts he judges, and a lesson from his very first upload
+// survives forever as long as it is the only example of that mistake.
+const MAX_DIGEST_PAIRS = 10;
+const MAX_DIGEST_ACCURACY_ROWS = 8;
+const MAX_NOTE_CHARS = 220; // one long note must not crowd out the others
+
+const actualComboOf = f => (f.wasCorrect ? f.predictedStrategy : f.actualStrategy) || null;
+const trimNote = n => {
+  const t = String(n || '').trim();
+  if (!t) return '';
+  return t.length > MAX_NOTE_CHARS ? t.slice(0, MAX_NOTE_CHARS - 1).trimEnd() + '…' : t;
+};
+
+function buildLessonsDigest(all) {
+  if (!all || !all.length) return '';
+  const wrong = all.filter(f => f.wasCorrect === false);
+
+  // 1. Which misreadings actually recur, across the whole history.
+  const pairs = new Map();
+  for (const f of wrong) {
+    const actual = actualComboOf(f);
+    const predicted = f.predictedStrategy || 'unclear';
+    if (!actual || actual === predicted) continue;
+    const key = `${actual}|${predicted}`;
+    const entry = pairs.get(key) || { actual, predicted, count: 0, note: '', noteAt: -1 };
+    entry.count++;
+    // Keep the most recent explanation he gave for this kind of mistake —
+    // his latest thinking on it, and the part that teaches most.
+    const note = trimNote(f.userNotes);
+    if (note && (f.timestamp || 0) > entry.noteAt) { entry.note = note; entry.noteAt = f.timestamp || 0; }
+    pairs.set(key, entry);
+  }
+  const topPairs = [...pairs.values()].sort((a, b) => b.count - a.count || b.noteAt - a.noteAt).slice(0, MAX_DIGEST_PAIRS);
+
+  // 2. Which combos it reads reliably and which it does not.
+  const combo = new Map();
+  for (const f of all) {
+    const actual = actualComboOf(f);
+    if (!actual) continue;
+    const e = combo.get(actual) || { total: 0, right: 0 };
+    e.total++;
+    if (f.wasCorrect) e.right++;
+    combo.set(actual, e);
+  }
+  const weakest = [...combo.entries()]
+    .filter(([, e]) => e.total >= 2)
+    .sort((a, b) => (a[1].right / a[1].total) - (b[1].right / b[1].total) || b[1].total - a[1].total)
+    .slice(0, MAX_DIGEST_ACCURACY_ROWS);
+
+  // 3. The other two layers, which have their own recurring biases.
+  const layerTally = (predKey, actKey) => {
+    const t = new Map();
+    for (const f of wrong) {
+      const a = f[actKey];
+      if (a == null) continue;
+      const actual = a === true ? 'yes' : (a === false ? 'no' : String(a));
+      const predicted = f[predKey] || 'unclear';
+      if (actual === predicted) continue;
+      const k = `said "${predicted}" when he said "${actual}"`;
+      t.set(k, (t.get(k) || 0) + 1);
+    }
+    return [...t.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+  };
+  const ftfc = layerTally('predictedFtfc', 'actualFtfc');
+  const broadening = layerTally('predictedBroadeningFormation', 'actualBroadeningFormation');
+
+  const section = (title, lines) => (lines.length ? `\n${title}\n${lines.join('\n')}` : '');
+
+  return `
+
+EVERYTHING THIS AI HAS EVER GOT WRONG — a running summary of all ${all.length} chart${all.length === 1 ? '' : 's'} the trader has judged (${wrong.length} correction${wrong.length === 1 ? '' : 's'}). This covers his ENTIRE history, including charts too old to be quoted in full below. Treat these as standing rules about how HE reads charts.${section(
+    'Misreadings that keep recurring (what it truly was → what this AI wrongly called it):',
+    topPairs.map(p => `- It was "${p.actual}" but this AI called it "${p.predicted}" — ${p.count} time${p.count === 1 ? '' : 's'}.${p.note ? ` He explained: "${p.note}"` : ''}`),
+  )}${section(
+    'Track record by combo (lowest accuracy first — be most careful with these):',
+    weakest.map(([k, e]) => `- "${k}": read correctly ${e.right} of ${e.total} times.`),
+  )}${section(
+    'Recurring FTFC errors:',
+    ftfc.map(([k, n]) => `- This AI ${k} — ${n} time${n === 1 ? '' : 's'}.`),
+  )}${section(
+    'Recurring Broadening Formation errors:',
+    broadening.map(([k, n]) => `- This AI ${k} — ${n} time${n === 1 ? '' : 's'}.`),
+  )}
+`;
+}
 
 // Picks which past corrections are worth showing the model on the next
 // classification. Entries the trader marked WRONG are the valuable ones —
@@ -103,9 +247,17 @@ async function getTeachingExamples() {
   const right = all.filter(f => f.wasCorrect === true).sort(byNewest);
   const correctSlice = right.slice(0, MAX_CORRECT_EXAMPLES);
   const wrongSlice = wrong.slice(0, MAX_TEACHING_EXAMPLES - correctSlice.length);
-  return [...wrongSlice, ...correctSlice];
+  // Recent ones quoted in full, the whole history summarised. Together
+  // these mean nothing the owner has ever taught stops counting.
+  return {
+    examples: [...wrongSlice, ...correctSlice],
+    digest: buildLessonsDigest(all),
+    total: all.length,
+  };
 }
 
 module.exports = router;
 module.exports.getTeachingExamples = getTeachingExamples;
 module.exports.readAllFeedback = readAllFeedback;
+module.exports.buildLessonsDigest = buildLessonsDigest;
+module.exports.persistExistingFeedback = persistExistingFeedback;
