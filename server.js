@@ -15,9 +15,13 @@ const app = express();
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || '*' }));
 // Default Express JSON limit is 100KB — far too small for a base64-encoded
-// screenshot. Raised to 5MB; the /media/upload route itself also rejects
-// anything over ~3MB as a sanity check independent of this ceiling.
-app.use(express.json({ limit: '5mb' }));
+// screenshot. Raised to 16MB so the Test Classification tool can also take
+// a short screen recording (encoding for transport inflates a file by
+// about a third, so this clears a ~10MB clip). The /media/upload route
+// itself still rejects anything over ~3MB as a sanity check independent
+// of this ceiling, and the phone refuses an oversized clip before it ever
+// gets sent, so this is a ceiling rather than an invitation.
+app.use(express.json({ limit: '16mb' }));
 
 app.get('/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });

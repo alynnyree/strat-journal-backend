@@ -27,6 +27,14 @@ router.post('/test-classify-feedback', async (req, res) => {
     id,
     timestamp: Date.now(),
     image: body.image || null,
+    // A deliberately small, heavily-shrunk copy of the same picture, made
+    // by the phone before upload. `image` is the full-size one kept for
+    // looking back at in the log; `teachImage` is the only one ever sent
+    // to the AI as a past example, because that one gets re-uploaded on
+    // every future classification and so has to stay tiny. Null for video
+    // uploads and for entries saved before this existed — those simply
+    // teach by their text, exactly as before.
+    teachImage: body.teachImage || null,
     description: body.description || null,
     dir: body.dir || null,
     ftfcConfirmed: body.ftfcConfirmed ?? null,

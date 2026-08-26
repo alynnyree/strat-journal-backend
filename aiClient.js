@@ -54,7 +54,15 @@ class TruncatedResponseError extends Error {
 async function callGemini(prompt, responseSchema, maxOutputTokens = 1000, imageParts = [], opts = {}) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set on the server.');
-  const parts = [{ text: prompt }, ...imageParts.map(p => ({ inlineData: { mimeType: p.mimeType, data: p.data } }))];
+  // Each attachment can carry a `label` — a short text part emitted just
+  // before it. Without labels, several images in one request are an
+  // unlabelled pile and the model has no way to tell the chart it is
+  // being asked about from the past-correction charts travelling with it.
+  const parts = [{ text: prompt }];
+  for (const p of imageParts) {
+    if (p.label) parts.push({ text: p.label });
+    parts.push({ inlineData: { mimeType: p.mimeType, data: p.data } });
+  }
 
   // Newer Gemini models "think" before answering, and that internal
   // reasoning is billed against the SAME maxOutputTokens budget as the
@@ -178,11 +186,27 @@ async function callGeminiJson(prompt, responseSchema, maxOutputTokens, imagePart
 // into the {mimeType, data} shape Gemini's inlineData wants. Returns null
 // for anything that isn't a well-formed image data URL, so a corrupt or
 // unexpected value just gets skipped rather than crashing the request.
-function parseImageDataUrl(dataUrl) {
+//
+// Video is accepted too (test-tool uploads only — real trades only ever
+// carry still screenshots). iOS hands .mov files over as
+// "video/quicktime", which is the same container Gemini lists as
+// "video/mov", so it's renamed rather than rejected.
+const VIDEO_MIME_ALIASES = { 'video/quicktime': 'video/mov' };
+
+function parseMediaDataUrl(dataUrl, { allowVideo = false } = {}) {
   if (typeof dataUrl !== 'string') return null;
   const match = /^data:([^;]+);base64,(.+)$/s.exec(dataUrl);
   if (!match) return null;
-  return { mimeType: match[1], data: match[2] };
+  const rawMime = match[1].toLowerCase();
+  if (rawMime.startsWith('image/')) return { mimeType: rawMime, data: match[2] };
+  if (allowVideo && rawMime.startsWith('video/')) {
+    return { mimeType: VIDEO_MIME_ALIASES[rawMime] || rawMime, data: match[2] };
+  }
+  return null;
+}
+
+function parseImageDataUrl(dataUrl) {
+  return parseMediaDataUrl(dataUrl);
 }
 
 // Must match the exact data-v values used in index.html's Strat Setup
@@ -257,14 +281,48 @@ const TEST_CLASSIFY_SCHEMA = {
 // better real trades get classified — because these examples encode HIS
 // readings of these patterns, which generic instructions can't.
 //
-// Text only, deliberately: the chart images are already stored, but
-// examples are re-sent on EVERY call, so including 20 images would mean
-// 20 images transmitted and processed every time a trade closes. The
-// predicted-vs-actual plus the owner's own note carries most of the
-// teaching value at a tiny fraction of the cost.
+// Pictures ride along too, but on a much tighter budget than the text.
+// The asymmetry is the whole point of the design: text corrections are
+// cheap enough that 20 of them barely register, whereas every attached
+// picture is re-uploaded and re-read on EVERY future classification. So
+// the text budget is wide and the picture budget is deliberately narrow:
+//   - only CORRECTIONS carry pictures (a confirmed-correct read teaches
+//     little that its text doesn't already say),
+//   - at most MAX_TEACHING_IMAGES of them, newest first,
+//   - and only the small `teachImage` copy the phone makes at save time,
+//     never the full-size original, which stays in the log for viewing.
+// A hard byte ceiling sits under all of that as a backstop, so no single
+// oversized entry can quietly make every classification slow.
+const MAX_TEACHING_IMAGES = 4;
+const MAX_TEACHING_IMAGE_BYTES = 600 * 1024; // combined, base64 as sent
+
 function formatTeachingExamples(examples) {
-  if (!examples || !examples.length) return '';
+  return buildTeaching(examples).text;
+}
+
+// Returns { text, imageParts } — the written corrections, plus whichever
+// of their charts earned a place inside the picture budget above.
+function buildTeaching(examples) {
+  if (!examples || !examples.length) return { text: '', imageParts: [] };
   const yn = v => v === true ? 'yes' : (v === false ? 'no' : v);
+
+  // Decide the pictures FIRST, so each example's text can say whether its
+  // chart is attached and which numbered teaching chart it is.
+  const imageParts = [];
+  const attachedIndexById = new Map();
+  let budget = MAX_TEACHING_IMAGE_BYTES;
+  for (const f of examples) {
+    if (imageParts.length >= MAX_TEACHING_IMAGES) break;
+    if (f.wasCorrect !== false) continue; // corrections only
+    const part = parseMediaDataUrl(f.teachImage);
+    if (!part) continue; // no small copy saved (older entries, or a video upload)
+    if (part.data.length > budget) continue;
+    budget -= part.data.length;
+    const n = imageParts.length + 1;
+    attachedIndexById.set(f.id, n);
+    imageParts.push({ ...part, label: `TEACHING CHART ${n} — a PAST chart the trader corrected. This is reference material only. Do NOT classify this one.` });
+  }
+
   const lines = examples.map((f, i) => {
     const predicted = `combo ${f.predictedStrategy || 'unclear'}`
       + (f.predictedFtfc ? `, FTFC ${f.predictedFtfc}` : '')
@@ -273,19 +331,24 @@ function formatTeachingExamples(examples) {
       const actual = `combo ${f.actualStrategy || 'unclear'}`
         + (f.actualFtfc != null ? `, FTFC ${yn(f.actualFtfc)}` : '')
         + (f.actualBroadeningFormation != null ? `, Broadening Formation ${yn(f.actualBroadeningFormation)}` : '');
+      const shotNo = attachedIndexById.get(f.id);
       return `${i + 1}. WRONG — the AI read it as: ${predicted}\n   The trader says it was actually: ${actual}`
         + (f.userNotes ? `\n   The trader's explanation: "${f.userNotes}"` : '')
-        + (f.description ? `\n   The chart was described as: "${f.description}"` : '');
+        + (f.description ? `\n   The chart was described as: "${f.description}"` : '')
+        + (shotNo ? `\n   Its chart is attached as TEACHING CHART ${shotNo} — look at it to see what he actually meant.` : '');
     }
     return `${i + 1}. RIGHT — the AI read it as: ${predicted}, and the trader confirmed that was correct.`
       + (f.description ? `\n   The chart was described as: "${f.description}"` : '');
   });
-  return `
+
+  const text = `
 
 THE TRADER'S OWN PAST CORRECTIONS — study these before answering.
 These are real charts this same AI classified previously, followed by the trader's own verdict. They show how HE reads these patterns, which matters more than any general definition. Where a past reading was marked wrong, do not repeat that same mistake here.
-${lines.join('\n')}
+${lines.join('\n')}${imageParts.length ? `
+Some of those corrections have their chart attached, labelled TEACHING CHART 1 to ${imageParts.length}. Those are PAST examples for reference only — never classify one of them. Your answer must be about the chart labelled as the one to classify (or, if none is attached, about the written description).` : ''}
 `;
+  return { text, imageParts };
 }
 
 // Loads the corrections, never letting a failure there break the actual
@@ -295,10 +358,10 @@ ${lines.join('\n')}
 async function loadTeachingBlock() {
   try {
     const { getTeachingExamples } = require('./aiTestFeedback');
-    return formatTeachingExamples(await getTeachingExamples());
+    return buildTeaching(await getTeachingExamples());
   } catch (err) {
     console.log('Could not load teaching examples (classifying without them):', err.message);
-    return '';
+    return { text: '', imageParts: [] };
   }
 }
 
@@ -340,7 +403,7 @@ Trade data:
 - Taken off a Broadening Formation: ${trade.offBroadeningFormation == null ? 'n/a' : (trade.offBroadeningFormation ? 'Yes' : 'No')}
 - Underlying price at entry: ${trade.undEntry ?? 'n/a'}, at exit: ${trade.undExit ?? 'n/a'}
 - Last ~15 one-minute candles into entry: ${candleSummary || 'not available'}
-${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${screenshotSource === 'entry' ? 'entry' : 'exit (no entry screenshot was available)'} is included below — use it as supporting visual evidence for the candle pattern and any drawn lines/indicators visible on it, weighed together with the candle data above, not in place of it.` : '- No screenshot is available for this trade — classify from the candle data alone.'}${trade.testDescription ? `\n- The trader's own written description of the setup: "${trade.testDescription}"` : ''}${teaching}`;
+${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${screenshotSource === 'entry' ? 'entry' : 'exit (no entry screenshot was available)'} is included below — use it as supporting visual evidence for the candle pattern and any drawn lines/indicators visible on it, weighed together with the candle data above, not in place of it.` : '- No screenshot is available for this trade — classify from the candle data alone.'}${trade.testDescription ? `\n- The trader's own written description of the setup: "${trade.testDescription}"` : ''}${teaching.text}`;
 
   // 300 was too tight — a real image plus a full "reasoning" explanation
   // can run past that and get cut off mid-JSON, which then fails to parse
@@ -348,7 +411,10 @@ ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${scr
   // caught in testing before this, since every test here used a short,
   // hand-written stand-in response instead of a real Gemini call against
   // a real photo.
-  const parsed = await callGeminiJson(prompt, CLASSIFY_SCHEMA, 6000, imagePart ? [imagePart] : []);
+  const attachments = [];
+  if (imagePart) attachments.push({ ...imagePart, label: 'THE CHART TO CLASSIFY — this trade\'s own screenshot. Your answer is about this one.' });
+  attachments.push(...teaching.imageParts);
+  const parsed = await callGeminiJson(prompt, CLASSIFY_SCHEMA, 6000, attachments);
   return { strategy: parsed.strategy, confidence: parsed.confidence, reasoning: parsed.reasoning, usedScreenshot: !!imagePart };
 }
 
@@ -393,7 +459,11 @@ async function classifyStrategy(trade) {
 // the route calling this to report back, instead of failing silently.
 async function testClassifyStrategy({ image, description }) {
   const teaching = await loadTeachingBlock();
-  const imagePart = image ? parseImageDataUrl(image) : null;
+  // The sandbox tool accepts a short video as well as a still, since a
+  // clip shows the candles actually forming — which is how the trader
+  // reads a setup live, and something a single frozen frame can't convey.
+  const imagePart = image ? parseMediaDataUrl(image, { allowVideo: true }) : null;
+  const isVideo = !!imagePart && imagePart.mimeType.startsWith('video/');
 
   const prompt = `You are reading a candlestick chart and identifying what you actually see in it, using a trader's own Strat-methodology definitions. This is NOT a record of a specific trade — there is no entry marker, no direction, and no trade data. Do not ask for or assume any of that. Judge only from the chart itself (and the written description, if one is given).
 
@@ -413,11 +483,20 @@ Read the most recent/rightmost candles in the chart to find the combo. If severa
 3. IS THIS INSIDE A BROADENING FORMATION? A Broadening Formation is a compound outside bar structure — successively wider swings, each new high higher than the last high AND each new low lower than the last low, forming a visibly widening/megaphone shape. Answer "yes" only if that widening structure is genuinely visible; "no" if the range is flat or narrowing; "unclear" if there aren't enough swings shown to tell.
 
 For each of the three answers give an honest, specific reason referring to what you actually see in the chart — but keep each reason SHORT, one or two sentences at most. Never guess to be helpful — "unclear" is a perfectly good answer.
-${description ? `\nThe trader also wrote this description of the setup: "${description}"` : ''}${imagePart ? '\nThe chart image is attached below.' : '\nNo image was provided — judge only from the written description above.'}${teaching}`;
+${description ? `\nThe trader also wrote this description of the setup: "${description}"` : ''}${imagePart ? (isVideo
+    ? '\nA short screen recording of the chart is attached below. Watch how the candles form over the clip and judge the combo from the LAST completed candles at the end of it, not from a mid-clip moment.'
+    : '\nThe chart image is attached below.') : '\nNo image was provided — judge only from the written description above.'}${teaching.text}`;
 
   // Seven fields to fill, three of them free-text reasoning — the most
   // output-hungry call in the app, so the most generous budget.
-  const parsed = await callGeminiJson(prompt, TEST_CLASSIFY_SCHEMA, 8000, imagePart ? [imagePart] : []);
+  const attachments = [];
+  if (imagePart) {
+    attachments.push({ ...imagePart, label: isVideo
+      ? 'THE RECORDING TO CLASSIFY — your answer is about this clip.'
+      : 'THE CHART TO CLASSIFY — your answer is about this image.' });
+  }
+  attachments.push(...teaching.imageParts);
+  const parsed = await callGeminiJson(prompt, TEST_CLASSIFY_SCHEMA, 8000, attachments);
   return {
     strategy: parsed.strategy,
     confidence: parsed.confidence,
