@@ -6,6 +6,7 @@ const tradeStore = require('./tradeStore');
 const { getTokens, setLastCheck } = require('./tokenStore');
 const { getUnderlyingPriceAt, getFtfcForTrade } = require('./ftfcCheck');
 const { getReplayCandles } = require('./replayData');
+const { computeStopForTrade, loadSettings: loadStopSettings } = require('./stopRule');
 const { classifyStrategy } = require('./aiClient');
 const { notifyTradeClosed, notifyTradeOpened, notifyTradeStillOpen } = require('./pushcut');
 const { queueBrowserEvent } = require('./browserEvents');
@@ -100,6 +101,44 @@ async function enrichWithReplayData(token, trades) {
   return trades;
 }
 
+// Fills in the stop from the trader's own rule, which Schwab cannot supply
+// — a Strat stop is a line drawn on the underlying's chart, never an order
+// sent to the broker, so an auto-imported trade has always arrived with the
+// stop blank and therefore no realized R:R at all.
+//
+// Runs AFTER enrichWithStrategy, because the timeframe can depend on which
+// setup it was, and never overwrites a stop the trader entered himself.
+async function enrichWithStopRule(token, trades) {
+  let settings;
+  try {
+    settings = await loadStopSettings();
+  } catch (err) {
+    console.log('Could not load stop-rule settings; skipping stop enrichment:', err.message);
+    return trades;
+  }
+  if (!settings.enabled) return trades;
+
+  for (const trade of trades) {
+    if (trade.stop != null) continue; // his own number always wins
+    try {
+      const result = await computeStopForTrade(token, trade, settings);
+      // Stored even when no level could be worked out, so the app can say
+      // WHY a trade has no stop instead of just showing a blank.
+      trade.stop = result.stop;
+      trade.stopBasis = result.basis || null;
+      trade.stopReason = result.reason || null;
+      trade.stopTimeframe = result.timeframe || trade.stopTimeframe || null;
+      trade.stopSizeRatio = result.sizeRatio ?? null;
+      trade.stopAuto = result.stop != null;
+    } catch (err) {
+      console.log(`Stop-rule enrichment failed for ${trade.ticker}:`, err.message);
+      trade.stopReason = `Could not work out a stop: ${err.message}`;
+      trade.stopAuto = false;
+    }
+  }
+  return trades;
+}
+
 // Auto-tags each newly-matched trade with one of the trader's own defined
 // Strat setups, using the FTFC/price data and replay candles gathered by
 // the enrichment steps above — must run after those, not before. Left null
@@ -148,6 +187,7 @@ async function runSyncCheck() {
         await enrichWithFtfc(token, newPending);
         await enrichWithReplayData(token, newPending);
         await enrichWithStrategy(newPending);
+        await enrichWithStopRule(token, newPending);
       }
       updatedState.lastProcessedIds = [
         ...(state.lastProcessedIds || []).slice(-500), // keep this list bounded
@@ -208,6 +248,7 @@ async function runBackfill(daysBack = 90) {
     await enrichWithFtfc(token, newPending);
     await enrichWithReplayData(token, newPending);
     await enrichWithStrategy(newPending);
+    await enrichWithStopRule(token, newPending);
   }
   updatedState.lastProcessedIds = [
     ...(state.lastProcessedIds || []),
