@@ -545,6 +545,63 @@ ${description ? `\nThe trader also wrote this description of the setup: "${descr
   };
 }
 
+// ---- Reading a backtest ---------------------------------------------
+// The model is handed FINISHED numbers, counted from real candles by
+// backtest.js, and asked only to read them. It is told explicitly that it
+// must not produce a figure of its own, because a model asked for a win
+// rate will invent a convincing one — and a fabricated win rate presented
+// next to real ones is worse than no backtest at all.
+const BACKTEST_READ_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    headline: { type: 'STRING' },
+    timeframeComparison: { type: 'STRING' },
+    patterns: { type: 'ARRAY', items: { type: 'STRING' } },
+    cautions: { type: 'ARRAY', items: { type: 'STRING' } },
+    verdict: { type: 'STRING', enum: ['promising', 'mixed', 'poor', 'not enough data'] },
+  },
+  required: ['headline', 'timeframeComparison', 'patterns', 'cautions', 'verdict'],
+};
+
+async function interpretBacktest(results) {
+  const teaching = await loadTeachingBlock();
+  const rows = results.results.map(r => {
+    const s = r.summary;
+    return `- ${r.setup} on the ${r.timeframe}: ${s.occurrences} occurrence(s), ${s.wins} win / ${s.losses} loss`
+      + (s.winRate == null ? '' : ` (${s.winRate}% win rate)`)
+      + `, total ${s.totalR}R, average ${s.avgR}R per trade`
+      + ` — reached target ${s.hitTarget}, stopped out ${s.stoppedOut}, ran out of time ${s.ranOut}`
+      + ` — searched ${r.barsSearched} candles from ${r.from.slice(0,10)} to ${r.to.slice(0,10)}`;
+  }).join('\n');
+
+  const samples = results.results.flatMap(r =>
+    r.trades.slice(0, 6).map(t =>
+      `  ${r.setup} ${r.timeframe} ${t.when.slice(0,16).replace('T',' ')} ${t.dir} entry ${t.entry} stop ${t.stop} (${t.stopBasis}) -> ${t.outcome} ${t.r}R after ${t.barsHeld} bar(s)`)
+  ).join('\n');
+
+  const prompt = `You are reading the results of a backtest for a discretionary options trader who trades The Strat on ${results.ticker}.
+
+THE NUMBERS BELOW ARE ALREADY COUNTED. They were produced by walking real Schwab candles bar by bar, finding every occurrence of each setup, and playing each one forward using the trader's own stop rule until it hit its stop or its ${results.targetR}R target. YOU MUST NOT PRODUCE ANY FIGURE OF YOUR OWN. Do not estimate, do not extrapolate, do not invent a win rate, a count, or a return. Every number you mention must be copied from the results below. If something is not in the results, say it is not known rather than filling the gap.
+
+RESULTS (${results.days} days requested):
+${rows || '(nothing was found)'}
+
+${samples ? `A SAMPLE OF THE INDIVIDUAL TRADES:\n${samples}` : ''}
+${results.notes.length ? `\nLIMITS THAT APPLIED:\n${results.notes.map(n => `- ${n}`).join('\n')}` : ''}
+
+Write, for a trader with no interest in statistics jargon:
+1. "headline" — what these results actually say, in two or three plain sentences. Lead with the thing that matters most.
+2. "timeframeComparison" — if the same setup was tested on more than one timeframe, say which did better and by how much, using only the numbers above. If only one timeframe was tested, say so plainly instead of guessing.
+3. "patterns" — up to four things you notice in the results or in the sample trades: a setup that stops out far more than it reaches target, a direction that does better than the other, a timeframe where the sample is too small to trust, and so on. Ground each one in the numbers.
+4. "cautions" — up to three honest warnings. ALWAYS include a caution about sample size when a setup has fewer than 30 occurrences, because a win rate on 8 trades tells nobody anything. Also note that this simulation counts a bar containing both the stop and the target as a loss, and that a real discretionary trader would not have taken every one of these.
+5. "verdict" — one of: promising, mixed, poor, not enough data.
+
+Be direct. If the results are bad, say so. A backtest that flatters a strategy is worse than useless to someone risking money on it.${teaching.text}`;
+
+  const parsed = await callGeminiJson(prompt, BACKTEST_READ_SCHEMA, 6000);
+  return parsed;
+}
+
 const ANALYSIS_SCHEMA = {
   type: 'OBJECT',
   properties: {
@@ -592,4 +649,4 @@ Write "summary" as a 2-3 sentence overview, and "insights" as a list of specific
   return callGeminiJson(prompt, ANALYSIS_SCHEMA, 8000);
 }
 
-module.exports = { classifyStrategy, testClassifyStrategy, runPortfolioAnalysis, STRATEGIES };
+module.exports = { classifyStrategy, testClassifyStrategy, runPortfolioAnalysis, interpretBacktest, STRATEGIES };

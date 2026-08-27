@@ -1,5 +1,5 @@
 const express = require('express');
-const { runPortfolioAnalysis, classifyStrategy, testClassifyStrategy } = require('./aiClient');
+const { runPortfolioAnalysis, classifyStrategy, testClassifyStrategy, interpretBacktest } = require('./aiClient');
 const testFeedbackRouter = require('./aiTestFeedback');
 
 const router = express.Router();
@@ -84,6 +84,54 @@ router.post('/test-classify', async (req, res) => {
       || 'Unknown error';
     console.log('Test classification failed:', detail);
     res.status(500).json({ error: `Classification failed: ${detail}` });
+  }
+});
+
+// Runs a backtest and then has the model read the finished numbers.
+// The two steps are deliberately separate: the counting is arithmetic on
+// real candles, the reading is the model's only job, and the model never
+// sees a request to produce a figure.
+router.post('/backtest', async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  const body = req.body || {};
+  const ticker = (body.ticker || '').trim().toUpperCase();
+  const setups = Array.isArray(body.setups) ? body.setups : [];
+  const timeframes = Array.isArray(body.timeframes) ? body.timeframes : [];
+  const days = Math.max(1, Math.min(3650, parseInt(body.days, 10) || 30));
+  const targetR = Math.max(0.25, Math.min(20, Number(body.targetR) || 2));
+
+  if (!ticker) return res.status(400).json({ error: 'Pick a ticker.' });
+  if (!setups.length) return res.status(400).json({ error: 'Pick at least one setup to test.' });
+  if (!timeframes.length) return res.status(400).json({ error: 'Pick at least one timeframe.' });
+
+  try {
+    const { getValidAccessToken } = require('./auth');
+    const { runBacktest } = require('./backtest');
+    const token = await getValidAccessToken();
+    const stopSettings = await require('./stopRule').loadSettings();
+    const results = await runBacktest(token, {
+      ticker, setups, timeframes, days, targetR,
+      largeMultiple: stopSettings.largeMultiple,
+      lookback: stopSettings.lookback,
+    });
+
+    // The counted results are returned whatever happens to the reading.
+    // Real numbers are the valuable part; the commentary is a bonus, and
+    // losing the numbers because the model was busy would be absurd.
+    let reading = null, readingError = null;
+    try {
+      reading = await interpretBacktest(results);
+    } catch (err) {
+      readingError = err.response?.data?.error?.message || err.message;
+      console.log('Backtest reading failed:', readingError);
+    }
+    res.json({ ...results, reading, readingError });
+  } catch (err) {
+    const detail = err.response?.data?.error?.message || err.message || 'Unknown error';
+    console.error('Backtest failed:', detail);
+    res.status(500).json({ error: `Backtest failed: ${detail}` });
   }
 });
 
