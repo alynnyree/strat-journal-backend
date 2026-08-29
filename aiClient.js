@@ -212,6 +212,22 @@ function parseImageDataUrl(dataUrl) {
 // Must match the exact data-v values used in index.html's Strat Setup
 // cards — this is what lets an auto-classified trade show up correctly
 // tagged in the Journal without any frontend changes.
+// The three PLAYS the owner actually takes — how he chooses a trade, as
+// distinct from the candle combo he sees. These sit ALONGSIDE the nine
+// combos, never instead of them: a trade has a combo AND a play. His
+// words, 2026-08-29: "These strategies are in conjunction with the 9
+// strat combos. Nothing should be disregarded."
+//
+// All three carry the same target — reward at least twice the risk.
+const PLAYS = [
+  { key: 'Broadening Formation Scalp',
+    desc: 'A broadening formation on a higher timeframe. Drop to the 1-minute or 5-minute to scalp it, entering at one edge and targeting the OTHER side of the broadening formation. Reward at least 2x the risk.' },
+  { key: 'FTFC Direction Play',
+    desc: 'A Strat setup taken in the direction the timeframes already agree on (FTFC). First target is completion of the setup itself; second target is a gap or a major pivot point. Once a pivot point or the liquidity behind it has been taken out, looking to reverse. Reward at least 2x the risk.' },
+  { key: '2s Turning Into 3s',
+    desc: 'A directional bar (2) that expands into an outside bar (3) — one side taken out, then the other, so the bar takes out both sides of the previous range. Reward at least 2x the risk.' },
+];
+
 const STRATEGIES = [
   { key: '2-1-2 Continuation', desc: 'An inside bar (1, price consolidating, neither side in control) forms after consolidation, then a directional bar (2, one side aggressive enough to take out one side of the previous bar) breaks one side, followed by another directional bar (2) continuing that SAME direction.' },
   { key: '2-1-2 Reversal', desc: 'An inside bar (1) forms after consolidation, then a directional bar (2) breaks one side, followed by a directional bar (2) breaking the OPPOSITE side instead.' },
@@ -237,8 +253,13 @@ const CLASSIFY_SCHEMA = {
     strategy: { type: 'STRING', enum: [...STRATEGIES.map(s => s.key), 'unclear'] },
     confidence: { type: 'STRING', enum: ['high', 'medium', 'low'] },
     reasoning: { type: 'STRING' },
+    // The play is a SEPARATE answer from the combo. A trade has both, and
+    // each is allowed to be unclear without dragging the other down.
+    play: { type: 'STRING', enum: [...PLAYS.map(p => p.key), 'unclear'] },
+    playConfidence: { type: 'STRING', enum: ['high', 'medium', 'low'] },
+    playReasoning: { type: 'STRING' },
   },
-  required: ['strategy', 'confidence', 'reasoning'],
+  required: ['strategy', 'confidence', 'reasoning', 'play', 'playConfidence', 'playReasoning'],
 };
 
 // The Test Classification tool's own schema — three separate layered
@@ -418,6 +439,10 @@ Trade data:
 - Taken off a Broadening Formation: ${trade.offBroadeningFormation == null ? 'n/a' : (trade.offBroadeningFormation ? 'Yes' : 'No')}
 - Underlying price at entry: ${trade.undEntry ?? 'n/a'}, at exit: ${trade.undExit ?? 'n/a'}
 - Last ~15 one-minute candles into entry: ${candleSummary || 'not available'}
+
+SECOND QUESTION, answered separately. Which of the trader's three PLAYS was this? The play is HOW he chose the trade; the combo above is WHAT he saw. A trade has both, and they are independent — answer "unclear" for this one if the evidence does not support a choice, even where the combo is obvious.
+${PLAYS.map(p => `- "${p.key}": ${p.desc}`).join('\n')}
+
 ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${screenshotSource === 'entry' ? 'entry' : 'exit (no entry screenshot was available)'} is included below — use it as supporting visual evidence for the candle pattern and any drawn lines/indicators visible on it, weighed together with the candle data above, not in place of it.` : '- No screenshot is available for this trade — classify from the candle data alone.'}${trade.testDescription ? `\n- The trader's own written description of the setup: "${trade.testDescription}"` : ''}${teaching.text}`;
 
   // 300 was too tight — a real image plus a full "reasoning" explanation
@@ -442,9 +467,17 @@ ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${scr
 async function classifyStrategy(trade) {
   try {
     const result = await runClassification(trade);
-    if (result.strategy && result.strategy !== 'unclear' && result.confidence === 'high' && STRATEGIES.some(s => s.key === result.strategy)) {
-      return result;
-    }
+    // The play is judged on its own merits: a confident combo with an
+    // unsure play still gets tagged with the combo, and vice versa. Held
+    // to the same bar as the combo -- high confidence, and a name the
+    // trader actually uses.
+    const playOk = result.play && result.play !== 'unclear'
+      && result.playConfidence === 'high' && PLAYS.some(p => p.key === result.play);
+    if (!playOk) { result.play = null; result.playConfidence = null; }
+    const comboOk = result.strategy && result.strategy !== 'unclear'
+      && result.confidence === 'high' && STRATEGIES.some(s => s.key === result.strategy);
+    if (!comboOk) { result.strategy = null; }
+    if (comboOk || playOk) return result;
     console.log(`Strategy classification: not confident enough to auto-tag (confidence=${result.confidence}, strategy=${result.strategy}, usedScreenshot=${result.usedScreenshot}).`);
     return null;
   } catch (err) {
@@ -665,4 +698,4 @@ Write "summary" as a 2-3 sentence overview, and "insights" as a list of specific
   return callGeminiJson(prompt, ANALYSIS_SCHEMA, 8000);
 }
 
-module.exports = { classifyStrategy, testClassifyStrategy, runPortfolioAnalysis, interpretBacktest, STRATEGIES };
+module.exports = { classifyStrategy, testClassifyStrategy, runPortfolioAnalysis, interpretBacktest, STRATEGIES, PLAYS };

@@ -180,9 +180,19 @@ async function enrichWithStrategy(trades) {
     try {
       const result = await classifyStrategy(trade);
       if (result) {
-        trade.strat = result.strategy;
-        trade.stratConfidence = result.confidence;
-        trade.stratReasoning = result.reasoning;
+        // The combo (WHAT he saw) and the play (HOW he chose it) are two
+        // separate answers. Either can be confident while the other is
+        // not, so each is written only when it survived on its own.
+        if (result.strategy) {
+          trade.strat = result.strategy;
+          trade.stratConfidence = result.confidence;
+          trade.stratReasoning = result.reasoning;
+        }
+        if (result.play) {
+          trade.play = result.play;
+          trade.playConfidence = result.playConfidence;
+          trade.playReasoning = result.playReasoning;
+        }
       }
     } catch (err) {
       console.log(`Strategy classification failed for ${trade.ticker}:`, err.message);
