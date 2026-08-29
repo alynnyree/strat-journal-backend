@@ -78,6 +78,19 @@ router.post('/trades/backfill', async (req, res) => {
     .catch(err => console.error('Background backfill failed:', err.response?.data || err.message));
 });
 
+// What the historical import is doing right now. The app polls this so it
+// can report the truth -- "still fetching", "found 148 trades, working out
+// the details", "Schwab only served data back to 2 March" -- instead of
+// waiting a few seconds and declaring there was nothing to find.
+router.get('/trades/backfill/status', async (req, res) => {
+  try {
+    const state = await tradeStore.getState();
+    res.json({ backfill: state.lastBackfill || null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Manual trigger for an immediate check, same logic the cron job runs
 // on its own every few minutes.
 router.post('/trades/sync-now', async (req, res) => {

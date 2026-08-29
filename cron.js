@@ -228,38 +228,107 @@ async function runSyncCheck() {
 // mid-May while his trading began on 2 January — four months of real
 // trades were never fetched, and nothing said so. A year is the sensible
 // default for a history import; the caller can ask for more.
+// Records where the backfill has got to, so the app can say something
+// true while it runs instead of guessing. A year of history takes minutes
+// -- fetching a dozen windows from Schwab, then working out the FTFC,
+// underlying prices, replay data, setup and stop for every trade found.
+// Before this existed the app waited seven seconds and then announced
+// "Schwab had nothing new", which was not something it could know.
+async function noteBackfillProgress(patch) {
+  try {
+    const state = await tradeStore.getState();
+    state.lastBackfill = { ...(state.lastBackfill || {}), ...patch };
+    await tradeStore.saveState(state);
+  } catch (err) {
+    // Progress reporting must never be the thing that breaks an import.
+    console.log('Could not record backfill progress:', err.message);
+  }
+}
+
 async function runBackfill(daysBack = 365) {
-  const token = await getValidAccessToken();
   const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
   const now = new Date();
+  const requestedFrom = start.toISOString().slice(0, 10);
 
-  const fills = await getOptionFills(
-    token,
-    start.toISOString().slice(0, 10),
-    now.toISOString().slice(0, 10)
-  );
-
-  const state = await tradeStore.getState();
-  const alreadySeen = new Set(state.lastProcessedIds || []);
-  const freshFills = fills.filter(f => !alreadySeen.has(f.transactionId));
-
-  const { updatedState, newPending } = processFills(freshFills, {
-    openLegs: [],
-    pending: state.pending, // keep any trades already queued
+  await noteBackfillProgress({
+    status: 'running', phase: 'asking-schwab',
+    startedAt: now.toISOString(), finishedAt: null,
+    daysBack, requestedFrom,
+    fillsFound: null, tradesMatched: null, error: null,
+    windowsAsked: null, windowsOk: null, windowsFailed: null,
+    failures: [], oldestWindowWithData: null,
   });
-  if (newPending.length) {
-    await enrichWithUnderlyingPrices(token, newPending);
-    await enrichWithFtfc(token, newPending);
-    await enrichWithReplayData(token, newPending);
-    await enrichWithStrategy(newPending);
-    await enrichWithStopRule(token, newPending);
+
+  try {
+    const token = await getValidAccessToken();
+    const report = {};
+    const fills = await getOptionFills(
+      token,
+      requestedFrom,
+      now.toISOString().slice(0, 10),
+      report
+    );
+
+    await noteBackfillProgress({
+      phase: 'matching',
+      fillsFound: fills.length,
+      windowsAsked: report.windowsAsked ?? null,
+      windowsOk: report.windowsOk ?? null,
+      windowsFailed: report.windowsFailed ?? null,
+      failures: report.failures || [],
+      oldestWindowWithData: report.oldestWindowWithData || null,
+    });
+
+    const state = await tradeStore.getState();
+    const alreadySeen = new Set(state.lastProcessedIds || []);
+    const freshFills = fills.filter(f => !alreadySeen.has(f.transactionId));
+
+    const { updatedState, newPending } = processFills(freshFills, {
+      openLegs: [],
+      pending: state.pending, // keep any trades already queued
+    });
+
+    // Queue the matched trades BEFORE enriching them. Enrichment is the
+    // slow part -- thirteen timeframes of candles per trade -- and there
+    // is no reason to make him stare at an empty journal through all of
+    // it. The details fill themselves in on the next sync.
+    updatedState.lastProcessedIds = [
+      ...(state.lastProcessedIds || []),
+      ...freshFills.map(f => f.transactionId),
+    ];
+    updatedState.lastBackfill = {
+      ...(state.lastBackfill || {}),
+      phase: 'enriching',
+      tradesMatched: newPending.length,
+      freshFills: freshFills.length,
+    };
+    await tradeStore.saveState(updatedState);
+
+    if (newPending.length) {
+      await enrichWithUnderlyingPrices(token, newPending);
+      await enrichWithFtfc(token, newPending);
+      await enrichWithReplayData(token, newPending);
+      await enrichWithStrategy(newPending);
+      await enrichWithStopRule(token, newPending);
+      // The enriched copies are the same objects the queue holds, so
+      // saving the state again is what actually persists the extra detail.
+      const latest = await tradeStore.getState();
+      await tradeStore.saveState({ ...latest, pending: updatedState.pending });
+    }
+
+    await noteBackfillProgress({
+      status: 'done', phase: 'done',
+      finishedAt: new Date().toISOString(),
+    });
+    return newPending;
+  } catch (err) {
+    await noteBackfillProgress({
+      status: 'failed', phase: 'done',
+      finishedAt: new Date().toISOString(),
+      error: String(err.response?.data ? JSON.stringify(err.response.data) : err.message).slice(0, 300),
+    });
+    throw err;
   }
-  updatedState.lastProcessedIds = [
-    ...(state.lastProcessedIds || []),
-    ...freshFills.map(f => f.transactionId),
-  ];
-  await tradeStore.saveState(updatedState);
-  return newPending;
 }
 
 // Runs every 5 minutes by default. Change the cron expression to taste —

@@ -96,9 +96,26 @@ function extractOptionFills(transaction) {
 // walking backward in CHUNK_DAYS-sized pieces, starting at endDate (today,
 // for a normal backfill) and stepping toward startDate. Recent data is
 // always fetched — and available to the app — before older data.
-async function getOptionFills(accessToken, startDate, endDate) {
+// `report`, if passed, is filled in with what actually happened: how many
+// windows were asked for, how many came back, how many failed and why, and
+// the oldest fill Schwab was willing to hand over. Without this a window
+// Schwab refuses is caught, logged to a server log nobody reads, and
+// silently skipped -- which looks identical to "you have no trades that
+// far back". The two need telling apart.
+async function getOptionFills(accessToken, startDate, endDate, report = null) {
   const accountNumber = await getAccountNumber(accessToken);
-  if (!accountNumber) return [];
+  if (!accountNumber) {
+    if (report) { report.accountFound = false; report.error = 'No Schwab account returned.'; }
+    return [];
+  }
+  if (report) {
+    report.accountFound = true;
+    report.windowsAsked = 0;
+    report.windowsOk = 0;
+    report.windowsFailed = 0;
+    report.failures = [];
+    report.oldestWindowWithData = null;
+  }
 
   const rangeEndMs = new Date(toSchwabTimestamp(endDate, true)).getTime();
   const rangeStartMs = new Date(toSchwabTimestamp(startDate, false)).getTime();
@@ -115,25 +132,51 @@ async function getOptionFills(accessToken, startDate, endDate) {
     const chunkEndIso = new Date(chunkEndMs).toISOString();
 
     let raw = [];
+    let failed = false;
+    if (report) report.windowsAsked++;
     try {
       raw = await schwabGet(`/accounts/${accountNumber}/transactions`, accessToken, {
         startDate: chunkStartIso,
         endDate: chunkEndIso,
         types: 'TRADE',
       });
+      if (report) report.windowsOk++;
     } catch (err) {
-      console.log(`Chunk ${chunkStartIso} → ${chunkEndIso} failed:`, err.response?.data || err.message);
+      failed = true;
+      const why = err.response?.data
+        ? (typeof err.response.data === 'string' ? err.response.data : JSON.stringify(err.response.data))
+        : err.message;
+      console.log(`Chunk ${chunkStartIso} → ${chunkEndIso} failed:`, why);
+      if (report) {
+        report.windowsFailed++;
+        // Keep a handful, not every one -- enough to see the pattern.
+        if (report.failures.length < 5) {
+          report.failures.push({
+            from: chunkStartIso.slice(0, 10),
+            to: chunkEndIso.slice(0, 10),
+            status: err.response?.status || null,
+            why: String(why).slice(0, 200),
+          });
+        }
+      }
     }
 
     console.log(`Chunk ${chunkStartIso} → ${chunkEndIso}: ${Array.isArray(raw) ? raw.length : 0} transaction(s)`);
 
+    let addedHere = 0;
     for (const t of (raw || [])) {
       for (const fill of extractOptionFills(t)) {
         const dedupeKey = `${fill.transactionId}-${fill.occ}-${fill.instruction}-${fill.timestamp}`;
         if (seen.has(dedupeKey)) continue;
         seen.add(dedupeKey);
         allFills.push(fill);
+        addedHere++;
       }
+    }
+    // Windows are walked newest-first, so the last one to yield anything
+    // is the oldest date Schwab actually served.
+    if (report && !failed && addedHere > 0) {
+      report.oldestWindowWithData = chunkStartIso.slice(0, 10);
     }
 
     chunkEndMs = chunkStartMs;
