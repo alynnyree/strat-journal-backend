@@ -224,7 +224,11 @@ async function runSyncCheck() {
 // One-time (or on-demand) wide-range pull for historical backfill.
 // Defaults to 90 days (3 months) — enough to study recent trades without
 // pulling a full year; increase if you want to look further back.
-async function runBackfill(daysBack = 90) {
+// 90 days was the old default, and it is why the owner's journal began in
+// mid-May while his trading began on 2 January — four months of real
+// trades were never fetched, and nothing said so. A year is the sensible
+// default for a history import; the caller can ask for more.
+async function runBackfill(daysBack = 365) {
   const token = await getValidAccessToken();
   const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
   const now = new Date();
