@@ -472,7 +472,18 @@ async function classifyStrategy(trade) {
 // confidence, since the whole point is to see what the AI actually thinks
 // so the owner can judge it. Errors are NOT swallowed — they're left for
 // the route calling this to report back, instead of failing silently.
-async function testClassifyStrategy({ image, description }) {
+// `marketFtfc`, when given, is the REAL timeframe alignment worked out
+// from actual candle data for a named ticker at a named moment — not a
+// reading off the picture. The owner's instruction is that classification
+// should use both: the measured facts where they exist, and the eye for
+// everything a chart shows that no data feed carries (his own drawn
+// lines, a broadening formation, where price sits in a range).
+//
+// Optional on purpose. Given a picture with no ticker or time, the tool
+// still works exactly as it did — reading everything visually — because
+// most of what he tests is a screenshot from somewhere with no date on
+// it at all.
+async function testClassifyStrategy({ image, description, marketFtfc }) {
   const teaching = await loadTeachingBlock();
   // The sandbox tool accepts a short video as well as a still, since a
   // clip shows the candles actually forming — which is how the trader
@@ -487,7 +498,12 @@ In the Strat, each candle is numbered by how it relates to the PREVIOUS candle:
 - "2" = directional bar (takes out exactly ONE side of the previous candle's range — "2 up" takes out the high, "2 down" takes out the low)
 - "3" = outside bar (takes out BOTH sides of the previous candle's range)
 
-Answer three separate questions independently:
+${marketFtfc ? `MEASURED FACTS. The following was worked out from real candle data for ${marketFtfc.ticker} at ${marketFtfc.when}, not read off the picture. Where it covers a question below, it is the ANSWER to that question — say so, and set that answer's confidence to "high". Your eye is for what the data cannot carry: drawn lines, a broadening formation, where price sits in its range.
+- Timeframes aligned: ${marketFtfc.confirmed ? 'YES' : 'NO'}${marketFtfc.direction ? ` (${marketFtfc.direction})` : ''}
+- Longest run of agreeing timeframes: ${marketFtfc.run || 0} of 13${(marketFtfc.timeframesInRun || []).length ? ` — ${marketFtfc.timeframesInRun.join(' → ')}` : ''}
+- If that run is 4 or more, timeframe continuity is CONFIRMED; if it is 2 or 3, it is PARTIAL; if 0 or 1, NONE.
+
+` : ''}Answer three separate questions independently:
 
 1. WHICH CANDLE COMBO is present? Choose from these, or "unclear":
 ${STRATEGIES.map(s => `- "${s.key}": ${s.desc}`).join('\n')}
