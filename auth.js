@@ -20,6 +20,17 @@ router.get('/status', async (req, res) => {
     // dead for weeks. This answers the second one specifically.
     const neverConnected = !store.refresh_token;
     const refreshBroken = store.last_refresh_ok === false;
+    // Schwab's refresh token lives SEVEN DAYS from the sign-in that
+    // created it. Renewing gives a new access token but does not restart
+    // that clock, so the countdown runs from connected_at, not from the
+    // last renewal. Knowing this in advance is the difference between
+    // signing in when it suits him and finding out because a day of
+    // trades failed to arrive.
+    const SIGN_IN_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
+    const connectedMs = store.connected_at ? Date.parse(store.connected_at) : null;
+    const expiresMs = connectedMs ? connectedMs + SIGN_IN_LIFE_MS : null;
+    const msLeft = expiresMs == null ? null : expiresMs - Date.now();
+    const hoursLeft = msLeft == null ? null : Math.floor(msLeft / (60 * 60 * 1000));
     res.json({
       hasRefreshToken: !!store.refresh_token,
       hasAccessToken: !!store.access_token,
@@ -30,6 +41,13 @@ router.get('/status', async (req, res) => {
       lastRefreshAt: store.last_refresh_at || null,
       lastRefreshError: store.last_refresh_error || null,
       connectedAt: store.connected_at || null,
+      signInExpiresAt: expiresMs ? new Date(expiresMs).toISOString() : null,
+      signInHoursLeft: hoursLeft,
+      // Null when we cannot tell (an older sign-in that predates this
+      // being recorded) -- the app must not invent a countdown it does
+      // not have.
+      signInExpiringSoon: hoursLeft == null ? null : hoursLeft <= 48,
+      signInLifeDays: 7,
     });
   } catch (err) {
     res.status(500).json({ error: 'Could not read token status: ' + err.message });
