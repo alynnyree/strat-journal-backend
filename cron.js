@@ -280,6 +280,9 @@ async function runBackfill(daysBack = 365) {
   const now = new Date();
   const requestedFrom = start.toISOString().slice(0, 10);
 
+  // Keep the attempt count across a resume; a run that reaches 'done'
+  // clears it, so a later manual import starts from a clean slate.
+  const prior = (await tradeStore.getState()).lastBackfill || {};
   await noteBackfillProgress({
     status: 'running', phase: 'asking-schwab',
     startedAt: now.toISOString(), finishedAt: null,
@@ -287,6 +290,7 @@ async function runBackfill(daysBack = 365) {
     fillsFound: null, tradesMatched: null, error: null,
     windowsAsked: null, windowsOk: null, windowsFailed: null,
     failures: [], oldestWindowWithData: null,
+    attempts: prior.attempts || 0,
   });
 
   try {
@@ -349,6 +353,7 @@ async function runBackfill(daysBack = 365) {
     await noteBackfillProgress({
       status: 'done', phase: 'done',
       finishedAt: new Date().toISOString(),
+      attempts: 0, resumedAutomatically: false,
     });
     return newPending;
   } catch (err) {
@@ -361,11 +366,62 @@ async function runBackfill(daysBack = 365) {
   }
 }
 
+// Carries an unfinished history import on by itself.
+//
+// The owner should not have to keep tapping a button, and until now he
+// did: a backfill that Schwab blocked, or that died when the server
+// restarted, simply stopped and waited for a human. Schwab turns requests
+// away when too many arrive at once -- which a year-long import can
+// trigger -- and that block lifts by itself after a few minutes. There is
+// no reason a person needs to be involved in waiting for it.
+//
+// A backfill still marked "running" long after it started is not running;
+// nothing survives a restart mid-job. Both that and an outright failure
+// are treated the same way: wait, then carry on.
+const RETRY_WAIT_MS = 16 * 60 * 1000;   // Schwab's block lifts in about 15
+const STALE_RUN_MS = 25 * 60 * 1000;    // beyond this, a "running" job is dead
+const MAX_RETRIES = 8;
+let resumeInFlight = false;
+
+async function resumeBackfillIfNeeded() {
+  if (resumeInFlight) return;
+  const state = await tradeStore.getState();
+  const b = state.lastBackfill;
+  if (!b || b.status === 'done') return;
+
+  const startedMs = b.startedAt ? Date.parse(b.startedAt) : 0;
+  const stalled = b.status === 'running' && Date.now() - startedMs > STALE_RUN_MS;
+  if (b.status !== 'failed' && !stalled) return;   // genuinely still working
+
+  const attempts = b.attempts || 0;
+  if (attempts >= MAX_RETRIES) return;             // stop pestering Schwab
+
+  const lastTry = Date.parse(b.finishedAt || b.startedAt || 0) || 0;
+  if (Date.now() - lastTry < RETRY_WAIT_MS) return;
+
+  resumeInFlight = true;
+  console.log(`Resuming unfinished backfill by itself (attempt ${attempts + 1} of ${MAX_RETRIES}).`);
+  try {
+    await noteBackfillProgress({ attempts: attempts + 1, resumedAutomatically: true });
+    await runBackfill(b.daysBack || 365);
+  } catch (err) {
+    console.log('Automatic resume failed, will try again later:', err.message);
+  } finally {
+    resumeInFlight = false;
+  }
+}
+
 // Runs every 5 minutes by default. Change the cron expression to taste —
 // Schwab rate limits are generous enough for personal use at this interval.
 function startAutoSync(intervalCron = '*/5 * * * *') {
-  cron.schedule(intervalCron, runSyncCheck);
+  cron.schedule(intervalCron, async () => {
+    await runSyncCheck();
+    // Picking up where an interrupted import left off is part of keeping
+    // the journal current, not a separate thing he has to ask for.
+    await resumeBackfillIfNeeded().catch(err =>
+      console.log('Backfill resume check failed:', err.message));
+  });
   console.log(`Auto-sync scheduled: ${intervalCron}`);
 }
 
-module.exports = { startAutoSync, runSyncCheck, runBackfill };
+module.exports = { startAutoSync, runSyncCheck, runBackfill, resumeBackfillIfNeeded };
