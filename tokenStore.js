@@ -38,4 +38,11 @@ async function setLastCheck(iso) {
   await writeStore(store);
 }
 
-module.exports = { saveTokens, getTokens, setLastCheck };
+// Merges a few fields in without touching the tokens themselves. Used to
+// record whether the Schwab connection is still alive.
+async function saveTokenFields(fields) {
+  const store = await readStore();
+  await writeStore({ ...store, ...fields });
+}
+
+module.exports = { saveTokens, getTokens, setLastCheck, saveTokenFields };
