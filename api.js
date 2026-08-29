@@ -3,6 +3,7 @@ const axios = require('axios');
 const { getValidAccessToken } = require('./auth');
 const { getTokens, setLastCheck } = require('./tokenStore');
 const tradeStore = require('./tradeStore');
+const alpaca = require('./alpacaClient');
 const { runBackfill, runSyncCheck } = require('./cron');
 const { getFtfcForTrade, getUnderlyingPriceAt } = require('./ftfcCheck');
 const { getReplayCandles } = require('./replayData');
@@ -163,6 +164,48 @@ router.post('/trade-data/enrich', async (req, res) => {
 // ---- Stop rule ------------------------------------------------------
 // The trader's own stop rule, so the app can show it, change it, and try
 // it against a single trade without waiting for the next sync.
+
+// Alpaca keys, typed into the app rather than added to the server by
+// hand. Guarded by the same App Key as the other routes that matter.
+// The secret is never sent back — only whether one is on file and the
+// last four characters of the key, which is enough to recognise it
+// without being enough to use it.
+router.get('/alpaca/status', async (req, res) => {
+  try {
+    await alpaca.ensureKeysLoaded();
+    res.json(alpaca.keyStatus());
+  } catch (err) {
+    res.status(500).json({ error: 'Could not read the Alpaca connection.' });
+  }
+});
+
+router.post('/alpaca/keys', async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).json({ error: 'Wrong app key.' });
+  }
+  try {
+    const { keyId, secretKey } = req.body || {};
+    if (!keyId || !secretKey) {
+      return res.status(400).json({ error: 'Both the API key and the secret are needed.' });
+    }
+    await alpaca.saveKeys(keyId, secretKey);
+    res.json({ ok: true, status: alpaca.keyStatus() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/alpaca/keys', async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).json({ error: 'Wrong app key.' });
+  }
+  try {
+    await alpaca.clearKeys();
+    res.json({ ok: true, status: alpaca.keyStatus() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/stop-rule/settings', async (req, res) => {
   try {
