@@ -1,5 +1,7 @@
 const express = require('express');
 const { runPortfolioAnalysis, classifyStrategy, testClassifyStrategy, interpretBacktest } = require('./aiClient');
+const { getFtfcForTrade } = require('./ftfcCheck');
+const { getValidAccessToken } = require('./auth');
 const testFeedbackRouter = require('./aiTestFeedback');
 
 const router = express.Router();
@@ -67,13 +69,54 @@ router.post('/test-classify', async (req, res) => {
   const body = req.body || {};
   const image = typeof body.image === 'string' ? body.image : null;
   const description = typeof body.description === 'string' ? body.description.trim() : '';
+  const ticker = typeof body.ticker === 'string' ? body.ticker.trim().toUpperCase() : '';
+  const when = typeof body.when === 'string' ? body.when.trim() : '';
   if (!image && !description) {
     return res.status(400).json({ error: 'Provide an image, a description, or both.' });
   }
 
   try {
-    const result = await testClassifyStrategy({ image, description });
-    res.json({ result });
+    // Given a ticker and a moment, the timeframe alignment is MEASURED
+    // from real candles rather than read off the picture. Both are then
+    // put in front of the model. Failing to get it is not a failure of
+    // the whole request -- the tool still reads the chart visually, which
+    // is what it did before this existed.
+    let marketFtfc = null;
+    let marketError = null;
+    if (ticker && when) {
+      const whenMs = Date.parse(when);
+      if (!Number.isFinite(whenMs)) {
+        marketError = 'That date and time could not be read, so the chart was judged by eye alone.';
+      } else if (whenMs > Date.now()) {
+        marketError = 'That moment is in the future, so there is no market data for it — the chart was judged by eye alone.';
+      } else {
+        try {
+          const token = await getValidAccessToken();
+          const ftfc = await getFtfcForTrade(token, ticker, whenMs);
+          // The field is runLength, not run. Getting this wrong would have
+          // meant the measured data never reached the model and nothing
+          // said so — the request would just have quietly gone on reading
+          // the picture as before.
+          if (ftfc && ftfc.runLength) {
+            marketFtfc = {
+              ticker, when,
+              confirmed: !!ftfc.confirmed,
+              direction: ftfc.direction || null,
+              run: ftfc.runLength || 0,
+              timeframesInRun: ftfc.timeframesInRun || [],
+              timeframes: ftfc.timeframes || {},
+            };
+          } else {
+            marketError = `No market data came back for ${ticker} at that moment, so the chart was judged by eye alone.`;
+          }
+        } catch (err) {
+          marketError = 'Market data could not be reached just now, so the chart was judged by eye alone.';
+        }
+      }
+    }
+
+    const result = await testClassifyStrategy({ image, description, marketFtfc });
+    res.json({ result, marketFtfc, marketError });
   } catch (err) {
     // The owner has no way to "check server logs" himself — this is his
     // only route to finding out what actually went wrong, so the real
