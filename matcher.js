@@ -115,6 +115,7 @@ function processFills(fills, state) {
         openTimestamp: fill.timestamp,
         totalQuantity: fill.quantity, // how many contracts were opened in total
         remaining: fill.quantity,
+        openFees: fill.fees,          // fees for the WHOLE opening, split below when it closes in pieces
       };
       openLegs.push(leg);
       newlyOpenedLegs.push(leg);
@@ -133,6 +134,21 @@ function processFills(fills, state) {
         // the position itself is betting on.
         const perContractDiff = (fill.price - leg.openPrice);
         const pnlDollar = perContractDiff * 100 * qtyMatched;
+        // Each side's fees, in proportion to the contracts being matched
+        // here. The divisors are the ORIGINAL sizes, captured before any
+        // of them are reduced -- dividing by a quantity while subtracting
+        // from it produced a false four-figure fee gap once already.
+        const openTotalQty = leg.totalQuantity;
+        const closeTotalQty = fill.quantity;
+        const shareOf = (total, part, whole) =>
+          (total == null || !whole) ? null : Math.round(total * (part / whole) * 100) / 100;
+        const entryFees = shareOf(leg.openFees, qtyMatched, openTotalQty);
+        const exitFees = shareOf(fill.fees, qtyMatched, closeTotalQty);
+        // Unknown on either side means the total is unknown. A missing fee
+        // must not quietly become a fee of nothing.
+        const fees = (entryFees == null || exitFees == null)
+          ? null
+          : Math.round((entryFees + exitFees) * 100) / 100;
         const pnlPercent = leg.openPrice ? (perContractDiff / leg.openPrice) * 100 : 0;
         const remainingAfterThis = leg.remaining - qtyMatched;
         const heldMs = fill.timestamp - leg.openTimestamp;
@@ -159,6 +175,11 @@ function processFills(fills, state) {
           undExit: null,
           pnlDollar: Math.round(pnlDollar * 100) / 100,
           pnlPercent: Math.round(pnlPercent * 10) / 10,
+          entryFees, exitFees, fees,
+          // What actually reached the account. Null when the fees are not
+          // known, so nothing downstream can mistake "no fee recorded" for
+          // "this trade was free".
+          pnlNet: fees == null ? null : Math.round((pnlDollar - fees) * 100) / 100,
           winLoss: pnlDollar >= 0 ? 'Win' : 'Loss',
           // Flags a pairing that spans more than a day. These are scalps, so
           // this should essentially never fire — if it does, the match is
