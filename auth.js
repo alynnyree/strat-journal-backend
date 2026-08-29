@@ -1,6 +1,6 @@
 const express = require('express');
 const axios = require('axios');
-const { saveTokens, getTokens } = require('./tokenStore');
+const { saveTokens, getTokens, saveTokenFields } = require('./tokenStore');
 
 const router = express.Router();
 
@@ -14,11 +14,22 @@ const router = express.Router();
 router.get('/status', async (req, res) => {
   try {
     const store = await getTokens();
+    // "Connected" has meant two different things: the app can reach this
+    // server, and this server can reach Schwab. They are not the same, and
+    // the app showed a green light on the first while the second had been
+    // dead for weeks. This answers the second one specifically.
+    const neverConnected = !store.refresh_token;
+    const refreshBroken = store.last_refresh_ok === false;
     res.json({
       hasRefreshToken: !!store.refresh_token,
       hasAccessToken: !!store.access_token,
       accessTokenExpired: store.expires_at ? Date.now() > store.expires_at : null,
       lastTransactionCheck: store.last_transaction_check || null,
+      schwabConnected: !neverConnected && !refreshBroken,
+      needsReconnect: neverConnected || refreshBroken,
+      lastRefreshAt: store.last_refresh_at || null,
+      lastRefreshError: store.last_refresh_error || null,
+      connectedAt: store.connected_at || null,
     });
   } catch (err) {
     res.status(500).json({ error: 'Could not read token status: ' + err.message });
@@ -69,6 +80,14 @@ router.get('/schwab/callback', async (req, res) => {
     );
 
     await saveTokens(resp.data);
+    // A fresh login clears any recorded failure, so the app stops telling
+    // him to reconnect the moment he actually has.
+    await saveTokenFields({
+      connected_at: new Date().toISOString(),
+      last_refresh_ok: true,
+      last_refresh_at: new Date().toISOString(),
+      last_refresh_error: null,
+    });
     res.send('Schwab connected. You can close this tab and return to the Strat Journal app.');
   } catch (err) {
     console.error('OAuth callback failed:', err.response?.data || err.message);
@@ -79,28 +98,63 @@ router.get('/schwab/callback', async (req, res) => {
 // Refreshes the access token using the stored refresh token.
 // Schwab refresh tokens are long-lived but do expire — if this starts
 // failing, you'll need to repeat the /schwab/login flow manually.
+// Schwab refresh tokens last SEVEN DAYS and cannot be extended -- the
+// login flow has to be repeated by hand every week. When that lapses,
+// every sync, backfill and stream fails from this one point, and until
+// now the only trace was a thrown error nobody surfaced. So the outcome
+// is recorded: a failure here is the difference between "you have no
+// trades" and "nothing has been able to reach Schwab for a month".
 async function refreshAccessToken() {
   const store = await getTokens();
-  if (!store.refresh_token) throw new Error('No refresh token on file — run /auth/schwab/login first.');
+  if (!store.refresh_token) {
+    await noteRefreshOutcome(false, 'No Schwab login on file.');
+    throw new Error('No refresh token on file — run /auth/schwab/login first.');
+  }
 
   const basicAuth = Buffer.from(
     `${process.env.SCHWAB_CLIENT_ID}:${process.env.SCHWAB_CLIENT_SECRET}`
   ).toString('base64');
 
-  const resp = await axios.post(
-    `${AUTH_BASE}/token`,
-    new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: store.refresh_token,
-    }),
-    {
-      headers: {
-        Authorization: `Basic ${basicAuth}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-    }
-  );
-  return await saveTokens(resp.data);
+  let resp;
+  try {
+    resp = await axios.post(
+      `${AUTH_BASE}/token`,
+      new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: store.refresh_token,
+      }),
+      {
+        headers: {
+          Authorization: `Basic ${basicAuth}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      }
+    );
+  } catch (err) {
+    const why = err.response?.data
+      ? (typeof err.response.data === 'string' ? err.response.data : JSON.stringify(err.response.data))
+      : err.message;
+    await noteRefreshOutcome(false, String(why).slice(0, 300));
+    throw err;
+  }
+  const saved = await saveTokens(resp.data);
+  await noteRefreshOutcome(true, null);
+  return saved;
+}
+
+// Records whether the last attempt to renew the Schwab connection worked.
+// Never allowed to break the renewal itself.
+async function noteRefreshOutcome(ok, why) {
+  try {
+    const store = await getTokens();
+    await saveTokenFields({
+      last_refresh_ok: ok,
+      last_refresh_at: new Date().toISOString(),
+      last_refresh_error: ok ? null : why,
+    });
+  } catch (err) {
+    console.log('Could not record Schwab connection state:', err.message);
+  }
 }
 
 async function getValidAccessToken() {
