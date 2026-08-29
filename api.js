@@ -67,7 +67,11 @@ router.delete('/trades/pending/:id', async (req, res) => {
 // check /trades/pending (or tap "Check for New Trades") a bit later to
 // see the results land.
 router.post('/trades/backfill', async (req, res) => {
-  const daysBack = parseInt(req.body?.daysBack, 10) || 90;
+  // Defaulted to 90, which silently truncated the owner's history to the
+  // last three months while he had been trading all year. A year now, and
+  // capped at three so a typo cannot ask Schwab for a decade.
+  const requested = parseInt(req.body?.daysBack, 10);
+  const daysBack = Number.isFinite(requested) ? Math.max(1, Math.min(1095, requested)) : 365;
   res.json({ started: true, daysBack });
   runBackfill(daysBack)
     .then(newPending => console.log(`Background backfill complete: ${newPending.length} trade(s) imported.`))
