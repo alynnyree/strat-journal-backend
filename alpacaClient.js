@@ -25,14 +25,90 @@ const axios = require('axios');
 
 const DATA_BASE = 'https://data.alpaca.markets/v2';
 
+// Keys can come from two places: the server's own settings, or typed
+// into the app. The second exists because the owner has no technical
+// background and adding server settings by hand is a genuinely awkward
+// job — the app already takes his Backend URL and App Key the same way,
+// so this is the path he already knows.
+//
+// Held in memory once read, so a lookup does not hit storage per trade.
+let savedKeys = null;
+let savedKeysLoaded = false;
+
+// Built on first use, not on load. Creating it at import time makes every
+// module that pulls this one in depend on storage being reachable, which
+// it need not be — and the whole point of this file is that it degrades
+// to doing nothing rather than breaking anything.
+const KEY_STORE = 'alpaca:keys';
+let redisClient = null;
+function store() {
+  if (!redisClient) {
+    const { Redis } = require('@upstash/redis');
+    redisClient = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+  }
+  return redisClient;
+}
+
+async function loadSavedKeys() {
+  try {
+    const data = await store().get(KEY_STORE);
+    savedKeys = data && data.key && data.secret ? data : null;
+  } catch (err) {
+    console.log('Could not read the saved Alpaca keys:', err.message);
+    savedKeys = null;
+  }
+  savedKeysLoaded = true;
+  return savedKeys;
+}
+
+async function saveKeys(key, secret) {
+  const clean = { key: String(key || '').trim(), secret: String(secret || '').trim() };
+  if (!clean.key || !clean.secret) throw new Error('Both an API key and a secret are needed.');
+  await store().set(KEY_STORE, clean);
+  // Held in memory too, so the keys work for this run even if reading
+  // them back later fails.
+  savedKeys = clean;
+  savedKeysLoaded = true;
+  return true;
+}
+
+async function clearKeys() {
+  await store().del(KEY_STORE);
+  savedKeys = null;
+  savedKeysLoaded = true;
+}
+
+// Reads the keys, preferring the server's own settings so they can always
+// override what was typed in.
+async function ensureKeysLoaded() {
+  if (process.env.ALPACA_KEY_ID && process.env.ALPACA_SECRET_KEY) return;
+  if (!savedKeysLoaded) await loadSavedKeys();
+}
+
 function credentials() {
   const key = process.env.ALPACA_KEY_ID;
   const secret = process.env.ALPACA_SECRET_KEY;
-  return key && secret ? { key, secret } : null;
+  if (key && secret) return { key, secret };
+  return savedKeys || null;
 }
 
 function isConfigured() {
   return credentials() !== null;
+}
+
+// Where the keys came from, for the app to show him honestly.
+function keyStatus() {
+  if (process.env.ALPACA_KEY_ID && process.env.ALPACA_SECRET_KEY) {
+    return { connected: true, from: 'server settings' };
+  }
+  if (savedKeys) {
+    return { connected: true, from: 'typed into the app',
+             keyEnding: savedKeys.key.slice(-4) };
+  }
+  return { connected: false, from: null };
 }
 
 async function alpacaGet(pathname, params) {
@@ -116,6 +192,7 @@ async function minuteCloseAt(symbol, timestampMs) {
 // HOW it was arrived at. The caller stores that alongside the number so a
 // figure is never shown as exact when it is not.
 async function underlyingPriceAt(symbol, timestampMs) {
+  await ensureKeysLoaded();
   const printed = await lastTradePriceAt(symbol, timestampMs);
   if (printed != null) return { price: printed, source: 'alpaca-trade', exact: true };
 
@@ -128,4 +205,5 @@ async function underlyingPriceAt(symbol, timestampMs) {
 module.exports = {
   isConfigured, underlyingPriceAt, lastTradePriceAt, minuteCloseAt,
   tooRecentForFreePlan, FREE_PLAN_DELAY_MS,
+  saveKeys, clearKeys, loadSavedKeys, ensureKeysLoaded, keyStatus,
 };
