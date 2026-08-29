@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const { getValidAccessToken } = require('./auth');
 const { getOptionFills } = require('./schwabClient');
+const alpaca = require('./alpacaClient');
 const { processFills } = require('./matcher');
 const tradeStore = require('./tradeStore');
 const { getTokens, setLastCheck } = require('./tokenStore');
@@ -66,14 +67,43 @@ async function enrichWithFtfc(token, trades) {
 // newly-matched trade, since Schwab's option data never includes it. Runs
 // one at a time (not in parallel) to stay comfortably within Schwab's rate
 // limits during a large backfill.
+// Where the underlying stock was when the fill went through.
+//
+// Alpaca first, because it can answer with an actual print at the actual
+// second and its minute data goes back years. Schwab second, because it
+// is always available but only keeps minute data ~35 days and otherwise
+// falls back to a 30-minute or daily close.
+//
+// Each price is stored with HOW it was obtained, so a reconstruction is
+// never displayed as though it were a record. Alpaca failing costs
+// accuracy, never correctness -- the Schwab path is unchanged beneath it.
+async function priceWithProvenance(token, ticker, timestampMs) {
+  if (alpaca.isConfigured()) {
+    try {
+      const hit = await alpaca.underlyingPriceAt(ticker, timestampMs);
+      if (hit) return hit;
+    } catch (err) {
+      console.log(`Alpaca lookup failed for ${ticker}, falling back to Schwab:`, err.message);
+    }
+  }
+  const price = await getUnderlyingPriceAt(token, ticker, timestampMs);
+  return price == null ? null : { price, source: 'schwab-candle', exact: false };
+}
+
 async function enrichWithUnderlyingPrices(token, trades) {
   for (const trade of trades) {
     try {
       if (trade.entryTimestamp) {
-        trade.undEntry = await getUnderlyingPriceAt(token, trade.ticker, trade.entryTimestamp);
+        const hit = await priceWithProvenance(token, trade.ticker, trade.entryTimestamp);
+        trade.undEntry = hit ? hit.price : null;
+        trade.undEntrySource = hit ? hit.source : null;
+        trade.undEntryExact = hit ? hit.exact : null;
       }
       if (trade.exitTimestamp) {
-        trade.undExit = await getUnderlyingPriceAt(token, trade.ticker, trade.exitTimestamp);
+        const hit = await priceWithProvenance(token, trade.ticker, trade.exitTimestamp);
+        trade.undExit = hit ? hit.price : null;
+        trade.undExitSource = hit ? hit.source : null;
+        trade.undExitExact = hit ? hit.exact : null;
       }
     } catch (err) {
       console.log(`Underlying price enrichment failed for ${trade.ticker}:`, err.message);
