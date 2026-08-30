@@ -32,7 +32,8 @@ async function schwabMarketGet(pathname, accessToken, params = {}) {
 // Falls back to Schwab whenever Alpaca is not set up or cannot answer, so
 // nothing here changes for someone without keys.
 async function fetchCandles(accessToken, symbol, { periodType, period, frequencyType, frequency, endDate }) {
-  if (frequencyType === 'minute' && alpaca.isConfigured()) {
+  // isReady(), not isConfigured() -- see alpacaClient.isReady.
+  if (frequencyType === 'minute' && await alpaca.isReady()) {
     const days = Math.max(1, Number(period) || 1);
     const endMs = endDate || Date.now();
     const bars = await alpaca.fetchBars(symbol, {

@@ -64,7 +64,23 @@ for (const file of files) {
   }
 }
 
-// 4. The floor under the whole program must actually be installed.
+// 4. Asking Alpaca's cold cache whether it is connected.
+//    isConfigured() reads only what is already in memory, and memory is
+//    empty after every restart, so it answers "no" while his keys sit in
+//    storage -- and the caller silently falls back to Schwab. That is why
+//    his stock prices stayed "approx." for weeks. isReady() loads them
+//    first. Six places had this; none may come back.
+for (const file of files) {
+  if (file === 'alpacaClient.js') continue;
+  const src = fs.readFileSync(path.join(DIR, file), 'utf8');
+  src.split('\n').forEach((line, i) => {
+    if (/alpaca\.isConfigured\s*\(/.test(line)) {
+      problems.push(`${file}:${i + 1}  asks Alpaca's cold cache — use "await alpaca.isReady()", or it silently falls back after every restart.\n      ${line.trim().slice(0, 90)}`);
+    }
+  });
+}
+
+// 5. The floor under the whole program must actually be installed.
 const server = fs.readFileSync(path.join(DIR, 'server.js'), 'utf8');
 if (!/installCrashGuards\s*\(\s*\)/.test(server)) {
   problems.push('server.js  installCrashGuards() is not called — one unhandled failure would end the whole server.');

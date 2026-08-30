@@ -59,7 +59,8 @@ async function getReplayCandles(accessToken, ticker, entryTimestampMs, exitTimes
   // Alpaca first. Its minute history goes back years, so a trade from
   // March can be replayed candle by candle — Schwab keeps about 35 days,
   // which is why older trades have always come back with nothing.
-  if (alpaca.isConfigured()) {
+  // isReady(), not isConfigured() -- see alpacaClient.isReady.
+  if (await alpaca.isReady()) {
     const bars = await alpaca.fetchBars(ticker, { minutes: 1, startMs: windowStart, endMs: windowEnd });
     if (bars && bars.length) {
       return bars.map(c => ({
