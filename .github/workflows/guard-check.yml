@@ -28,3 +28,5 @@ jobs:
       - run: npm install --no-audit --no-fund
       - name: Check Alpaca still works on a freshly restarted server
         run: node tests/alpaca-cold-start.js
+      - name: Check nothing can build up an unbounded amount of memory
+        run: node tests/memory-limits.js

@@ -219,6 +219,11 @@ const ALPACA_TIMEFRAME = {
 
 // Alpaca pages long ranges; a year of 1-minute bars is far more than one
 // response holds, so every page is followed to the end.
+// The most candles any one request may build up in memory. A year of
+// every minute of the trading day is about 98,000, so this is comfortably
+// more than anything real, while being roughly 20MB rather than 274MB.
+const MAX_BARS = 150000;
+
 async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false }) {
   await ensureKeysLoaded();
   if (!isConfigured()) return null;
@@ -232,6 +237,7 @@ async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false })
   const out = [];
   let pageToken = null;
   let pages = 0;
+  let truncated = false;
   try {
     do {
       const params = {
@@ -252,10 +258,23 @@ async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false })
       pages++;
       // A guard against following pages for ever if the token never clears.
       if (pages > 200) break;
+      // And a guard on the SIZE, which is the one that actually mattered.
+      // The page cap alone allowed two million candles in a single list.
+      // Measured on this data shape that is 274MB in one go, on a server
+      // whose whole memory allowance is a fraction of that -- which is
+      // what "exceeded its memory limit" in Render's alert means. Nothing
+      // in this app has a use for more candles than the cap below (that
+      // is over a year of every single minute), so hitting it means a
+      // request was wrong, and it says so rather than quietly returning
+      // less than was asked for.
+      if (out.length >= MAX_BARS) { truncated = true; break; }
     } while (pageToken);
   } catch (err) {
     console.log(`Alpaca bars failed for ${symbol} (${timeframe}):`, err.response?.status || err.message);
     return null;   // null means "could not", which is different from "none"
+  }
+  if (truncated) {
+    console.log(`Alpaca bars for ${symbol} (${timeframe}) hit the ${MAX_BARS.toLocaleString()}-candle ceiling — the answer is the OLDEST ${MAX_BARS.toLocaleString()}, not everything asked for. Ask for a shorter span.`);
   }
   out.sort((a, b) => a.datetime - b.datetime);
   return out;

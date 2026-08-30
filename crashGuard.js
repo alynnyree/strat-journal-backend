@@ -113,4 +113,28 @@ function installCrashGuards() {
 
 function uptimeSeconds() { return Math.round(process.uptime()); }
 
-module.exports = { installCrashGuards, getCrashes, recordCrash, uptimeSeconds, startedAt };
+// How much memory the server is using right now, and the most it has used
+// since it started.
+//
+// Render alerted that the server "exceeded its memory limit, which
+// triggered an automatic restart" -- and there was no way to see that
+// from here, or from the app, or after the fact. Same lesson as the
+// crash: a failure nobody can read is the same as no failure report.
+// The peak is what matters, since a server is killed for a spike it
+// reached, not for where it happens to sit when asked.
+let peakMb = 0;
+function memoryMb() {
+  const now = Math.round(process.memoryUsage().rss / 1048576);
+  if (now > peakMb) peakMb = now;
+  return { nowMb: now, peakMb };
+}
+// Sampled on a timer as well as on request, or a spike between two
+// requests is invisible -- which is exactly the spike that gets a server
+// killed. Unref'd so it can never hold the process open by itself.
+function watchMemory(everyMs = 30000) {
+  const t = setInterval(() => { try { memoryMb(); } catch (e) { /* never fatal */ } }, everyMs);
+  if (t.unref) t.unref();
+  return t;
+}
+
+module.exports = { installCrashGuards, getCrashes, recordCrash, uptimeSeconds, startedAt, memoryMb, watchMemory };
