@@ -1,4 +1,5 @@
 const { fetchCandles } = require('./ftfcCheck');
+const alpaca = require('./alpacaClient');
 
 // How much extra time to grab on either side of the trade itself, so the
 // replay shows a bit of lead-in and lead-out context instead of starting
@@ -54,6 +55,19 @@ async function getReplayCandles(accessToken, ticker, entryTimestampMs, exitTimes
   const exitMs = exitTimestampMs || entryTimestampMs;
   const windowStart = entryTimestampMs - paddingMs;
   const windowEnd = exitMs + paddingMs;
+
+  // Alpaca first. Its minute history goes back years, so a trade from
+  // March can be replayed candle by candle — Schwab keeps about 35 days,
+  // which is why older trades have always come back with nothing.
+  if (alpaca.isConfigured()) {
+    const bars = await alpaca.fetchBars(ticker, { minutes: 1, startMs: windowStart, endMs: windowEnd });
+    if (bars && bars.length) {
+      return bars.map(c => ({
+        open: c.open, high: c.high, low: c.low, close: c.close,
+        volume: c.volume || 0, datetime: c.datetime,
+      }));
+    }
+  }
 
   const seen = new Set();
   const candles = [];
