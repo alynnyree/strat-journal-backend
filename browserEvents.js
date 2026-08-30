@@ -27,7 +27,7 @@ async function queueBrowserEvent(type, { ticker, dir, timestamp }) {
 // Polled by the browser extension's background script (roughly once a
 // minute — Chrome's alarms API doesn't allow finer granularity). Mirrors
 // the shape of /media/pending.
-router.get('/events', async (req, res) => {
+router.get('/events', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -39,7 +39,7 @@ router.get('/events', async (req, res) => {
     .map(r => { try { return typeof r === 'string' ? JSON.parse(r) : r; } catch (e) { return null; } })
     .filter(Boolean);
   res.json({ events });
-});
+}));
 
 // Called by the extension once it's captured and uploaded a picture for an
 // event, so the same one isn't offered again on the next poll.

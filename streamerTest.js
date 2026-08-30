@@ -1,4 +1,5 @@
 const express = require('express');
+const { wrap } = require('./asyncRoute');
 const axios = require('axios');
 const WebSocket = require('ws');
 const { getValidAccessToken } = require('./auth');
@@ -28,7 +29,7 @@ router.get('/streamer-status', (req, res) => {
 // report vs. something past this point) instead of guessing.
 //
 // Visit once in a browser: /debug/fills-check?key=YOUR_APP_SECRET&days=90
-router.get('/fills-check', async (req, res) => {
+router.get('/fills-check', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -53,7 +54,7 @@ router.get('/fills-check', async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message, details: err.response?.data || null });
   }
-});
+}));
 
 
 // One-time diagnostic: confirms whether Schwab's ACCT_ACTIVITY streaming
@@ -66,7 +67,7 @@ router.get('/fills-check', async (req, res) => {
 // Visit once in a browser: /debug/streamer-test?key=YOUR_APP_SECRET
 // Collects everything the streamer sends back for ~8 seconds, then
 // returns it all as plain JSON — the raw truth, not a guess.
-router.get('/streamer-test', async (req, res) => {
+router.get('/streamer-test', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -176,6 +177,6 @@ router.get('/streamer-test', async (req, res) => {
     addLog('Fatal error: ' + (err.response?.data ? JSON.stringify(err.response.data) : err.message));
     res.status(500).json({ ok: false, log });
   }
-});
+}));
 
 module.exports = router;
