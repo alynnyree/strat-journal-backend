@@ -1,4 +1,5 @@
 const express = require('express');
+const { wrap } = require('./asyncRoute');
 const { Redis } = require('@upstash/redis');
 const { uploadVideo, getPlaybackUrl, isConfigured: isVideoStorageConfigured } = require('./videoStorage');
 
@@ -50,7 +51,7 @@ const VIDEO_TTL_SECONDS = 30 * 24 * 60 * 60; // matches SCREENSHOT_TTL_SECONDS's
 // variable. The timestamp travels as a URL query parameter.
 // URL: POST /media/upload?key=...&timestamp=<unix SECONDS, or an ISO 8601 date>
 // Form field: "image" (type File) = the Resized Image
-router.post('/upload', upload.single('image'), async (req, res) => {
+router.post('/upload', upload.single('image'), wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -76,7 +77,7 @@ router.post('/upload', upload.single('image'), async (req, res) => {
 
   console.log(`Screenshot uploaded: ${id} (~${Math.round(req.file.buffer.length/1024)}KB, ts=${new Date(timestampMs).toISOString()})`);
   res.json({ ok: true, id });
-});
+}));
 
 // Frontend polls this alongside /api/trades/pending, and tries to match
 // each one against trades already in the Journal by how close its
@@ -97,7 +98,7 @@ router.get('/pending', async (req, res) => {
 
 // Frontend calls this once it's successfully attached a screenshot to a
 // trade, so the same one isn't offered again on the next poll.
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -105,7 +106,7 @@ router.delete('/:id', async (req, res) => {
   await redis.del(`screenshot:${id}`);
   await redis.lrem(LIST_KEY, 0, id);
   res.json({ ok: true });
-});
+}));
 
 // Called by the "stop recording, upload video" Shortcut. Unlike the
 // screenshot upload above, the file itself goes to R2 object storage (see
@@ -170,7 +171,7 @@ router.get('/pending-videos', async (req, res) => {
 // same one isn't offered again — mirrors DELETE /media/:id for screenshots,
 // but under its own path since a video's pending id lives in a separate
 // Redis list from screenshots' ids.
-router.delete('/video/:id', async (req, res) => {
+router.delete('/video/:id', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -178,7 +179,7 @@ router.delete('/video/:id', async (req, res) => {
   await redis.del(`video:${id}`);
   await redis.lrem(VIDEO_LIST_KEY, 0, id);
   res.json({ ok: true });
-});
+}));
 
 // Hands back a temporary, signed link to actually watch a stored video —
 // the R2 bucket itself is private, so nothing can play the video directly
