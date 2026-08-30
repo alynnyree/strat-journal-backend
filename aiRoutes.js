@@ -44,7 +44,18 @@ router.post('/classify', async (req, res) => {
     const result = await classifyStrategy(trade);
     res.json({ result });
   } catch (err) {
+    const status = err.response?.status;
     console.log('AI classification failed:', err.response?.data || err.message);
+    // "The AI is busy or out of allowance for now" is a completely
+    // different situation from "this trade could not be read", and the app
+    // has to be able to tell them apart. Gemini's free allowance has a
+    // ceiling per minute and per day; once it is hit, every remaining
+    // trade in a run gets refused identically. Reported as its own answer
+    // so the app pauses the run and picks it up later, instead of burning
+    // the whole backlog against a wall and marking each trade as tried.
+    if (status === 429 || status === 503) {
+      return res.status(429).json({ error: 'The AI has hit its limit for now — this will be picked up again later.' });
+    }
     res.status(500).json({ error: 'Classification failed — check server logs.' });
   }
 });
