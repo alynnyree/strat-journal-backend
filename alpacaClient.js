@@ -188,6 +188,60 @@ async function minuteCloseAt(symbol, timestampMs) {
   }
 }
 
+// Candles, in the same shape the rest of the app already uses, so an
+// Alpaca-sourced bar and a Schwab-sourced one are interchangeable.
+//
+// This is the bigger half of what Alpaca is for. Schwab keeps roughly 35
+// days of minute data, which is why backtesting was stuck testing a month
+// and why a trade older than that had no Bar Replay. Alpaca keeps years.
+const ALPACA_TIMEFRAME = {
+  1: '1Min', 3: '3Min', 5: '5Min', 10: '10Min', 15: '15Min', 30: '30Min', 60: '1Hour',
+};
+
+// Alpaca pages long ranges; a year of 1-minute bars is far more than one
+// response holds, so every page is followed to the end.
+async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false }) {
+  await ensureKeysLoaded();
+  if (!isConfigured()) return null;
+  const timeframe = daily ? '1Day' : ALPACA_TIMEFRAME[minutes];
+  if (!timeframe) return null;
+
+  // Never ask for anything inside the window the free plan holds back.
+  const cappedEnd = Math.min(endMs ?? Date.now(), Date.now() - FREE_PLAN_DELAY_MS);
+  if (cappedEnd <= startMs) return [];
+
+  const out = [];
+  let pageToken = null;
+  let pages = 0;
+  try {
+    do {
+      const params = {
+        timeframe,
+        start: new Date(startMs).toISOString(),
+        end: new Date(cappedEnd).toISOString(),
+        limit: 10000, adjustment: 'raw', feed: 'sip',
+      };
+      if (pageToken) params.page_token = pageToken;
+      const data = await alpacaGet(`/stocks/${encodeURIComponent(symbol)}/bars`, params);
+      for (const bar of (data?.bars || [])) {
+        out.push({
+          datetime: Date.parse(bar.t),
+          open: bar.o, high: bar.h, low: bar.l, close: bar.c, volume: bar.v,
+        });
+      }
+      pageToken = data?.next_page_token || null;
+      pages++;
+      // A guard against following pages for ever if the token never clears.
+      if (pages > 200) break;
+    } while (pageToken);
+  } catch (err) {
+    console.log(`Alpaca bars failed for ${symbol} (${timeframe}):`, err.response?.status || err.message);
+    return null;   // null means "could not", which is different from "none"
+  }
+  out.sort((a, b) => a.datetime - b.datetime);
+  return out;
+}
+
 // The underlying price at a fill, best available source first, along with
 // HOW it was arrived at. The caller stores that alongside the number so a
 // figure is never shown as exact when it is not.
@@ -204,6 +258,6 @@ async function underlyingPriceAt(symbol, timestampMs) {
 
 module.exports = {
   isConfigured, underlyingPriceAt, lastTradePriceAt, minuteCloseAt,
-  tooRecentForFreePlan, FREE_PLAN_DELAY_MS,
+  tooRecentForFreePlan, FREE_PLAN_DELAY_MS, fetchBars, ALPACA_TIMEFRAME,
   saveKeys, clearKeys, loadSavedKeys, ensureKeysLoaded, keyStatus,
 };

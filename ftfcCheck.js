@@ -1,4 +1,5 @@
 const axios = require('axios');
+const alpaca = require('./alpacaClient');
 
 // Schwab's Market Data API lives under a different base path than the
 // Trader API used elsewhere in this app.
@@ -19,7 +20,28 @@ async function schwabMarketGet(pathname, accessToken, params = {}) {
 // 1/5/10/15/30. periodType 'year' supports daily/weekly/monthly. There is
 // no native 3-minute, hourly, or multi-month bar — those are built below
 // by grouping smaller candles together.
+// Alpaca first for INTRADAY candles, because Schwab keeps only about 35
+// days of them. That ceiling is why an older trade's smaller timeframes
+// come back empty and its timeframe alignment is judged on the daily and
+// above alone -- a materially weaker answer than the one a recent trade
+// gets, with nothing on screen saying so.
+//
+// Daily and longer stay with Schwab: it serves years of those already,
+// and there is no reason to move something that works.
+//
+// Falls back to Schwab whenever Alpaca is not set up or cannot answer, so
+// nothing here changes for someone without keys.
 async function fetchCandles(accessToken, symbol, { periodType, period, frequencyType, frequency, endDate }) {
+  if (frequencyType === 'minute' && alpaca.isConfigured()) {
+    const days = Math.max(1, Number(period) || 1);
+    const endMs = endDate || Date.now();
+    const bars = await alpaca.fetchBars(symbol, {
+      minutes: Number(frequency) || 1,
+      startMs: endMs - days * 24 * 60 * 60 * 1000,
+      endMs,
+    });
+    if (bars && bars.length) return bars;
+  }
   const data = await schwabMarketGet('/pricehistory', accessToken, {
     symbol, periodType, period, frequencyType, frequency, endDate, needExtendedHoursData: false,
   });

@@ -1,4 +1,5 @@
 const { fetchCandles } = require('./ftfcCheck');
+const alpaca = require('./alpacaClient');
 const { buildBars, stopFromBars, TF_SPECS } = require('./stopRule');
 
 // Mechanically finds the trader's own Strat setups in real Schwab candles
@@ -196,7 +197,24 @@ function backtestOne(rawBars, { setup, timeframe, targetR, largeMultiple, lookba
 const CHUNK_DAYS = 10;
 const MAX_INTRADAY_DAYS = 35;
 
+// Alpaca first, because its minute history goes back years and Schwab's
+// stops at about 35 days. That ceiling is the reason a backtest could
+// only ever look at the last month, which is not long enough to say
+// anything about a strategy.
+//
+// Falls back to Schwab whenever Alpaca is not set up or cannot answer, so
+// this is purely additive: without keys the behaviour is what it was.
 async function fetchWindow(accessToken, ticker, frequency, days) {
+  if (alpaca.isConfigured()) {
+    const startMs = Date.now() - days * 24 * 60 * 60 * 1000;
+    const bars = await alpaca.fetchBars(ticker, { minutes: frequency, startMs, endMs: Date.now() });
+    // null means Alpaca could not answer; an empty list means it answered
+    // and there genuinely is nothing. Only the first is worth falling
+    // back from -- retrying an honest "no data" against Schwab would just
+    // reintroduce the 35-day ceiling for no reason.
+    if (bars && bars.length) return bars;
+    if (bars) return bars;
+  }
   const wanted = Math.min(days, MAX_INTRADAY_DAYS);
   const seen = new Set();
   const out = [];
@@ -218,6 +236,11 @@ async function fetchWindow(accessToken, ticker, frequency, days) {
 }
 
 async function fetchDaily(accessToken, ticker, years) {
+  if (alpaca.isConfigured()) {
+    const startMs = Date.now() - Math.max(1, years) * 365 * 24 * 60 * 60 * 1000;
+    const bars = await alpaca.fetchBars(ticker, { daily: true, startMs, endMs: Date.now() });
+    if (bars) return bars;
+  }
   return fetchCandles(accessToken, ticker, {
     periodType: 'year', period: Math.max(1, Math.min(20, years)),
     frequencyType: 'daily', frequency: 1, endDate: Date.now(),
@@ -238,6 +261,11 @@ const MAX_BARS_FORWARD = { '1m': 120, '3m': 60, '5m': 48, '10m': 30, '15m': 26, 
 async function runBacktest(accessToken, { ticker, setups, timeframes, days = 30, targetR = 2, largeMultiple = 1.5, lookback = 20 }) {
   const results = [];
   const notes = [];
+
+  const usingAlpaca = alpaca.isConfigured();
+  if (!usingAlpaca) {
+    notes.push(`Intraday history is limited to about ${MAX_INTRADAY_DAYS} days because Alpaca is not connected — connect it to test over years instead of weeks.`);
+  }
 
   for (const tf of timeframes) {
     let raw, bars;
