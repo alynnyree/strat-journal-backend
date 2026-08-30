@@ -1,4 +1,5 @@
 const express = require('express');
+const { wrap } = require('./asyncRoute');
 const { Redis } = require('@upstash/redis');
 
 const router = express.Router();
@@ -28,7 +29,7 @@ const LIST_KEY = 'aiTestFeedback:log';
 const FULL_IMAGE_TTL_SECONDS = 90 * 24 * 60 * 60;
 const fullImageKey = id => `aiTestFeedback:img:${id}`;
 
-router.post('/test-classify-feedback', async (req, res) => {
+router.post('/test-classify-feedback', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -87,9 +88,9 @@ router.post('/test-classify-feedback', async (req, res) => {
   await redis.set(`aiTestFeedback:${id}`, JSON.stringify(record));
   await redis.lpush(LIST_KEY, id);
   res.json({ ok: true, id });
-});
+}));
 
-router.get('/test-classify-feedback', async (req, res) => {
+router.get('/test-classify-feedback', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -106,7 +107,7 @@ router.get('/test-classify-feedback', async (req, res) => {
     f.image = fulls[i] || f.teachImage || null;
   });
   res.json({ feedback });
-});
+}));
 
 // Removing one entry. This matters more than an ordinary delete button
 // because corrections are permanent and every one of them influences
@@ -114,7 +115,7 @@ router.get('/test-classify-feedback', async (req, res) => {
 // removed is a wrong lesson taught forever. Takes the entry out of the
 // index, the record itself, and its full-size picture, so nothing is
 // left teaching from beyond the grave.
-router.delete('/test-classify-feedback/:id', async (req, res) => {
+router.delete('/test-classify-feedback/:id', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -127,7 +128,7 @@ router.delete('/test-classify-feedback/:id', async (req, res) => {
   await redis.del(`aiTestFeedback:${id}`);
   await redis.del(fullImageKey(id));
   res.json({ ok: true, id });
-});
+}));
 
 async function readAllFeedback() {
   const ids = await redis.lrange(LIST_KEY, 0, -1);

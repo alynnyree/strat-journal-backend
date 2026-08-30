@@ -1,4 +1,5 @@
 const express = require('express');
+const { wrap } = require('./asyncRoute');
 const { Redis } = require('@upstash/redis');
 
 const router = express.Router();
@@ -42,7 +43,7 @@ router.get('/events', async (req, res) => {
 
 // Called by the extension once it's captured and uploaded a picture for an
 // event, so the same one isn't offered again on the next poll.
-router.delete('/events/:id', async (req, res) => {
+router.delete('/events/:id', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -50,6 +51,6 @@ router.delete('/events/:id', async (req, res) => {
   await redis.del(`browserEvent:${id}`);
   await redis.lrem(LIST_KEY, 0, id);
   res.json({ ok: true });
-});
+}));
 
 module.exports = { router, queueBrowserEvent };

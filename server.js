@@ -12,6 +12,7 @@ const { router: browserEventsRouter } = require('./browserEvents');
 const { startAutoSync } = require('./cron');
 const { startStreamer } = require('./schwabStreamer');
 const { installCrashGuards, getCrashes, uptimeSeconds, startedAt } = require('./crashGuard');
+const { errorHandler } = require('./asyncRoute');
 
 // Installed before anything is started, so a failure while starting up is
 // caught too. Without this, one unwrapped failure anywhere in a background
@@ -54,6 +55,10 @@ app.use('/debug', streamerTestRouter);
 app.use('/media', mediaRouter);
 app.use('/ai', aiRoutes);
 app.use('/browser', browserEventsRouter);
+
+// Mounted last, after every route, or it catches nothing. Turns a request
+// that failed into a plain answer instead of a hung phone.
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

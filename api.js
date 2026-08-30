@@ -1,4 +1,5 @@
 const express = require('express');
+const { wrap } = require('./asyncRoute');
 const axios = require('axios');
 const { getValidAccessToken } = require('./auth');
 const { getTokens, setLastCheck } = require('./tokenStore');
@@ -43,17 +44,17 @@ router.get('/positions', async (req, res) => {
 // which are waiting for you to tag with Strat setup / FTFC / stop / shots.
 // This is what makes sync feel automatic: by the time you open the app,
 // the background job has already done the matching — you're just tagging.
-router.get('/trades/pending', async (req, res) => {
+router.get('/trades/pending', wrap(async (req, res) => {
   const state = await tradeStore.getState();
   res.json({ pending: state.pending || [] });
-});
+}));
 
 // Call once the trade has been tagged and saved into the app's own
 // journal (localStorage), so the backend stops surfacing it again.
-router.delete('/trades/pending/:id', async (req, res) => {
+router.delete('/trades/pending/:id', wrap(async (req, res) => {
   await tradeStore.removePendingTrade(req.params.id);
   res.json({ ok: true });
-});
+}));
 
 // One-time historical pull. daysBack defaults to ~90 days; Schwab's own
 // transaction history window may be shorter — whatever's available comes back.
@@ -67,7 +68,7 @@ router.delete('/trades/pending/:id', async (req, res) => {
 // working correctly. The backfill keeps running after this responds;
 // check /trades/pending (or tap "Check for New Trades") a bit later to
 // see the results land.
-router.post('/trades/backfill', async (req, res) => {
+router.post('/trades/backfill', wrap(async (req, res) => {
   // Defaulted to 90, which silently truncated the owner's history to the
   // last three months while he had been trading all year. A year now, and
   // capped at three so a typo cannot ask Schwab for a decade.
@@ -77,7 +78,7 @@ router.post('/trades/backfill', async (req, res) => {
   runBackfill(daysBack)
     .then(newPending => console.log(`Background backfill complete: ${newPending.length} trade(s) imported.`))
     .catch(err => console.error('Background backfill failed:', err.response?.data || err.message));
-});
+}));
 
 // What the historical import is doing right now. The app polls this so it
 // can report the truth -- "still fetching", "found 148 trades, working out
