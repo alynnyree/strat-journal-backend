@@ -11,7 +11,7 @@ const { persistExistingFeedback } = require('./aiTestFeedback');
 const { router: browserEventsRouter } = require('./browserEvents');
 const { startAutoSync } = require('./cron');
 const { startStreamer } = require('./schwabStreamer');
-const { installCrashGuards, getCrashes, uptimeSeconds, startedAt } = require('./crashGuard');
+const { installCrashGuards, getCrashes, uptimeSeconds, startedAt, memoryMb, watchMemory } = require('./crashGuard');
 const { wrap, errorHandler } = require('./asyncRoute');
 
 // Installed before anything is started, so a failure while starting up is
@@ -19,6 +19,7 @@ const { wrap, errorHandler } = require('./asyncRoute');
 // job ends the whole process -- which is what "Exited with status 1" in
 // Render's alert email means.
 installCrashGuards();
+watchMemory();
 
 const app = express();
 
@@ -40,11 +41,14 @@ app.use(express.json({ limit: '16mb' }));
 app.get('/health', wrap(async (req, res) => {
   let crashes = [];
   try { crashes = await getCrashes(5); } catch (err) { /* never let this route fail */ }
+  const mem = memoryMb();
   res.json({
     ok: true,
     time: new Date().toISOString(),
     startedAt,
     uptimeSeconds: uptimeSeconds(),
+    memoryMb: mem.nowMb,
+    peakMemoryMb: mem.peakMb,
     recentFailures: crashes,
   });
 }));

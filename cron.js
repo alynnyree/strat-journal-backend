@@ -300,6 +300,11 @@ async function noteBackfillProgress(patch) {
   }
 }
 
+// How many trades are enriched before the work so far is saved. Small
+// enough that a restart loses little, large enough not to rewrite the
+// whole journal on every trade.
+const ENRICH_BATCH = 25;
+
 async function runBackfill(daysBack = 365) {
   const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
   const now = new Date();
@@ -364,11 +369,30 @@ async function runBackfill(daysBack = 365) {
     await tradeStore.saveState(updatedState);
 
     if (newPending.length) {
-      await enrichWithUnderlyingPrices(token, newPending);
-      await enrichWithFtfc(token, newPending);
-      await enrichWithReplayData(token, newPending);
-      await enrichWithStrategy(newPending);
-      await enrichWithStopRule(token, newPending);
+      // Worked through in batches, saving after each one.
+      //
+      // It used to enrich all three hundred trades and save once at the
+      // end, so a restart part-way through threw away every minute of it
+      // -- and the server has been restarting, both from the crash and
+      // from running out of memory. Saving as it goes means a restart
+      // costs one batch, not the whole run. It also gives him a journal
+      // that fills in steadily rather than all at once at the end.
+      for (let i = 0; i < newPending.length; i += ENRICH_BATCH) {
+        const batch = newPending.slice(i, i + ENRICH_BATCH);
+        await enrichWithUnderlyingPrices(token, batch);
+        await enrichWithFtfc(token, batch);
+        await enrichWithReplayData(token, batch);
+        await enrichWithStrategy(batch);
+        await enrichWithStopRule(token, batch);
+        // The batch holds the same objects the queue does, so saving the
+        // state is what actually keeps the work done so far.
+        await tradeStore.saveState(updatedState);
+        await noteBackfillProgress({
+          phase: 'enriching',
+          tradesMatched: newPending.length,
+          tradesEnriched: Math.min(i + ENRICH_BATCH, newPending.length),
+        });
+      }
       // The enriched copies are the same objects the queue holds, so
       // saving the state again is what actually persists the extra detail.
       const latest = await tradeStore.getState();
