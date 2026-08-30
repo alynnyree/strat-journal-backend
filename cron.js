@@ -78,16 +78,26 @@ async function enrichWithFtfc(token, trades) {
 // never displayed as though it were a record. Alpaca failing costs
 // accuracy, never correctness -- the Schwab path is unchanged beneath it.
 async function priceWithProvenance(token, ticker, timestampMs) {
-  if (alpaca.isConfigured()) {
+  // isReady(), never isConfigured(). isConfigured() reads only what is in
+  // memory, and memory is empty after every restart, so this gate was
+  // closing on a server that had his Alpaca keys in storage the whole
+  // time -- silently falling through to a Schwab candle and marking every
+  // price "approximate". That is the bug he reported on 30 August.
+  const alpacaOn = await alpaca.isReady();
+  if (alpacaOn) {
     try {
       const hit = await alpaca.underlyingPriceAt(ticker, timestampMs);
-      if (hit) return hit;
+      if (hit) return { ...hit, alpacaChecked: true };
     } catch (err) {
       console.log(`Alpaca lookup failed for ${ticker}, falling back to Schwab:`, err.message);
     }
   }
   const price = await getUnderlyingPriceAt(token, ticker, timestampMs);
-  return price == null ? null : { price, source: 'schwab-candle', exact: false };
+  // Records whether Alpaca was actually available when this price was
+  // worked out. Without it there is no way to tell a price that Alpaca
+  // could not improve from one it was never asked about -- and the app
+  // needs that to know which trades are worth looking up again.
+  return price == null ? null : { price, source: 'schwab-candle', exact: false, alpacaChecked: alpacaOn };
 }
 
 async function enrichWithUnderlyingPrices(token, trades) {
@@ -98,12 +108,14 @@ async function enrichWithUnderlyingPrices(token, trades) {
         trade.undEntry = hit ? hit.price : null;
         trade.undEntrySource = hit ? hit.source : null;
         trade.undEntryExact = hit ? hit.exact : null;
+        trade.undPricedWithAlpaca = hit ? !!hit.alpacaChecked : false;
       }
       if (trade.exitTimestamp) {
         const hit = await priceWithProvenance(token, trade.ticker, trade.exitTimestamp);
         trade.undExit = hit ? hit.price : null;
         trade.undExitSource = hit ? hit.source : null;
         trade.undExitExact = hit ? hit.exact : null;
+        trade.undPricedWithAlpaca = trade.undPricedWithAlpaca && (hit ? !!hit.alpacaChecked : false);
       }
     } catch (err) {
       console.log(`Underlying price enrichment failed for ${trade.ticker}:`, err.message);
@@ -454,4 +466,7 @@ function startAutoSync(intervalCron = '*/5 * * * *') {
   console.log(`Auto-sync scheduled: ${intervalCron}`);
 }
 
-module.exports = { startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded };
+// enrichWithUnderlyingPrices and priceWithProvenance are exported so a test
+// can run them for real, rather than a test reading this file and guessing.
+module.exports = { startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded,
+                   enrichWithUnderlyingPrices, priceWithProvenance };

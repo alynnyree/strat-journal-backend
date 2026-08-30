@@ -25,3 +25,6 @@ jobs:
         run: node guardCheck.js
       - name: Check every file still parses
         run: for f in *.js; do node --check "$f"; done
+      - run: npm install --no-audit --no-fund
+      - name: Check Alpaca still works on a freshly restarted server
+        run: node tests/alpaca-cold-start.js

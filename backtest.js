@@ -205,7 +205,9 @@ const MAX_INTRADAY_DAYS = 35;
 // Falls back to Schwab whenever Alpaca is not set up or cannot answer, so
 // this is purely additive: without keys the behaviour is what it was.
 async function fetchWindow(accessToken, ticker, frequency, days) {
-  if (alpaca.isConfigured()) {
+  // isReady(), not isConfigured() -- see alpacaClient.isReady. Asking the
+  // cold cache answers "no" after every restart and silently falls back.
+  if (await alpaca.isReady()) {
     const startMs = Date.now() - days * 24 * 60 * 60 * 1000;
     const bars = await alpaca.fetchBars(ticker, { minutes: frequency, startMs, endMs: Date.now() });
     // null means Alpaca could not answer; an empty list means it answered
@@ -236,7 +238,7 @@ async function fetchWindow(accessToken, ticker, frequency, days) {
 }
 
 async function fetchDaily(accessToken, ticker, years) {
-  if (alpaca.isConfigured()) {
+  if (await alpaca.isReady()) {
     const startMs = Date.now() - Math.max(1, years) * 365 * 24 * 60 * 60 * 1000;
     const bars = await alpaca.fetchBars(ticker, { daily: true, startMs, endMs: Date.now() });
     if (bars) return bars;
@@ -262,7 +264,7 @@ async function runBacktest(accessToken, { ticker, setups, timeframes, days = 30,
   const results = [];
   const notes = [];
 
-  const usingAlpaca = alpaca.isConfigured();
+  const usingAlpaca = await alpaca.isReady();
   if (!usingAlpaca) {
     notes.push(`Intraday history is limited to about ${MAX_INTRADAY_DAYS} days because Alpaca is not connected — connect it to test over years instead of weeks.`);
   }

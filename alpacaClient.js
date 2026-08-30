@@ -99,6 +99,23 @@ function isConfigured() {
   return credentials() !== null;
 }
 
+// The safe way to ask "can we use Alpaca?".
+//
+// isConfigured() reads only what is already in memory. The keys he typed
+// into the app live in storage, and memory is empty every time the server
+// restarts -- which Render does on its own, and which happened when the
+// server crashed on 30 August. So asking isConfigured() cold answers "no"
+// even though the keys are sitting right there, and the caller silently
+// falls back to Schwab. That is exactly why his trades kept showing an
+// approximate stock price instead of an exact one.
+//
+// Always use this, never isConfigured(), before deciding whether to use
+// Alpaca for something.
+async function isReady() {
+  try { await ensureKeysLoaded(); } catch (err) { /* fall through to the check */ }
+  return isConfigured();
+}
+
 // Where the keys came from, for the app to show him honestly.
 function keyStatus() {
   if (process.env.ALPACA_KEY_ID && process.env.ALPACA_SECRET_KEY) {
@@ -143,6 +160,7 @@ function tooRecentForFreePlan(timestampMs) {
 // second may contain no trade at all. Takes the LAST trade in the window,
 // which is the most recent one at or before the moment asked for.
 async function lastTradePriceAt(symbol, timestampMs, { windowMinutes = 10 } = {}) {
+  await ensureKeysLoaded();
   if (!isConfigured() || !Number.isFinite(timestampMs)) return null;
   if (tooRecentForFreePlan(timestampMs)) return null;
   const end = new Date(timestampMs).toISOString();
@@ -168,6 +186,7 @@ async function lastTradePriceAt(symbol, timestampMs, { windowMinutes = 10 } = {}
 // Second best to an actual print, but far better than a 30-minute bar,
 // and it reaches back years where Schwab's minute data stops at ~35 days.
 async function minuteCloseAt(symbol, timestampMs) {
+  await ensureKeysLoaded();
   if (!isConfigured() || !Number.isFinite(timestampMs)) return null;
   if (tooRecentForFreePlan(timestampMs)) return null;
   const end = new Date(timestampMs).toISOString();
@@ -257,7 +276,7 @@ async function underlyingPriceAt(symbol, timestampMs) {
 }
 
 module.exports = {
-  isConfigured, underlyingPriceAt, lastTradePriceAt, minuteCloseAt,
+  isConfigured, isReady, underlyingPriceAt, lastTradePriceAt, minuteCloseAt,
   tooRecentForFreePlan, FREE_PLAN_DELAY_MS, fetchBars, ALPACA_TIMEFRAME,
   saveKeys, clearKeys, loadSavedKeys, ensureKeysLoaded, keyStatus,
 };
