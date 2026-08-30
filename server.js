@@ -11,6 +11,13 @@ const { persistExistingFeedback } = require('./aiTestFeedback');
 const { router: browserEventsRouter } = require('./browserEvents');
 const { startAutoSync } = require('./cron');
 const { startStreamer } = require('./schwabStreamer');
+const { installCrashGuards, getCrashes, uptimeSeconds, startedAt } = require('./crashGuard');
+
+// Installed before anything is started, so a failure while starting up is
+// caught too. Without this, one unwrapped failure anywhere in a background
+// job ends the whole process -- which is what "Exited with status 1" in
+// Render's alert email means.
+installCrashGuards();
 
 const app = express();
 
@@ -24,8 +31,21 @@ app.use(cors({ origin: process.env.FRONTEND_ORIGIN || '*' }));
 // gets sent, so this is a ceiling rather than an invitation.
 app.use(express.json({ limit: '16mb' }));
 
-app.get('/health', (req, res) => {
-  res.json({ ok: true, time: new Date().toISOString() });
+// Answers "is the server actually up, and has it fallen over lately?".
+// It used to answer only the first half, so a server that had crashed and
+// been restarted looked exactly like one that had been running all week --
+// and the only sign anything had happened was an email from the hosting
+// company that the owner cannot act on.
+app.get('/health', async (req, res) => {
+  let crashes = [];
+  try { crashes = await getCrashes(5); } catch (err) { /* never let this route fail */ }
+  res.json({
+    ok: true,
+    time: new Date().toISOString(),
+    startedAt,
+    uptimeSeconds: uptimeSeconds(),
+    recentFailures: crashes,
+  });
 });
 
 app.use('/auth', authRouter);
@@ -40,5 +60,8 @@ app.listen(PORT, () => {
   console.log(`Strat Journal backend listening on port ${PORT}`);
   startAutoSync(process.env.SYNC_CRON || '*/5 * * * *'); // stays running as a safety net alongside the streamer
   startStreamer();
-  persistExistingFeedback(); // one-time: stop older test feedback ageing out
+  // Every one of these is started and not waited on, so each needs its own
+  // catch. A promise nobody is holding that fails is what ends the process.
+  persistExistingFeedback().catch(err =>
+    console.log('Could not make existing test feedback permanent:', err.message)); // one-time: stop older test feedback ageing out
 });
