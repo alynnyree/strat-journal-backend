@@ -82,7 +82,7 @@ router.post('/upload', upload.single('image'), wrap(async (req, res) => {
 // Frontend polls this alongside /api/trades/pending, and tries to match
 // each one against trades already in the Journal by how close its
 // timestamp is to an entry or exit time.
-router.get('/pending', async (req, res) => {
+router.get('/pending', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -94,7 +94,7 @@ router.get('/pending', async (req, res) => {
     .map(r => { try { return typeof r === 'string' ? JSON.parse(r) : r; } catch (e) { return null; } })
     .filter(Boolean);
   res.json({ screenshots });
-});
+}));
 
 // Frontend calls this once it's successfully attached a screenshot to a
 // trade, so the same one isn't offered again on the next poll.
@@ -117,7 +117,7 @@ router.delete('/:id', wrap(async (req, res) => {
 // the frontend already does for screenshots.
 // URL: POST /media/upload-video?key=...&timestamp=<unix SECONDS, or an ISO 8601 date>
 // Form field: "video" (type File)
-router.post('/upload-video', uploadVideoMw.single('video'), async (req, res) => {
+router.post('/upload-video', uploadVideoMw.single('video'), wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -149,11 +149,11 @@ router.post('/upload-video', uploadVideoMw.single('video'), async (req, res) => 
 
   console.log(`Video uploaded: ${id} (~${Math.round(req.file.buffer.length / 1024 / 1024)}MB, ts=${new Date(timestampMs).toISOString()})`);
   res.json({ ok: true, id });
-});
+}));
 
 // Frontend polls this the same way it polls /pending for screenshots, and
 // matches each one to a trade by timestamp.
-router.get('/pending-videos', async (req, res) => {
+router.get('/pending-videos', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -165,7 +165,7 @@ router.get('/pending-videos', async (req, res) => {
     .map(r => { try { return typeof r === 'string' ? JSON.parse(r) : r; } catch (e) { return null; } })
     .filter(Boolean);
   res.json({ videos });
-});
+}));
 
 // Frontend calls this once it's matched a pending video to a trade, so the
 // same one isn't offered again — mirrors DELETE /media/:id for screenshots,
@@ -185,7 +185,7 @@ router.delete('/video/:id', wrap(async (req, res) => {
 // the R2 bucket itself is private, so nothing can play the video directly
 // from its raw storage address without one of these. Expires on its own
 // (1 hour), so there's no standing public link sitting around forever.
-router.get('/video-url', async (req, res) => {
+router.get('/video-url', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -203,7 +203,7 @@ router.get('/video-url', async (req, res) => {
     console.log('Presigned video URL generation failed:', err.message);
     res.status(502).json({ error: 'Could not generate a playback link — check server logs.' });
   }
-});
+}));
 
 // A plain web page (not JSON) so the owner can actually look at what a
 // Shortcut has uploaded, straight from Safari, without any extra app or
@@ -215,7 +215,7 @@ function escapeAttr(str) {
   return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
-router.get('/preview', async (req, res) => {
+router.get('/preview', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -270,6 +270,6 @@ ${shotCards || '<div class="meta">None right now.</div>'}
 <h2>Videos waiting to be matched (${videos.length})</h2>
 ${videoCards || '<div class="meta">None right now.</div>'}
 </body></html>`);
-});
+}));
 
 module.exports = router;

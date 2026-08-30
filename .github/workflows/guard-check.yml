@@ -1,0 +1,27 @@
+# Runs on every change to this server, before it can reach Render.
+#
+# On 30 August the owner's server shut itself down and he found out from
+# an email hours later. The cause was a whole class of mistake -- a job
+# that fails with nothing catching it ends the entire program -- and
+# nothing existed to stop it being written again. This is that something.
+# It is deliberately automatic: a check that depends on someone
+# remembering to run it is not a safeguard.
+name: Can this server shut itself down?
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  guard-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check nothing can end the whole server
+        run: node guardCheck.js
+      - name: Check every file still parses
+        run: for f in *.js; do node --check "$f"; done

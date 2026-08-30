@@ -12,7 +12,7 @@ const { router: browserEventsRouter } = require('./browserEvents');
 const { startAutoSync } = require('./cron');
 const { startStreamer } = require('./schwabStreamer');
 const { installCrashGuards, getCrashes, uptimeSeconds, startedAt } = require('./crashGuard');
-const { errorHandler } = require('./asyncRoute');
+const { wrap, errorHandler } = require('./asyncRoute');
 
 // Installed before anything is started, so a failure while starting up is
 // caught too. Without this, one unwrapped failure anywhere in a background
@@ -37,7 +37,7 @@ app.use(express.json({ limit: '16mb' }));
 // been restarted looked exactly like one that had been running all week --
 // and the only sign anything had happened was an email from the hosting
 // company that the owner cannot act on.
-app.get('/health', async (req, res) => {
+app.get('/health', wrap(async (req, res) => {
   let crashes = [];
   try { crashes = await getCrashes(5); } catch (err) { /* never let this route fail */ }
   res.json({
@@ -47,7 +47,7 @@ app.get('/health', async (req, res) => {
     uptimeSeconds: uptimeSeconds(),
     recentFailures: crashes,
   });
-});
+}));
 
 app.use('/auth', authRouter);
 app.use('/api', apiRouter);

@@ -1,4 +1,5 @@
 const express = require('express');
+const { wrap } = require('./asyncRoute');
 const { runPortfolioAnalysis, classifyStrategy, testClassifyStrategy, interpretBacktest } = require('./aiClient');
 const { getFtfcForTrade } = require('./ftfcCheck');
 const { getValidAccessToken } = require('./auth');
@@ -7,7 +8,7 @@ const testFeedbackRouter = require('./aiTestFeedback');
 const router = express.Router();
 router.use(testFeedbackRouter);
 
-router.post('/analyze', async (req, res) => {
+router.post('/analyze', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -22,7 +23,7 @@ router.post('/analyze', async (req, res) => {
     console.log('AI analysis failed:', err.response?.data || err.message);
     res.status(500).json({ error: 'Analysis failed — check server logs.' });
   }
-});
+}));
 
 // Classifies a single trade against the trader's own defined Strat setups.
 // Same classifier the cron job already runs automatically on newly-synced
@@ -32,7 +33,7 @@ router.post('/analyze', async (req, res) => {
 // one trade per request (not a batch) so a phone never holds one request
 // open for the minutes a large batch would take — see CLAUDE.md's known
 // traps about iOS Safari request timeouts.
-router.post('/classify', async (req, res) => {
+router.post('/classify', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -58,7 +59,7 @@ router.post('/classify', async (req, res) => {
     }
     res.status(500).json({ error: 'Classification failed — check server logs.' });
   }
-});
+}));
 
 // Sandbox classification against a made-up chart — no real trade required.
 // Deliberately gives the classifier NOTHING but the picture and/or typed
@@ -73,7 +74,7 @@ router.post('/classify', async (req, res) => {
 // Always returns the model's real answer (even "unclear" or low
 // confidence) rather than hiding it the way the real auto-tagging does,
 // since the whole point is to see what the AI actually thinks.
-router.post('/test-classify', async (req, res) => {
+router.post('/test-classify', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -139,13 +140,13 @@ router.post('/test-classify', async (req, res) => {
     console.log('Test classification failed:', detail);
     res.status(500).json({ error: `Classification failed: ${detail}` });
   }
-});
+}));
 
 // Runs a backtest and then has the model read the finished numbers.
 // The two steps are deliberately separate: the counting is arithmetic on
 // real candles, the reading is the model's only job, and the model never
 // sees a request to produce a figure.
-router.post('/backtest', async (req, res) => {
+router.post('/backtest', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
@@ -187,6 +188,6 @@ router.post('/backtest', async (req, res) => {
     console.error('Backtest failed:', detail);
     res.status(500).json({ error: `Backtest failed: ${detail}` });
   }
-});
+}));
 
 module.exports = router;

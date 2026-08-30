@@ -25,7 +25,7 @@ async function schwabGet(pathname, accessToken, params = {}) {
 }
 
 // Returns the account's current open positions.
-router.get('/positions', async (req, res) => {
+router.get('/positions', wrap(async (req, res) => {
   try {
     const token = await getValidAccessToken();
     const accountsHash = await schwabGet('/accounts/accountNumbers', token);
@@ -38,7 +38,7 @@ router.get('/positions', async (req, res) => {
     console.error('positions error:', err.response?.data || err.message);
     res.status(500).json({ error: 'Failed to fetch positions' });
   }
-});
+}));
 
 // Closed trades the cron job has already matched (open+close paired) and
 // which are waiting for you to tag with Strat setup / FTFC / stop / shots.
@@ -84,18 +84,18 @@ router.post('/trades/backfill', wrap(async (req, res) => {
 // can report the truth -- "still fetching", "found 148 trades, working out
 // the details", "Schwab only served data back to 2 March" -- instead of
 // waiting a few seconds and declaring there was nothing to find.
-router.get('/trades/backfill/status', async (req, res) => {
+router.get('/trades/backfill/status', wrap(async (req, res) => {
   try {
     const state = await tradeStore.getState();
     res.json({ backfill: state.lastBackfill || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}));
 
 // Manual trigger for an immediate check, same logic the cron job runs
 // on its own every few minutes.
-router.post('/trades/sync-now', async (req, res) => {
+router.post('/trades/sync-now', wrap(async (req, res) => {
   try {
     await runSyncCheck();
     const state = await tradeStore.getState();
@@ -103,12 +103,12 @@ router.post('/trades/sync-now', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}));
 
 // Auto-checks Full Time Frame Continuity for one ticker at one trade's
 // entry time, using Schwab's own candle data. Returns bull/bear per
 // timeframe (or leaves a timeframe out if Schwab has no data that far back).
-router.post('/ftfc/check', async (req, res) => {
+router.post('/ftfc/check', wrap(async (req, res) => {
   try {
     const { ticker, entryTimestamp } = req.body || {};
     if (!ticker || !entryTimestamp) {
@@ -121,14 +121,14 @@ router.post('/ftfc/check', async (req, res) => {
     console.error('ftfc check error:', err.response?.data || err.message);
     res.status(500).json({ error: 'FTFC check failed' });
   }
-});
+}));
 
 // Wipes the entire pending queue AND the memory of which Schwab
 // transactions have already been processed — use this before re-running
 // backfill after a matching-logic fix, so every trade gets freshly
 // re-matched instead of keeping old (possibly wrong) results around.
 // This does NOT touch your saved Journal (that's local to the app).
-router.post('/trades/reset', async (req, res) => {
+router.post('/trades/reset', wrap(async (req, res) => {
   try {
     await tradeStore.saveState({ openLegs: [], pending: [], lastProcessedIds: [] });
     res.json({ ok: true });
@@ -136,14 +136,14 @@ router.post('/trades/reset', async (req, res) => {
     console.error('reset error:', err.message);
     res.status(500).json({ error: 'Reset failed' });
   }
-});
+}));
 
 // Lets a manually-entered trade (typed into the New Trade form, not pulled
 // from Schwab auto-sync) get the same underlying price + replay data that
 // auto-synced trades get automatically. Only works within Schwab's normal
 // minute-data retention window (~30-35 days) — same limit as everywhere
 // else this data comes from.
-router.post('/trade-data/enrich', async (req, res) => {
+router.post('/trade-data/enrich', wrap(async (req, res) => {
   try {
     const { ticker, entryTimestamp, exitTimestamp } = req.body || {};
     if (!ticker || !entryTimestamp) {
@@ -160,7 +160,7 @@ router.post('/trade-data/enrich', async (req, res) => {
     console.error('trade-data enrich error:', err.response?.data || err.message);
     res.status(500).json({ error: 'Enrichment failed' });
   }
-});
+}));
 
 // ---- Stop rule ------------------------------------------------------
 // The trader's own stop rule, so the app can show it, change it, and try
@@ -171,16 +171,16 @@ router.post('/trade-data/enrich', async (req, res) => {
 // The secret is never sent back — only whether one is on file and the
 // last four characters of the key, which is enough to recognise it
 // without being enough to use it.
-router.get('/alpaca/status', async (req, res) => {
+router.get('/alpaca/status', wrap(async (req, res) => {
   try {
     await alpaca.ensureKeysLoaded();
     res.json(alpaca.keyStatus());
   } catch (err) {
     res.status(500).json({ error: 'Could not read the Alpaca connection.' });
   }
-});
+}));
 
-router.post('/alpaca/keys', async (req, res) => {
+router.post('/alpaca/keys', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).json({ error: 'Wrong app key.' });
   }
@@ -194,9 +194,9 @@ router.post('/alpaca/keys', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}));
 
-router.delete('/alpaca/keys', async (req, res) => {
+router.delete('/alpaca/keys', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).json({ error: 'Wrong app key.' });
   }
@@ -206,9 +206,9 @@ router.delete('/alpaca/keys', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}));
 
-router.get('/stop-rule/settings', async (req, res) => {
+router.get('/stop-rule/settings', wrap(async (req, res) => {
   try {
     const settings = await stopRule.loadSettings();
     res.json({ settings, timeframes: stopRule.TIMEFRAME_CHOICES });
@@ -216,9 +216,9 @@ router.get('/stop-rule/settings', async (req, res) => {
     console.error('stop-rule settings read error:', err.message);
     res.status(500).json({ error: 'Could not read the stop rule settings.' });
   }
-});
+}));
 
-router.put('/stop-rule/settings', async (req, res) => {
+router.put('/stop-rule/settings', wrap(async (req, res) => {
   try {
     const body = req.body || {};
     const patch = {};
@@ -246,11 +246,11 @@ router.put('/stop-rule/settings', async (req, res) => {
     console.error('stop-rule settings write error:', err.message);
     res.status(500).json({ error: 'Could not save the stop rule settings.' });
   }
-});
+}));
 
 // Works out the stop for one trade on demand — used when the trader picks
 // a different timeframe for a trade and wants to see the level move.
-router.post('/stop-rule/compute', async (req, res) => {
+router.post('/stop-rule/compute', wrap(async (req, res) => {
   try {
     const { ticker, entryTimestamp, dir, strat, timeframe } = req.body || {};
     if (!ticker || !entryTimestamp) {
@@ -268,6 +268,6 @@ router.post('/stop-rule/compute', async (req, res) => {
     console.error('stop-rule compute error:', err.response?.data || err.message);
     res.status(500).json({ error: `Could not work out a stop: ${err.message}` });
   }
-});
+}));
 
 module.exports = router;

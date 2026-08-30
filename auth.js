@@ -1,4 +1,5 @@
 const express = require('express');
+const { wrap } = require('./asyncRoute');
 const axios = require('axios');
 const { saveTokens, getTokens, saveTokenFields } = require('./tokenStore');
 
@@ -11,7 +12,7 @@ const router = express.Router();
 // yet), which means "up to date, no new trades" can print even when
 // Schwab was never connected at all. This gives a direct way to tell
 // those two situations apart without digging through server logs.
-router.get('/status', async (req, res) => {
+router.get('/status', wrap(async (req, res) => {
   try {
     const store = await getTokens();
     // "Connected" has meant two different things: the app can reach this
@@ -52,7 +53,7 @@ router.get('/status', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Could not read token status: ' + err.message });
   }
-});
+}));
 
 // Schwab's OAuth endpoints, per developer.schwab.com. Verify these against
 // current Schwab docs before going live — API paths have shifted before.
@@ -73,7 +74,7 @@ router.get('/schwab/login', (req, res) => {
 });
 
 // Step 2: Schwab redirects back here with a one-time code.
-router.get('/schwab/callback', async (req, res) => {
+router.get('/schwab/callback', wrap(async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).send('Missing authorization code');
 
@@ -111,7 +112,7 @@ router.get('/schwab/callback', async (req, res) => {
     console.error('OAuth callback failed:', err.response?.data || err.message);
     res.status(500).send('OAuth exchange failed — check server logs.');
   }
-});
+}));
 
 // Refreshes the access token using the stored refresh token.
 // Schwab refresh tokens are long-lived but do expire — if this starts
