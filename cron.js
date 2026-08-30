@@ -257,7 +257,10 @@ async function runSyncCheck() {
     await setLastCheck(now.toISOString());
   } catch (err) {
     // Most common cause: not connected yet (no refresh token on file).
-    console.log('Auto-sync check skipped:', err.message);
+    // Read defensively: a rejection carrying something that is not an
+    // error would throw again right here, out of the very catch meant to
+    // contain it, and end the process.
+    console.log('Auto-sync check skipped:', (err && err.message) || err);
   }
 }
 
@@ -423,15 +426,32 @@ async function resumeBackfillIfNeeded() {
 
 // Runs every 5 minutes by default. Change the cron expression to taste —
 // Schwab rate limits are generous enough for personal use at this interval.
-function startAutoSync(intervalCron = '*/5 * * * *') {
-  cron.schedule(intervalCron, async () => {
+// One tick of the five-minute job. A named function rather than an inline
+// one so it can actually be run in a test, instead of a test reading this
+// file and pattern-matching the text of it.
+//
+// Nothing holds the promise this returns, so nothing here may be allowed
+// to escape: an unhandled failure ends the entire server, which is what
+// Render's "Exited with status 1" alert means. Each half is wrapped
+// separately so a failure in one still lets the other run.
+async function runScheduledTick() {
+  try {
     await runSyncCheck();
-    // Picking up where an interrupted import left off is part of keeping
-    // the journal current, not a separate thing he has to ask for.
-    await resumeBackfillIfNeeded().catch(err =>
-      console.log('Backfill resume check failed:', err.message));
-  });
+  } catch (err) {
+    console.log('Auto-sync tick failed:', (err && err.message) || err);
+  }
+  // Picking up where an interrupted import left off is part of keeping
+  // the journal current, not a separate thing he has to ask for.
+  try {
+    await resumeBackfillIfNeeded();
+  } catch (err) {
+    console.log('Backfill resume check failed:', (err && err.message) || err);
+  }
+}
+
+function startAutoSync(intervalCron = '*/5 * * * *') {
+  cron.schedule(intervalCron, runScheduledTick);
   console.log(`Auto-sync scheduled: ${intervalCron}`);
 }
 
-module.exports = { startAutoSync, runSyncCheck, runBackfill, resumeBackfillIfNeeded };
+module.exports = { startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded };

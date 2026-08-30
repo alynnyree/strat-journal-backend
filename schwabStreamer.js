@@ -65,7 +65,12 @@ function scheduleReconnect() {
   status.reconnectCount = reconnectAttempt;
   const delay = Math.min(backoffMs, MAX_BACKOFF_MS);
   console.log(`Streamer: reconnecting in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempt})...`);
-  setTimeout(connectStreamer, delay);
+  // Started and not waited on, so it needs its own catch: connectStreamer
+  // is an async function, and anything it throws outside its own try --
+  // opening the WebSocket itself, for one -- becomes a promise nobody is
+  // holding, which ends the whole process.
+  setTimeout(() => { connectStreamer().catch(err =>
+    console.log('Streamer: reconnect attempt failed —', err && err.message)); }, delay);
   backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
 }
 
@@ -87,10 +92,23 @@ async function connectStreamer() {
     return;
   }
 
-  ws = new WebSocket(streamerInfo.streamerSocketUrl);
+  // Opening the socket can fail on the spot -- a malformed address from
+  // Schwab is enough -- and that failure used to escape this function
+  // entirely, because everything above is inside a try and this was not.
+  try {
+    ws = new WebSocket(streamerInfo.streamerSocketUrl);
+  } catch (err) {
+    status.lastError = err.message;
+    console.log('Streamer: could not open the connection —', err.message);
+    scheduleReconnect();
+    return;
+  }
   let loggedIn = false;
 
   ws.on('open', () => {
+   // Sending on a socket that closed between opening and this line throws,
+   // and a throw inside a handler like this one is not caught by anything.
+   try {
     ws.send(JSON.stringify({
       requests: [{
         service: 'ADMIN',
@@ -105,6 +123,9 @@ async function connectStreamer() {
         },
       }],
     }));
+   } catch (err) {
+    console.log('Streamer: could not send the sign-in —', err.message);
+   }
   });
 
   ws.on('message', (raw) => {
@@ -123,6 +144,7 @@ async function connectStreamer() {
         reconnectAttempt = 0;
         status.reconnectCount = 0;
         console.log('Streamer: logged in. Subscribing to ACCT_ACTIVITY...');
+        try {
         ws.send(JSON.stringify({
           requests: [{
             service: 'ACCT_ACTIVITY',
@@ -133,6 +155,9 @@ async function connectStreamer() {
             parameters: { keys: 'Account Activity', fields: '0,1,2,3' },
           }],
         }));
+        } catch (err) {
+          console.log('Streamer: could not send the subscribe request —', err.message);
+        }
         // Rotate the connection well before the access token expires, so a
         // stale token is never the reason the stream silently stops.
         forcedReconnectTimer = setTimeout(() => {
@@ -182,7 +207,8 @@ async function connectStreamer() {
 
 function startStreamer() {
   console.log('Streamer: starting...');
-  connectStreamer();
+  connectStreamer().catch(err =>
+    console.log('Streamer: could not start —', err && err.message));
 }
 
 module.exports = { startStreamer, getStreamerStatus };
