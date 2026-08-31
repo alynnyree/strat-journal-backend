@@ -2,6 +2,7 @@ const express = require('express');
 const { wrap } = require('./asyncRoute');
 const { runPortfolioAnalysis, classifyStrategy, testClassifyStrategy, interpretBacktest } = require('./aiClient');
 const { getFtfcForTrade } = require('./ftfcCheck');
+const queue = require('./classifyQueue');
 const { getValidAccessToken } = require('./auth');
 const testFeedbackRouter = require('./aiTestFeedback');
 
@@ -33,31 +34,48 @@ router.post('/analyze', wrap(async (req, res) => {
 // one trade per request (not a batch) so a phone never holds one request
 // open for the minutes a large batch would take — see CLAUDE.md's known
 // traps about iOS Safari request timeouts.
+// Hands a trade over to be read and answers IMMEDIATELY.
+//
+// This used to call Gemini and reply only when it came back -- ten or
+// twenty seconds on a good day, past a minute once its retries are
+// counted. A phone browser will not hold a connection that long, so every
+// one of the owner's requests failed with Safari's "Load failed" and his
+// setups were never read. The thinking now happens on the server's own
+// time; the app collects the answers from /classify/results on the
+// polling it already does.
 router.post('/classify', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
   const trade = req.body && req.body.trade;
-  if (!trade || typeof trade !== 'object') {
-    return res.status(400).json({ error: 'trade is required' });
+  if (!trade || typeof trade !== 'object' || trade.id == null) {
+    return res.status(400).json({ error: 'trade (with an id) is required' });
   }
   try {
-    const result = await classifyStrategy(trade);
-    res.json({ result });
+    const out = await queue.enqueue(trade);
+    queue.drainSoon();
+    res.json(out);
   } catch (err) {
-    const status = err.response?.status;
-    console.log('AI classification failed:', err.response?.data || err.message);
-    // "The AI is busy or out of allowance for now" is a completely
-    // different situation from "this trade could not be read", and the app
-    // has to be able to tell them apart. Gemini's free allowance has a
-    // ceiling per minute and per day; once it is hit, every remaining
-    // trade in a run gets refused identically. Reported as its own answer
-    // so the app pauses the run and picks it up later, instead of burning
-    // the whole backlog against a wall and marking each trade as tried.
-    if (status === 429 || status === 503) {
-      return res.status(429).json({ error: 'The AI has hit its limit for now — this will be picked up again later.' });
-    }
-    res.status(500).json({ error: 'Classification failed — check server logs.' });
+    console.log('Could not queue a trade for reading:', err.message);
+    res.status(500).json({ error: 'Could not take that trade just now.' });
+  }
+}));
+
+// The answers worked out so far. Collecting them clears them, so the same
+// answer is never applied twice.
+router.get('/classify/results', wrap(async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  try {
+    const results = await queue.takeResults();
+    // Nudge the worker whenever the app checks in, so a queue left over
+    // from a restart starts moving again without being asked.
+    queue.drainSoon();
+    res.json({ results, waiting: await queue.queueDepth() });
+  } catch (err) {
+    console.log('Could not hand over reading results:', err.message);
+    res.status(500).json({ error: 'Could not fetch results just now.' });
   }
 }));
 
