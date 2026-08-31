@@ -45,6 +45,12 @@ function scheduleStillOpenCheck(leg) {
 // same logic used everywhere else in the app — now run automatically at
 // match time instead of waiting for the trade to be manually tagged, since
 // the Journal no longer has a separate tagging step.
+// 1 = the original rule, which read a bar's FINAL close (hindsight) and
+//     built the larger timeframes by grouping candles by position.
+// 2 = the price at entry against the open of the bar forming then, with
+//     intraday bars anchored to the session and quarters to the calendar.
+const FTFC_RULE_VERSION = 2;
+
 async function enrichWithFtfc(token, trades) {
   for (const trade of trades) {
     try {
@@ -60,6 +66,15 @@ async function enrichWithFtfc(token, trades) {
         trade.ftfcConfirmed = result.confirmed;
         trade.ftfcDirection = result.direction;
         trade.ftfcTimeframesInRun = result.timeframesInRun;
+        // Which version of the rule produced this reading. Without it,
+        // the app has no way to know that a trade measured under the old
+        // (hindsight) rule needs measuring again — it has an answer on
+        // file, so every "is anything missing?" test says it is finished.
+        // That is the same trap that stopped the plays and the exact
+        // stock prices ever reaching old trades. Bump this whenever the
+        // way a timeframe is read changes.
+        trade.ftfcVersion = FTFC_RULE_VERSION;
+        trade.ftfcPriceAtEntry = result.priceAtEntry ?? null;
       }
     } catch (err) {
       console.log(`FTFC enrichment failed for ${trade.ticker}:`, err.message);
