@@ -9,7 +9,7 @@ const mediaRouter = require('./media');
 const aiRoutes = require('./aiRoutes');
 const { persistExistingFeedback } = require('./aiTestFeedback');
 const { router: browserEventsRouter } = require('./browserEvents');
-const { startAutoSync } = require('./cron');
+const { startAutoSync, FTFC_RULE_VERSION } = require('./cron');
 const { startStreamer } = require('./schwabStreamer');
 const { installCrashGuards, getCrashes, uptimeSeconds, startedAt, memoryMb, watchMemory } = require('./crashGuard');
 const { wrap, errorHandler } = require('./asyncRoute');
@@ -47,6 +47,11 @@ app.get('/health', wrap(async (req, res) => {
     time: new Date().toISOString(),
     startedAt,
     uptimeSeconds: uptimeSeconds(),
+    // Which version of the timeframe rule THIS server measures with.
+    // Without it there is no way to tell a server that has picked up a
+    // correction from one still running the old code -- and the phone
+    // would keep asking for a re-measure that can never satisfy it.
+    ftfcRuleVersion: FTFC_RULE_VERSION,
     memoryMb: mem.nowMb,
     peakMemoryMb: mem.peakMb,
     recentFailures: crashes,
