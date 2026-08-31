@@ -49,7 +49,12 @@ async function enrichWithFtfc(token, trades) {
   for (const trade of trades) {
     try {
       if (trade.entryTimestamp) {
-        const result = await getFtfcForTrade(token, trade.ticker, trade.entryTimestamp);
+        // The underlying price is worked out just above this step, so it
+        // is available here. Handed over ONLY when it is a real print at
+        // the fill second (Alpaca); a reconstructed one is the close of
+        // the candle containing the entry, which is hindsight.
+        const exactEntryPrice = trade.undEntryExact === true ? trade.undEntry : null;
+        const result = await getFtfcForTrade(token, trade.ticker, trade.entryTimestamp, exactEntryPrice);
         trade.ftfc = result.timeframes;
         trade.ftfcRun = result.runLength;
         trade.ftfcConfirmed = result.confirmed;
