@@ -512,5 +512,5 @@ function startAutoSync(intervalCron = '*/5 * * * *') {
 
 // enrichWithUnderlyingPrices and priceWithProvenance are exported so a test
 // can run them for real, rather than a test reading this file and guessing.
-module.exports = { startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded,
+module.exports = { FTFC_RULE_VERSION, startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded,
                    enrichWithUnderlyingPrices, priceWithProvenance };
