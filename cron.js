@@ -503,6 +503,13 @@ async function runScheduledTick() {
   } catch (err) {
     console.log('Backfill resume check failed:', (err && err.message) || err);
   }
+  // Anything left waiting to be read -- after a restart, say -- starts
+  // moving again without being asked.
+  try {
+    await require('./classifyQueue').drain();
+  } catch (err) {
+    console.log('Setup reading tick failed:', (err && err.message) || err);
+  }
 }
 
 function startAutoSync(intervalCron = '*/5 * * * *') {

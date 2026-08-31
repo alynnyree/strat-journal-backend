@@ -34,3 +34,5 @@ jobs:
         run: node tests/ftfc-truth.js
       - name: Check rebuilding the journal does not eat the memory
         run: node tests/rebuild-memory.js
+      - name: Check the phone never waits on the AI
+        run: node tests/classify-queue.js
