@@ -32,3 +32,5 @@ jobs:
         run: node tests/memory-limits.js
       - name: Check timeframe direction uses nothing from after the trade
         run: node tests/ftfc-truth.js
+      - name: Check rebuilding the journal does not eat the memory
+        run: node tests/rebuild-memory.js

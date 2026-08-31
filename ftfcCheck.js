@@ -84,11 +84,18 @@ async function fetchCandles(accessToken, symbol, { periodType, period, frequency
 // inside a day are anchored to the session, and the session is a New York
 // thing -- doing this in UTC puts the boundary in the middle of the
 // afternoon.
+// Built ONCE. Building an Intl formatter is expensive and allocates
+// heavily, and this is called for every candle: doing it inside the
+// function meant roughly 23,000 formatters per trade, and measured 476MB
+// of memory churn across a batch of twenty-five -- while the memory
+// actually being held was 27MB. That gap is what Render was killing the
+// server for, because a process never hands that memory back to the
+// machine even after it is finished with it.
+const EASTERN_DATE = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
 function easternDate(ms) {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-  });
-  const p = Object.fromEntries(fmt.formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+  const p = Object.fromEntries(EASTERN_DATE.formatToParts(new Date(ms)).map(x => [x.type, x.value]));
   return `${p.year}-${p.month}-${p.day}`;
 }
 
@@ -103,11 +110,17 @@ function candleContaining(candles, atMs) {
 // `atMs`, anchored to that day's first candle -- so a 4-hour bar starts
 // when the session starts, never mid-afternoon, and never runs across a
 // night. Returns null when the day's data does not reach that far.
-function intradayBarOpen(candles, atMs, minutes) {
-  if (!candles || !candles.length) return null;
+// The entry day's candles, worked out ONCE per trade rather than once per
+// timeframe. Eight timeframes each re-scanning the whole series was eight
+// times the work and eight times the memory for one answer.
+function sessionCandles(candles, atMs) {
+  if (!candles || !candles.length) return [];
   const day = easternDate(atMs);
-  const sameDay = candles.filter(c => easternDate(c.datetime) === day);
-  if (!sameDay.length) return null;
+  return candles.filter(c => easternDate(c.datetime) === day);
+}
+
+function intradayBarOpen(sameDay, atMs, minutes) {
+  if (!sameDay || !sameDay.length) return null;
   const sessionStart = sameDay[0].datetime;
   if (atMs < sessionStart) return null;                 // before the session opened
   const len = minutes * 60 * 1000;
@@ -269,20 +282,25 @@ function computeFtfcConfirmation(perTimeframe) {
 // before the fill (Alpaca). Anything reconstructed must be left null.
 async function getFtfcForTrade(accessToken, ticker, entryTimestampMs, exactPriceAtEntry = null) {
   const result = {};
-  let oneMin = [], thirtyMin = [], fiveMin = [], fifteenMin = [], daily = [], weekly = [], monthly = [];
+  let oneMin = [], daily = [], weekly = [], monthly = [];
 
+  // ONE minute-series, covering TWO days.
+  //
+  // This used to fetch four separate series (1, 5, 15 and 30 minute) each
+  // covering TEN days. Measured on a real rebuild of his journal that put
+  // the server at 589MB inside the first twenty-five trades, on an
+  // allowance of a fraction of that -- which is what Render's "exceeded
+  // its memory limit" alerts were.
+  //
+  // None of it was needed. Every intraday bar is now anchored to the
+  // start of that day's session, so the open of a 5, 15, 30, 60, 120 or
+  // 240-minute bar is just the open of the first ONE-minute candle inside
+  // it. One series answers all eight intraday timeframes, and two days is
+  // enough to be sure the entry day's session start is in there even for
+  // an early entry. About twenty times less data for the same answer.
   try {
     oneMin = await fetchCandles(accessToken, ticker, {
-      periodType: 'day', period: 10, frequencyType: 'minute', frequency: 1, endDate: entryTimestampMs,
-    }).catch(() => []);
-    fiveMin = await fetchCandles(accessToken, ticker, {
-      periodType: 'day', period: 10, frequencyType: 'minute', frequency: 5, endDate: entryTimestampMs,
-    }).catch(() => []);
-    fifteenMin = await fetchCandles(accessToken, ticker, {
-      periodType: 'day', period: 10, frequencyType: 'minute', frequency: 15, endDate: entryTimestampMs,
-    }).catch(() => []);
-    thirtyMin = await fetchCandles(accessToken, ticker, {
-      periodType: 'day', period: 10, frequencyType: 'minute', frequency: 30, endDate: entryTimestampMs,
+      periodType: 'day', period: 2, frequencyType: 'minute', frequency: 1, endDate: entryTimestampMs,
     }).catch(() => []);
   } catch (err) {
     console.log('FTFC minute-data fetch failed (trade may be too old for Schwab\'s minute-data retention):', err.message);
@@ -309,15 +327,16 @@ async function getFtfcForTrade(accessToken, ticker, entryTimestampMs, exactPrice
   // Intraday bars, each anchored to the start of that day's session so a
   // bar never runs across a night and never starts mid-afternoon. Built
   // from the finest data available for that length.
-  const openOf = (series, mins) => intradayBarOpen(series, entryTimestampMs, mins);
-  result['1m']  = directionFrom(openOf(oneMin, 1), price);
-  result['3m']  = directionFrom(openOf(oneMin, 3), price);
-  result['5m']  = directionFrom(openOf(fiveMin.length ? fiveMin : oneMin, 5), price);
-  result['15m'] = directionFrom(openOf(fifteenMin.length ? fifteenMin : oneMin, 15), price);
-  result['30m'] = directionFrom(openOf(thirtyMin.length ? thirtyMin : oneMin, 30), price);
-  result['1H']  = directionFrom(openOf(thirtyMin.length ? thirtyMin : oneMin, 60), price);
-  result['2H']  = directionFrom(openOf(thirtyMin.length ? thirtyMin : oneMin, 120), price);
-  result['4H']  = directionFrom(openOf(thirtyMin.length ? thirtyMin : oneMin, 240), price);
+  const sameDay = sessionCandles(oneMin, entryTimestampMs);
+  const openOf = (mins) => intradayBarOpen(sameDay, entryTimestampMs, mins);
+  result['1m']  = directionFrom(openOf(1), price);
+  result['3m']  = directionFrom(openOf(3), price);
+  result['5m']  = directionFrom(openOf(5), price);
+  result['15m'] = directionFrom(openOf(15), price);
+  result['30m'] = directionFrom(openOf(30), price);
+  result['1H']  = directionFrom(openOf(60), price);
+  result['2H']  = directionFrom(openOf(120), price);
+  result['4H']  = directionFrom(openOf(240), price);
 
   // Day, week and month come with their own correct boundaries from the
   // data provider, so the bar containing the entry is taken straight from

@@ -20,6 +20,12 @@ const CHUNK_DAYS = 10;
 // forever if a caller ever passes a corrupt/nonsensical timestamp pair.
 const MAX_CHUNKS = 500;
 
+// The candle sizes Alpaca can serve, smallest first, and the most bars any
+// one replay may hold. A day trade stays at one minute; only a long hold
+// steps up.
+const REPLAY_STEPS = [1, 3, 5, 15, 30, 60];
+const MAX_REPLAY_BARS = 1200;
+
 // Finds the index of the last candle at or before a given timestamp — used
 // to place the entry/exit markers on the exact right bar in the replay.
 // Returns null when the timestamp falls outside the candle range entirely,
@@ -61,9 +67,26 @@ async function getReplayCandles(accessToken, ticker, entryTimestampMs, exitTimes
   // which is why older trades have always come back with nothing.
   // isReady(), not isConfigured() -- see alpacaClient.isReady.
   if (await alpaca.isReady()) {
-    const bars = await alpaca.fetchBars(ticker, { minutes: 1, startMs: windowStart, endMs: windowEnd });
+    // The candle size is chosen so a replay is always a sensible NUMBER of
+    // bars, however long the position was held.
+    //
+    // At one minute a day trade is about eighty bars, but the position he
+    // held from 24 June to 23 July is nearly twenty-eight THOUSAND -- two
+    // megabytes stored on that one trade, and nobody steps through
+    // twenty-eight thousand bars one at a time. Held in memory for every
+    // trade at once during a rebuild, that is a real part of why the
+    // server kept running out of memory.
+    //
+    // A longer hold simply gets a bigger candle, so the whole trade is
+    // still visible end to end and the replay stays a few hundred bars.
+    const spanMinutes = Math.max(1, Math.round((windowEnd - windowStart) / 60000));
+    const step = REPLAY_STEPS.find(m => spanMinutes / m <= MAX_REPLAY_BARS) || REPLAY_STEPS[REPLAY_STEPS.length - 1];
+    const bars = await alpaca.fetchBars(ticker, { minutes: step, startMs: windowStart, endMs: windowEnd });
     if (bars && bars.length) {
-      return bars.map(c => ({
+      if (step > 1) {
+        console.log(`Replay for ${ticker}: held ${Math.round(spanMinutes / 60 / 24)} day(s), so built from ${step}-minute candles (${bars.length} bars) rather than ${spanMinutes.toLocaleString()} one-minute ones.`);
+      }
+      return bars.slice(0, MAX_REPLAY_BARS).map(c => ({
         open: c.open, high: c.high, low: c.low, close: c.close,
         volume: c.volume || 0, datetime: c.datetime,
       }));
