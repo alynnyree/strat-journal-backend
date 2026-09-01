@@ -11,6 +11,7 @@ const { computeStopForTrade, loadSettings: loadStopSettings } = require('./stopR
 const { classifyStrategy } = require('./aiClient');
 const { notifyTradeClosed, notifyTradeOpened, notifyTradeStillOpen } = require('./pushcut');
 const { queueBrowserEvent } = require('./browserEvents');
+const { checkSignInAndNotify } = require('./signInWatch');
 
 const SHORT_TRADE_SAFETY_NET_MS = 15 * 60 * 1000; // matches pushcut.js's SHORT_TRADE_MS
 
@@ -521,6 +522,15 @@ async function runScheduledTick() {
     await require('./classifyQueue').drain();
   } catch (err) {
     console.log('Setup reading tick failed:', (err && err.message) || err);
+  }
+  // Its own attempt and its own catch: a warning about the sign-in
+  // running out must not be skipped because collecting trades failed --
+  // least of all when the reason collecting trades failed IS the sign-in
+  // having run out.
+  try {
+    await checkSignInAndNotify();
+  } catch (err) {
+    console.log('Sign-in reminder tick failed:', (err && err.message) || err);
   }
 }
 

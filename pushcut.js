@@ -83,4 +83,24 @@ async function notifyTradeClosed(trade) {
   });
 }
 
-module.exports = { notifyTradeOpened, notifyTradeStillOpen, notifyTradeClosed };
+// The seven-day Schwab sign-in, sent to his phone rather than waiting to
+// be discovered. Falls back to the existing trade-closed notification name
+// when no dedicated one is set, so this works with the Pushcut setup he
+// already has -- a reminder that needs him to add a setting first is a
+// reminder that never arrives.
+async function notifySignInExpiring(stageKey, hoursLeft) {
+  const notificationName = process.env.PUSHCUT_NOTIFICATION_NAME_SIGNIN
+    || process.env.PUSHCUT_NOTIFICATION_NAME;
+  const apiKey = process.env.PUSHCUT_API_KEY;
+  // Required here rather than at the top: signInWatch requires this file,
+  // so importing it back at load time would be circular.
+  const { messageFor } = require('./signInWatch');
+  const { title, text } = messageFor(stageKey, hoursLeft);
+  await sendPushcut(notificationName, apiKey, {
+    title,
+    text,
+    input: JSON.stringify({ kind: 'schwabSignIn', stage: stageKey, hoursLeft }),
+  });
+}
+
+module.exports = { notifyTradeOpened, notifyTradeStillOpen, notifyTradeClosed, notifySignInExpiring };
