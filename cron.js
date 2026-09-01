@@ -225,6 +225,18 @@ async function enrichWithStrategy(trades) {
           trade.playConfidence = result.playConfidence;
           trade.playReasoning = result.playReasoning;
         }
+        // His own notation for the combo -- what he actually reads.
+        if (result.notation && result.notation !== 'unclear') {
+          trade.stratNotation = result.notation;
+          trade.stratNotationDirection = result.notationDirection || null;
+        }
+        // What the AI made of the Broadening Formation. Recorded BESIDE
+        // his own toggle (offBroadeningFormation), never over it -- his
+        // answer is the truth, this is only what the model saw.
+        if (result.broadeningFormation && result.broadeningFormation !== 'unclear') {
+          trade.broadeningDetected = result.broadeningFormation === 'yes';
+          trade.broadeningReasoning = result.broadeningReasoning || null;
+        }
       }
     } catch (err) {
       console.log(`Strategy classification failed for ${trade.ticker}:`, err.message);

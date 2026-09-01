@@ -258,8 +258,26 @@ const CLASSIFY_SCHEMA = {
     play: { type: 'STRING', enum: [...PLAYS.map(p => p.key), 'unclear'] },
     playConfidence: { type: 'STRING', enum: ['high', 'medium', 'low'] },
     playReasoning: { type: 'STRING' },
+    // HIS OWN NOTATION. He told me on 2026-08-31: "I don't look at 2-2 as
+    // 2-2 reversals or 2-2 continuations, I look at them as 2U-2D
+    // (Bearish) or 2D-2U (Bullish). This applies to every combo." The
+    // combo name stays as the thing performance is grouped by, because
+    // renaming nine setups would relabel every trade he already has —
+    // but the notation is what he actually reads, so it is asked for and
+    // shown.
+    notation: { type: 'STRING' },
+    notationDirection: { type: 'STRING', enum: ['Bullish', 'Bearish', 'unclear'] },
+    // Read by the model itself now. Until 2026-08-31 this was deliberately
+    // NOT attempted — a Broadening Formation was called a multi-step
+    // judgement call and left as his manual toggle. He has now asked for
+    // the opposite: the AI must spot one itself, because it cannot pick
+    // "Broadening Formation Scalp" as the play otherwise. His own toggle
+    // is untouched and always wins; this is recorded beside it.
+    broadeningFormation: { type: 'STRING', enum: ['yes', 'no', 'unclear'] },
+    broadeningReasoning: { type: 'STRING' },
   },
-  required: ['strategy', 'confidence', 'reasoning', 'play', 'playConfidence', 'playReasoning'],
+  required: ['strategy', 'confidence', 'reasoning', 'play', 'playConfidence', 'playReasoning',
+             'notation', 'notationDirection', 'broadeningFormation', 'broadeningReasoning'],
 };
 
 // The Test Classification tool's own schema — three separate layered
@@ -431,7 +449,15 @@ async function runClassification(trade) {
 Defined patterns:
 ${STRATEGIES.map(s => `- "${s.key}": ${s.desc}`).join('\n')}
 
-FTFC alignment and whether this was taken off a Broadening Formation are tracked separately elsewhere — they are not one of the choices above and should not affect which pattern you pick. They're included below only as extra context about the trade.
+FTFC alignment and Broadening Formation are still NOT patterns — the nine above remain the only valid answers for the combo. But as of 2026-08-31 the trader has asked that you USE them as supporting evidence when the bars alone leave the combo genuinely ambiguous. The timeframe alignment below was measured from real price data at the minute he entered, so it is evidence, not a guess. Weigh it; never let it override what the bars plainly show.
+
+ALSO REPORT THE COMBO IN HIS OWN NOTATION. He does not read "2-2 Reversal" or "2-2 Continuation" — he reads the direction of each bar:
+  2U = a directional bar that took out the previous bar's HIGH
+  2D = a directional bar that took out the previous bar's LOW
+  1  = an inside bar   ·   3 = an outside bar
+So a bearish 2-2 reversal is "2U-2D" and a bullish one is "2D-2U"; a bullish 2-1-2 continuation is "2U-1-2U". This applies to EVERY combo. Put the bar sequence you actually read in 'notation' using exactly that form (hyphen-separated, e.g. "2U-1-2D", "3-2D-2U"), and put Bullish or Bearish in 'notationDirection'. If you cannot read the individual bars confidently, set notation to "unclear".
+
+AND JUDGE THE BROADENING FORMATION YOURSELF. Look for a compound outside bar structure — successively wider swings making both higher highs AND lower lows, so price is expanding from a central axis rather than trending. Answer yes, no, or unclear in 'broadeningFormation', and say what you saw in 'broadeningReasoning'. This matters beyond context: "Broadening Formation Scalp" is one of his three plays, and you cannot choose it without recognising the formation. If the trader has set his own Broadening toggle (shown below), treat his answer as the truth and say so in your reasoning — yours is recorded alongside his, never over it.
 
 Trade data:
 - Direction: ${trade.dir || 'n/a'}
@@ -455,7 +481,17 @@ ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${scr
   if (imagePart) attachments.push({ ...imagePart, label: 'THE CHART TO CLASSIFY — this trade\'s own screenshot. Your answer is about this one.' });
   attachments.push(...teaching.imageParts);
   const parsed = await callGeminiJson(prompt, CLASSIFY_SCHEMA, 6000, attachments);
-  return { strategy: parsed.strategy, confidence: parsed.confidence, reasoning: parsed.reasoning, usedScreenshot: !!imagePart };
+  // Everything the model was asked for, not a hand-picked three.
+  //
+  // This line used to return strategy, confidence and reasoning only. The
+  // PLAY was added to the schema on 2026-08-29, the model has been
+  // answering it ever since, and this threw it away every single time --
+  // so classifyStrategy always saw result.play as undefined, always failed
+  // its check, and always set the play to null. Not one trade could ever
+  // have been given a play by the automatic reading. Same shape of fault
+  // as the others in CLAUDE.md: a second answer added later, invisible to
+  // code written for the first.
+  return { ...parsed, usedScreenshot: !!imagePart };
 }
 
 // Classifies a single newly-matched trade against the trader's own defined
