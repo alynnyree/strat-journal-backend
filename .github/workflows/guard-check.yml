@@ -36,3 +36,5 @@ jobs:
         run: node tests/rebuild-memory.js
       - name: Check the phone never waits on the AI
         run: node tests/classify-queue.js
+      - name: Check his own notation and the formation reading
+        run: node tests/notation-broadening.js
