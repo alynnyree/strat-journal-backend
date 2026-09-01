@@ -34,7 +34,14 @@ function scheduleStillOpenCheck(leg) {
       );
       if (stillOpen) {
         await notifyTradeStillOpen(leg);
-        queueBrowserEvent('stillOpen', { ticker: leg.ticker, dir: leg.dir, timestamp: leg.openTimestamp }).catch(() => {});
+        // The 15-minute mark, NOT the entry time. Stamped with the entry
+        // it would be matched as the ENTRY picture and would replace the
+        // real one with a picture taken fifteen minutes later -- a photo
+        // labelled "entry" showing something else entirely.
+        queueBrowserEvent('stillOpen', {
+          ticker: leg.ticker, dir: leg.dir,
+          timestamp: leg.openTimestamp + SHORT_TRADE_SAFETY_NET_MS,
+        }).catch(() => {});
       }
     } catch (err) {
       console.log('Still-open safety-net check failed:', err.message);

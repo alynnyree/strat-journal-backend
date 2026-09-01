@@ -17,9 +17,13 @@ const LIST_KEY = 'browserEvents:pending';
 const MAX_LIST = 200; // a ceiling on what is READ, not just on how often -- an unbounded list is how a small job turns into a large one
 const EVENT_TTL_SECONDS = 20 * 60; // generous cushion past the app's own 10-minute entry/exit matching window — a much older event is no longer useful to capture
 
-async function queueBrowserEvent(type, { ticker, dir, timestamp }) {
+async function queueBrowserEvent(type, { ticker, dir, timestamp, test }) {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const record = { id, type, ticker, dir, timestamp };
+  // Marked all the way through so a rehearsal can never end up filed
+  // against a real trade. His journal once held 161 contracts he never
+  // bought; nothing that pretends to be a trade goes near it unlabelled.
+  if (test) record.test = true;
   await redis.set(`browserEvent:${id}`, JSON.stringify(record), { ex: EVENT_TTL_SECONDS });
   await redis.lpush(LIST_KEY, id);
   await redis.ltrim(LIST_KEY, 0, MAX_LIST - 1);
@@ -72,4 +76,45 @@ router.delete('/events/:id', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-module.exports = { router, queueBrowserEvent };
+// A rehearsal of a whole trade, so he can watch the app react from start
+// to finish without waiting for a real fill. Three moments, exactly the
+// three a real trade produces -- opened, still open, closed -- spaced
+// over a minute and a half.
+//
+// Deliberately no timers on this end. A moment carries the time it BELONGS
+// to, and the add-on captures it when that time arrives, so this survives
+// a restart and there is nothing running in the background to go wrong.
+const TEST_STILL_OPEN_AFTER_MS = 45 * 1000;
+const TEST_CLOSE_AFTER_MS = 90 * 1000;
+
+async function queueTestTrade(now = Date.now()) {
+  const moments = [
+    { type: 'opened', at: now },
+    { type: 'stillOpen', at: now + TEST_STILL_OPEN_AFTER_MS },
+    { type: 'closed', at: now + TEST_CLOSE_AFTER_MS },
+  ];
+  const queued = [];
+  for (const m of moments) {
+    queued.push(await queueBrowserEvent(m.type, {
+      ticker: 'TEST', dir: 'Long', timestamp: m.at, test: true,
+    }));
+  }
+  return queued;
+}
+
+router.post('/test-trade', wrap(async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  const queued = await queueTestTrade();
+  res.json({
+    ok: true,
+    moments: queued.length,
+    finishesInSeconds: Math.round(TEST_CLOSE_AFTER_MS / 1000),
+  });
+}));
+
+module.exports = {
+  router, queueBrowserEvent, queueTestTrade,
+  TEST_STILL_OPEN_AFTER_MS, TEST_CLOSE_AFTER_MS,
+};

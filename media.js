@@ -40,6 +40,7 @@ function parseTimestampToMs(raw) {
 // body from here — if a real upload gets rejected before it reaches this
 // code, that's Render's proxy, not this limit, and needs checking live.
 const uploadVideoMw = multer({ storage: multer.memoryStorage(), limits: { fileSize: 300 * 1024 * 1024 } });
+const MAX_PENDING = 100; // pictures are large; a check that hands back more than this is a problem in itself
 const VIDEO_LIST_KEY = 'videos:pending';
 const VIDEO_TTL_SECONDS = 30 * 24 * 60 * 60; // matches SCREENSHOT_TTL_SECONDS's reasoning
 
@@ -72,8 +73,14 @@ router.post('/upload', upload.single('image'), wrap(async (req, res) => {
 
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const record = { id, image, timestamp: timestampMs }; // stored as ms internally, matches trade timestamps used elsewhere
+  // A rehearsal picture carries a label the whole way, so the app can show
+  // it without ever attaching it to a real trade. Nothing that pretends to
+  // be part of a trade goes into his journal unlabelled.
+  if (req.query.test === '1' || req.query.test === 'true') record.test = true;
+  if (req.query.moment) record.moment = String(req.query.moment).slice(0, 20);
   await redis.set(`screenshot:${id}`, JSON.stringify(record), { ex: SCREENSHOT_TTL_SECONDS });
   await redis.lpush(LIST_KEY, id);
+  await redis.ltrim(LIST_KEY, 0, MAX_PENDING - 1);
 
   console.log(`Screenshot uploaded: ${id} (~${Math.round(req.file.buffer.length/1024)}KB, ts=${new Date(timestampMs).toISOString()})`);
   res.json({ ok: true, id });
@@ -86,13 +93,28 @@ router.get('/pending', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
-  const ids = await redis.lrange(LIST_KEY, 0, -1);
+  // Bounded, and swept. Each picture expires on its own but its id was
+  // left on this list for ever -- the same fault found in the trade-moment
+  // queue, and it was in here too. A ceiling on what accumulates, not just
+  // on how often it loops.
+  const ids = await redis.lrange(LIST_KEY, 0, MAX_PENDING - 1);
   if (!ids.length) return res.json({ screenshots: [] });
 
   const raw = await Promise.all(ids.map(id => redis.get(`screenshot:${id}`)));
-  const screenshots = raw
-    .map(r => { try { return typeof r === 'string' ? JSON.parse(r) : r; } catch (e) { return null; } })
-    .filter(Boolean);
+  const screenshots = [];
+  const dead = [];
+  ids.forEach((id, i) => {
+    const r = raw[i];
+    if (r == null) { dead.push(id); return; }
+    try {
+      screenshots.push(typeof r === 'string' ? JSON.parse(r) : r);
+    } catch (e) {
+      dead.push(id);
+    }
+  });
+  for (const id of dead) {
+    await redis.lrem(LIST_KEY, 0, id).catch(() => {});
+  }
   res.json({ screenshots });
 }));
 
