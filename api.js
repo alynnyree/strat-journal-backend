@@ -9,6 +9,7 @@ const { runBackfill, runSyncCheck } = require('./cron');
 const { getFtfcForTrade, getUnderlyingPriceAt } = require('./ftfcCheck');
 const { getReplayCandles } = require('./replayData');
 const stopRule = require('./stopRule');
+const { runTestTrade } = require('./testTrade');
 
 const router = express.Router();
 
@@ -171,6 +172,34 @@ router.post('/trade-data/enrich', wrap(async (req, res) => {
 // The secret is never sent back — only whether one is on file and the
 // last four characters of the key, which is enough to recognise it
 // without being enough to use it.
+// A rehearsed trade, run through the whole machine: the matcher, the
+// stock price at both ends, the thirteen timeframes, the replay candles,
+// the AI reading the setup, and the stop rule. Each step reports for
+// itself, so a failure names which part failed rather than the whole
+// thing going quiet.
+//
+// It writes NOTHING. No trade store, no pending list, no
+// lastProcessedIds. The finished trade comes back in the answer marked as
+// a rehearsal and the app keeps it well away from his journal.
+router.post('/test-trade', wrap(async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  // Required here rather than at the top: cron.js requires this file's
+  // siblings, and pulling the enrichment steps in at load time would make
+  // the requires circular.
+  const cron = require('./cron');
+  const result = await runTestTrade({
+    getUnderlyingPriceAt,
+    enrichWithUnderlyingPrices: cron.enrichWithUnderlyingPrices,
+    enrichWithFtfc: cron.enrichWithFtfc,
+    enrichWithReplayData: cron.enrichWithReplayData,
+    enrichWithStopRule: cron.enrichWithStopRule,
+    enrichWithStrategy: cron.enrichWithStrategy,
+  });
+  res.json(result);
+}));
+
 router.get('/alpaca/status', wrap(async (req, res) => {
   try {
     await alpaca.ensureKeysLoaded();
