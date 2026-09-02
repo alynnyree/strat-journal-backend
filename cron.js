@@ -548,5 +548,9 @@ function startAutoSync(intervalCron = '*/5 * * * *') {
 
 // enrichWithUnderlyingPrices and priceWithProvenance are exported so a test
 // can run them for real, rather than a test reading this file and guessing.
+// Every enrichment step is exported so the full rehearsal can run the
+// REAL ones. A rehearsal that calls a copy of the pipeline proves only
+// that the copy works.
 module.exports = { FTFC_RULE_VERSION, startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded,
-                   enrichWithUnderlyingPrices, priceWithProvenance };
+                   enrichWithUnderlyingPrices, priceWithProvenance,
+                   enrichWithFtfc, enrichWithReplayData, enrichWithStopRule, enrichWithStrategy };
