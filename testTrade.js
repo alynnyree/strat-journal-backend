@@ -71,6 +71,99 @@ function easternMoment(session, hour, minute) {
   return naive - offset * 60 * 1000;
 }
 
+// Schwab keeps minute-by-minute data for only about thirty to
+// thirty-five days. Past that the timeframes and the replay have nothing
+// to work from -- not a fault, just gone. Said up front rather than
+// letting him watch two steps fail for a reason that is nobody's doing.
+const MINUTE_DATA_DAYS = 30;
+
+function isTooOldForMinuteData(session, now = Date.now()) {
+  const dayMs = easternMoment(session, 12, 0);
+  return (now - dayMs) > MINUTE_DATA_DAYS * 24 * 60 * 60 * 1000;
+}
+
+// Weekday in Eastern terms, so a Saturday evening in London is still
+// Saturday here.
+function weekdayOf(session) {
+  const ms = easternMoment(session, 12, 0);
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' })
+    .format(new Date(ms));
+}
+
+const REGULAR_OPEN_MINUTES = 9 * 60 + 30;   // 09:30 Eastern
+const REGULAR_CLOSE_MINUTES = 16 * 60;      // 16:00 Eastern
+
+// Everything he can choose, checked before anything is fetched. Returns
+// either what to run or a plain reason it cannot be run -- never a
+// half-valid set of choices that fails confusingly later.
+function readChoices(raw = {}) {
+  const out = {
+    ticker: 'SPY', dir: 'Long',
+    holdMinutes: HOLD_MINUTES,
+    hour: ENTRY_HOUR_ET, minute: ENTRY_MIN_ET,
+    session: null, warnings: [],
+  };
+
+  if (raw.ticker != null && String(raw.ticker).trim() !== '') {
+    const t = String(raw.ticker).trim().toUpperCase();
+    if (!/^[A-Z]{1,5}$/.test(t)) return { error: 'That does not look like a ticker. Use something like SPY or IWM.' };
+    out.ticker = t;
+  }
+
+  if (raw.dir != null && String(raw.dir).trim() !== '') {
+    const d = String(raw.dir).trim().toLowerCase();
+    if (d !== 'long' && d !== 'short') return { error: 'Choose Long or Short.' };
+    out.dir = d === 'long' ? 'Long' : 'Short';
+  }
+
+  if (raw.holdMinutes != null && String(raw.holdMinutes).trim() !== '') {
+    const h = Number(raw.holdMinutes);
+    if (!Number.isFinite(h) || h < 1 || h > 390) {
+      return { error: 'How long the trade ran must be between 1 minute and 390 (a whole trading day).' };
+    }
+    out.holdMinutes = Math.round(h);
+  }
+
+  if (raw.time != null && String(raw.time).trim() !== '') {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(raw.time).trim());
+    if (!m) return { error: 'The time should look like 10:30.' };
+    const hh = Number(m[1]), mm = Number(m[2]);
+    if (hh > 23 || mm > 59) return { error: 'That is not a real time of day.' };
+    out.hour = hh; out.minute = mm;
+  }
+
+  if (raw.date != null && String(raw.date).trim() !== '') {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(raw.date).trim());
+    if (!m) return { error: 'The date should look like 2026-08-28.' };
+    const [ , year, month, day ] = m;
+    if (Number(month) < 1 || Number(month) > 12 || Number(day) < 1 || Number(day) > 31) {
+      return { error: 'That is not a real date.' };
+    }
+    out.session = { year, month, day };
+  } else {
+    out.session = pickSession();
+    if (!out.session) return { error: 'Could not work out a recent trading day.' };
+  }
+
+  // Warnings, not refusals. He may want to see exactly what the app does
+  // with an awkward choice -- but he should not have to guess afterwards
+  // why two steps came back empty.
+  const weekday = weekdayOf(out.session);
+  if (weekday === 'Sat' || weekday === 'Sun') {
+    out.warnings.push('That day is a weekend, so the market was shut and there will be no chart data.');
+  }
+  const startMin = out.hour * 60 + out.minute;
+  if (startMin < REGULAR_OPEN_MINUTES || startMin >= REGULAR_CLOSE_MINUTES) {
+    out.warnings.push('That time is outside 9:30 to 4:00, so there may be little or no chart data.');
+  } else if (startMin + out.holdMinutes > REGULAR_CLOSE_MINUTES) {
+    out.warnings.push('The trade runs past the 4:00 close, so the exit falls after the market shut.');
+  }
+  if (isTooOldForMinuteData(out.session)) {
+    out.warnings.push(`That day is more than ${MINUTE_DATA_DAYS} days ago. Schwab throws away minute-by-minute data after about a month, so the timeframes and Bar Replay will likely come back empty. That is not a fault.`);
+  }
+  return out;
+}
+
 function two(n) { return String(n).padStart(2, '0'); }
 
 // Schwab's contract symbols: six characters of ticker, then the expiry as
@@ -81,8 +174,13 @@ function buildOcc(ticker, session, strike, putCall) {
   return `${ticker.padEnd(6, ' ')}${yy}${session.month}${session.day}${putCall === 'PUT' ? 'P' : 'C'}${strikePart}`;
 }
 
-function buildFills(session, strike, entryMs, exitMs) {
-  const occ = buildOcc('SPY', session, strike, 'CALL');
+function buildFills(session, strike, entryMs, exitMs, choices = {}) {
+  const ticker = choices.ticker || 'SPY';
+  // Long is a call and Short is a put -- that is how his direction is
+  // decided, not by buy or sell. He always buys to open either way, which
+  // is why a rising option price is profit on both.
+  const putCall = choices.dir === 'Short' ? 'PUT' : 'CALL';
+  const occ = buildOcc(ticker, session, strike, putCall);
   const gross = (price) => price * 100 * CONTRACTS;
   const at = (ms) => {
     const parts = new Intl.DateTimeFormat('en-US', {
@@ -95,15 +193,15 @@ function buildFills(session, strike, entryMs, exitMs) {
   const dateStr = `${session.year}-${session.month}-${session.day}`;
   return [
     {
-      transactionId: 'rehearsal-open', occ, ticker: 'SPY',
-      instruction: 'BUY_TO_OPEN', putCall: 'CALL',
+      transactionId: 'rehearsal-open', occ, ticker,
+      instruction: 'BUY_TO_OPEN', putCall,
       price: OPEN_PRICE, quantity: CONTRACTS, fees: FEE_PER_SIDE,
       netAmount: -(gross(OPEN_PRICE) + FEE_PER_SIDE),
       date: dateStr, time: at(entryMs), timestamp: entryMs,
     },
     {
-      transactionId: 'rehearsal-close', occ, ticker: 'SPY',
-      instruction: 'SELL_TO_CLOSE', putCall: 'CALL',
+      transactionId: 'rehearsal-close', occ, ticker,
+      instruction: 'SELL_TO_CLOSE', putCall,
       price: CLOSE_PRICE, quantity: CONTRACTS, fees: FEE_PER_SIDE,
       netAmount: gross(CLOSE_PRICE) - FEE_PER_SIDE,
       date: dateStr, time: at(exitMs), timestamp: exitMs,
@@ -138,20 +236,25 @@ function describeAlignment(trade) {
   return `${n} timeframes agreed, ${dir}.`;
 }
 
-async function runTestTrade(deps) {
+async function runTestTrade(deps, rawChoices = {}) {
   const {
     getUnderlyingPriceAt, enrichWithUnderlyingPrices, enrichWithFtfc,
     enrichWithReplayData, enrichWithStopRule, enrichWithStrategy,
     getToken = getValidAccessToken,
   } = deps;
 
-  const steps = [];
-  const session = pickSession();
-  if (!session) {
-    return { ok: false, steps: [{ name: 'Pick a trading day', ok: false, summary: 'Could not work out a recent trading day.', ms: 0 }], trade: null };
+  // Everything he chose is checked BEFORE anything is fetched, so a bad
+  // choice is a sentence he can act on rather than two steps quietly
+  // failing several seconds later.
+  const choices = readChoices(rawChoices);
+  if (choices.error) {
+    return { ok: false, error: choices.error, steps: [], trade: null, warnings: [] };
   }
-  const entryMs = easternMoment(session, ENTRY_HOUR_ET, ENTRY_MIN_ET);
-  const exitMs = entryMs + HOLD_MINUTES * 60 * 1000;
+  const { session, ticker, dir, holdMinutes, warnings } = choices;
+  const entryMs = easternMoment(session, choices.hour, choices.minute);
+  const exitMs = entryMs + holdMinutes * 60 * 1000;
+
+  const steps = [];
 
   let token = null;
   await runStep(steps, 'Reach Schwab', async () => {
@@ -162,14 +265,14 @@ async function runTestTrade(deps) {
   // The strike is chosen around where the stock actually was, so the
   // rehearsed contract is one that could really have existed.
   let strike = 600;
-  await runStep(steps, 'Find where SPY was', async () => {
-    const price = await getUnderlyingPriceAt(token, 'SPY', entryMs);
+  await runStep(steps, `Find where ${ticker} was`, async () => {
+    const price = await getUnderlyingPriceAt(token, ticker, entryMs);
     if (price == null) throw new Error('No price came back for that day. Schwab keeps only about a month of minute data.');
     strike = Math.round(price);
-    return `SPY was around $${price.toFixed(2)} at 10:30.`;
+    return `${ticker} was around $${price.toFixed(2)} at ${two(choices.hour)}:${two(choices.minute)}.`;
   });
 
-  const fills = buildFills(session, strike, entryMs, exitMs);
+  const fills = buildFills(session, strike, entryMs, exitMs, { ticker, dir });
 
   // A FRESH, EMPTY state. Never his. Nothing read, nothing written.
   let trade = null;
@@ -231,10 +334,21 @@ async function runTestTrade(deps) {
 
   trade.isTest = true;
   trade.source = 'rehearsal';
-  return { ok: steps.every(s => s.ok), steps, trade };
+  return {
+    ok: steps.every(s => s.ok),
+    steps, trade, warnings,
+    // Handed back so the app can show what was actually run, rather than
+    // him having to remember what he typed.
+    ran: {
+      date: `${session.year}-${session.month}-${session.day}`,
+      time: `${two(choices.hour)}:${two(choices.minute)}`,
+      holdMinutes, ticker, dir,
+    },
+  };
 }
 
 module.exports = {
   runTestTrade, pickSession, easternMoment, buildOcc, buildFills,
+  readChoices, isTooOldForMinuteData, weekdayOf, MINUTE_DATA_DAYS,
   easternOffsetMinutes, HOLD_MINUTES, CONTRACTS, OPEN_PRICE, CLOSE_PRICE, FEE_PER_SIDE,
 };
