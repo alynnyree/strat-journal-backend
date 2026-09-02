@@ -189,6 +189,14 @@ router.post('/test-trade', wrap(async (req, res) => {
   // siblings, and pulling the enrichment steps in at load time would make
   // the requires circular.
   const cron = require('./cron');
+  // What he chose on screen: the day, the time, how long it ran, which
+  // way, and which ticker. All optional -- with none of them it rehearses
+  // the most recent trading day, exactly as before.
+  const choices = {
+    date: req.body && req.body.date, time: req.body && req.body.time,
+    holdMinutes: req.body && req.body.holdMinutes,
+    dir: req.body && req.body.dir, ticker: req.body && req.body.ticker,
+  };
   const result = await runTestTrade({
     getUnderlyingPriceAt,
     enrichWithUnderlyingPrices: cron.enrichWithUnderlyingPrices,
@@ -196,7 +204,7 @@ router.post('/test-trade', wrap(async (req, res) => {
     enrichWithReplayData: cron.enrichWithReplayData,
     enrichWithStopRule: cron.enrichWithStopRule,
     enrichWithStrategy: cron.enrichWithStrategy,
-  });
+  }, choices);
   res.json(result);
 }));
 
