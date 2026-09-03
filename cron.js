@@ -215,37 +215,43 @@ async function enrichWithStopRule(token, trades) {
 // (same as before — shows the "Needs Setup" badge) whenever the model
 // isn't confident, rather than force a guess onto a trade the trader will
 // see in their Journal.
+// Writes a classification onto a trade. Extracted so the live sync and
+// the full-test rehearsal set the exact same fields the exact same way --
+// a second copy would drift. The result handed in has already cleared the
+// confidence bar, so each field is written only when it survived.
+function applyClassificationToTrade(trade, result) {
+  if (!result) return;
+  // The combo (WHAT he saw) and the play (HOW he chose it) are two
+  // separate answers. Either can be confident while the other is not.
+  if (result.strategy) {
+    trade.strat = result.strategy;
+    trade.stratConfidence = result.confidence;
+    trade.stratReasoning = result.reasoning;
+  }
+  if (result.play) {
+    trade.play = result.play;
+    trade.playConfidence = result.playConfidence;
+    trade.playReasoning = result.playReasoning;
+  }
+  // His own notation for the combo -- what he actually reads.
+  if (result.notation && result.notation !== 'unclear') {
+    trade.stratNotation = result.notation;
+    trade.stratNotationDirection = result.notationDirection || null;
+  }
+  // What the AI made of the Broadening Formation. Recorded BESIDE his own
+  // toggle (offBroadeningFormation), never over it -- his answer is the
+  // truth, this is only what the model saw.
+  if (result.broadeningFormation && result.broadeningFormation !== 'unclear') {
+    trade.broadeningDetected = result.broadeningFormation === 'yes';
+    trade.broadeningReasoning = result.broadeningReasoning || null;
+  }
+}
+
 async function enrichWithStrategy(trades) {
   for (const trade of trades) {
     try {
       const result = await classifyStrategy(trade);
-      if (result) {
-        // The combo (WHAT he saw) and the play (HOW he chose it) are two
-        // separate answers. Either can be confident while the other is
-        // not, so each is written only when it survived on its own.
-        if (result.strategy) {
-          trade.strat = result.strategy;
-          trade.stratConfidence = result.confidence;
-          trade.stratReasoning = result.reasoning;
-        }
-        if (result.play) {
-          trade.play = result.play;
-          trade.playConfidence = result.playConfidence;
-          trade.playReasoning = result.playReasoning;
-        }
-        // His own notation for the combo -- what he actually reads.
-        if (result.notation && result.notation !== 'unclear') {
-          trade.stratNotation = result.notation;
-          trade.stratNotationDirection = result.notationDirection || null;
-        }
-        // What the AI made of the Broadening Formation. Recorded BESIDE
-        // his own toggle (offBroadeningFormation), never over it -- his
-        // answer is the truth, this is only what the model saw.
-        if (result.broadeningFormation && result.broadeningFormation !== 'unclear') {
-          trade.broadeningDetected = result.broadeningFormation === 'yes';
-          trade.broadeningReasoning = result.broadeningReasoning || null;
-        }
-      }
+      applyClassificationToTrade(trade, result);
     } catch (err) {
       console.log(`Strategy classification failed for ${trade.ticker}:`, err.message);
     }
@@ -553,4 +559,5 @@ function startAutoSync(intervalCron = '*/5 * * * *') {
 // that the copy works.
 module.exports = { FTFC_RULE_VERSION, startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded,
                    enrichWithUnderlyingPrices, priceWithProvenance,
-                   enrichWithFtfc, enrichWithReplayData, enrichWithStopRule, enrichWithStrategy };
+                   enrichWithFtfc, enrichWithReplayData, enrichWithStopRule, enrichWithStrategy,
+                   applyClassificationToTrade };

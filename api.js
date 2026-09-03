@@ -9,6 +9,7 @@ const { runBackfill, runSyncCheck } = require('./cron');
 const { getFtfcForTrade, getUnderlyingPriceAt } = require('./ftfcCheck');
 const { getReplayCandles } = require('./replayData');
 const stopRule = require('./stopRule');
+const aiClient = require('./aiClient');
 const { runTestTrade } = require('./testTrade');
 
 const router = express.Router();
@@ -203,7 +204,11 @@ router.post('/test-trade', wrap(async (req, res) => {
     enrichWithFtfc: cron.enrichWithFtfc,
     enrichWithReplayData: cron.enrichWithReplayData,
     enrichWithStopRule: cron.enrichWithStopRule,
-    enrichWithStrategy: cron.enrichWithStrategy,
+    // Split in two for the rehearsal: one tells "could not reach the AI"
+    // apart from "reached it, no setup at this minute", the other writes
+    // the same fields the live sync writes.
+    classifyForTest: aiClient.classifyForTest,
+    applyClassification: cron.applyClassificationToTrade,
   }, choices);
   res.json(result);
 }));

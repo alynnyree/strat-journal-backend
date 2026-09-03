@@ -500,19 +500,25 @@ ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${scr
 // sitting in the Journal is worse than leaving a trade flagged "Needs
 // Setup" for the trader to confirm by hand — this hasn't been tested at
 // scale yet, so it should fail toward asking rather than guessing.
+// The one bar both the real tagging and the full-test rehearsal judge
+// confidence by, so they can never drift apart. Mutates the result to null
+// out anything that did not clear the bar, and reports what survived. The
+// combo and the play are judged on their own merits: a confident combo
+// with an unsure play still gets the combo, and the other way round.
+function applyConfidenceBar(result) {
+  const playOk = result.play && result.play !== 'unclear'
+    && result.playConfidence === 'high' && PLAYS.some(p => p.key === result.play);
+  if (!playOk) { result.play = null; result.playConfidence = null; }
+  const comboOk = result.strategy && result.strategy !== 'unclear'
+    && result.confidence === 'high' && STRATEGIES.some(s => s.key === result.strategy);
+  if (!comboOk) { result.strategy = null; }
+  return { comboOk, playOk };
+}
+
 async function classifyStrategy(trade) {
   try {
     const result = await runClassification(trade);
-    // The play is judged on its own merits: a confident combo with an
-    // unsure play still gets tagged with the combo, and vice versa. Held
-    // to the same bar as the combo -- high confidence, and a name the
-    // trader actually uses.
-    const playOk = result.play && result.play !== 'unclear'
-      && result.playConfidence === 'high' && PLAYS.some(p => p.key === result.play);
-    if (!playOk) { result.play = null; result.playConfidence = null; }
-    const comboOk = result.strategy && result.strategy !== 'unclear'
-      && result.confidence === 'high' && STRATEGIES.some(s => s.key === result.strategy);
-    if (!comboOk) { result.strategy = null; }
+    const { comboOk, playOk } = applyConfidenceBar(result);
     if (comboOk || playOk) return result;
     console.log(`Strategy classification: not confident enough to auto-tag (confidence=${result.confidence}, strategy=${result.strategy}, usedScreenshot=${result.usedScreenshot}).`);
     return null;
@@ -520,6 +526,22 @@ async function classifyStrategy(trade) {
     console.log('Strategy classification failed:', err.response?.data || err.message);
     return null;
   }
+}
+
+// The full-test rehearsal's version. Unlike classifyStrategy, it must tell
+// three outcomes apart rather than two:
+//   - the AI could not be reached          -> it THROWS (a real failure)
+//   - the AI read the chart and was sure   -> reached:true, tagged:true
+//   - the AI read the chart and was unsure -> reached:true, tagged:false
+// That last one is NOT a failure. At a random minute there may simply be
+// no setup, and the AI honestly saying so proves the whole transfer works
+// -- candles in, a real structured answer back. Only silence proves it
+// broken. classifyStrategy folds the last two together into null, which
+// made an empty minute look like a broken reader.
+async function classifyForTest(trade) {
+  const result = await runClassification(trade);   // throws only if the AI cannot be reached
+  const { comboOk, playOk } = applyConfidenceBar(result);
+  return { reached: true, tagged: comboOk || playOk, result };
 }
 
 // Sandbox version for the "Test Classification" tool (index.html).
@@ -734,4 +756,4 @@ Write "summary" as a 2-3 sentence overview, and "insights" as a list of specific
   return callGeminiJson(prompt, ANALYSIS_SCHEMA, 8000);
 }
 
-module.exports = { classifyStrategy, testClassifyStrategy, runPortfolioAnalysis, interpretBacktest, STRATEGIES, PLAYS };
+module.exports = { classifyStrategy, classifyForTest, testClassifyStrategy, runPortfolioAnalysis, interpretBacktest, STRATEGIES, PLAYS };
