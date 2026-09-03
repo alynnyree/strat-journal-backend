@@ -209,6 +209,8 @@ router.post('/test-trade', wrap(async (req, res) => {
     // the same fields the live sync writes.
     classifyForTest: aiClient.classifyForTest,
     applyClassification: cron.applyClassificationToTrade,
+    // Sources the rehearsal from a real, detected setup in recent candles.
+    findRecentSetup: require('./backtest').findRecentSetup,
   }, choices);
   res.json(result);
 }));

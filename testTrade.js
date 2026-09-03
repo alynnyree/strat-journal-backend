@@ -130,6 +130,7 @@ function readChoices(raw = {}) {
     const hh = Number(m[1]), mm = Number(m[2]);
     if (hh > 23 || mm > 59) return { error: 'That is not a real time of day.' };
     out.hour = hh; out.minute = mm;
+    out.timeGiven = true;
   }
 
   if (raw.date != null && String(raw.date).trim() !== '') {
@@ -140,31 +141,52 @@ function readChoices(raw = {}) {
       return { error: 'That is not a real date.' };
     }
     out.session = { year, month, day };
+    out.dateGiven = true;
   } else {
     out.session = pickSession();
     if (!out.session) return { error: 'Could not work out a recent trading day.' };
   }
 
-  // Warnings, not refusals. He may want to see exactly what the app does
-  // with an awkward choice -- but he should not have to guess afterwards
-  // why two steps came back empty.
-  const weekday = weekdayOf(out.session);
-  if (weekday === 'Sat' || weekday === 'Sun') {
-    out.warnings.push('That day is a weekend, so the market was shut and there will be no chart data.');
+  // Warnings, not refusals. Only about the parts he actually pinned: when
+  // he does not pin a time, the rehearsal finds a real setup and uses ITS
+  // moment, so a warning about the placeholder 10:30 would be nonsense.
+  if (out.dateGiven) {
+    const weekday = weekdayOf(out.session);
+    if (weekday === 'Sat' || weekday === 'Sun') {
+      out.warnings.push('That day is a weekend, so the market was shut and there will be no chart data.');
+    }
+    if (isTooOldForMinuteData(out.session) && !awaitingAlpacaNote(out)) {
+      out.warnings.push(`That day is more than ${MINUTE_DATA_DAYS} days ago. Without Alpaca connected, Schwab throws away minute-by-minute data after about a month, so the timeframes and Bar Replay may come back empty. That is not a fault.`);
+    }
   }
-  const startMin = out.hour * 60 + out.minute;
-  if (startMin < REGULAR_OPEN_MINUTES || startMin >= REGULAR_CLOSE_MINUTES) {
-    out.warnings.push('That time is outside 9:30 to 4:00, so there may be little or no chart data.');
-  } else if (startMin + out.holdMinutes > REGULAR_CLOSE_MINUTES) {
-    out.warnings.push('The trade runs past the 4:00 close, so the exit falls after the market shut.');
-  }
-  if (isTooOldForMinuteData(out.session)) {
-    out.warnings.push(`That day is more than ${MINUTE_DATA_DAYS} days ago. Schwab throws away minute-by-minute data after about a month, so the timeframes and Bar Replay will likely come back empty. That is not a fault.`);
+  if (out.timeGiven) {
+    const startMin = out.hour * 60 + out.minute;
+    if (startMin < REGULAR_OPEN_MINUTES || startMin >= REGULAR_CLOSE_MINUTES) {
+      out.warnings.push('That time is outside 9:30 to 4:00, so there may be little or no chart data.');
+    } else if (startMin + out.holdMinutes > REGULAR_CLOSE_MINUTES) {
+      out.warnings.push('The trade runs past the 4:00 close, so the exit falls after the market shut.');
+    }
   }
   return out;
 }
 
+// A day older than Schwab's window is only a problem when Alpaca cannot
+// cover it. This cannot be known here (no token), so the note is left to
+// the run itself when the price step comes up empty -- see runTestTrade.
+function awaitingAlpacaNote() { return false; }
+
 function two(n) { return String(n).padStart(2, '0'); }
+
+// The Eastern calendar day an instant falls on, as a session object -- so
+// a setup found on a different day than the default still stamps its
+// contract and its fills with the right date.
+function sessionFromMs(ms) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(ms));
+  const get = t => parts.find(p => p.type === t).value;
+  return { year: get('year'), month: get('month'), day: get('day') };
+}
 
 // Schwab's contract symbols: six characters of ticker, then the expiry as
 // YYMMDD, then C or P, then the strike in thousandths padded to eight.
@@ -250,6 +272,8 @@ async function runTestTrade(deps, rawChoices = {}) {
     // "could not reach the AI" apart from "reached it, no setup here", and
     // applyClassification writes the same fields the live sync writes.
     classifyForTest, applyClassification,
+    // Scans recent real candles for an actual setup to anchor on.
+    findRecentSetup,
     getToken = getValidAccessToken,
   } = deps;
 
@@ -260,9 +284,8 @@ async function runTestTrade(deps, rawChoices = {}) {
   if (choices.error) {
     return { ok: false, error: choices.error, steps: [], trade: null, warnings: [] };
   }
-  const { session, ticker, dir, holdMinutes, warnings } = choices;
-  const entryMs = easternMoment(session, choices.hour, choices.minute);
-  const exitMs = entryMs + holdMinutes * 60 * 1000;
+  const { holdMinutes, warnings } = choices;
+  let { ticker, dir, session } = choices;
 
   const steps = [];
 
@@ -272,17 +295,53 @@ async function runTestTrade(deps, rawChoices = {}) {
     return 'Signed in and reachable.';
   });
 
+  // Unless he pinned an exact minute, the rehearsal SOURCES ITSELF FROM A
+  // REAL SETUP: it scans recent candles for an actual occurrence of one of
+  // his nine combos -- the same detectors the backtester uses, never a
+  // made-up one -- and anchors the trade there, in the direction the setup
+  // took. This is the whole point: the setup reading, the timeframes and
+  // the replay then have real work to do. It tries his ticker first, then
+  // the other of SPY/IWM, so it almost always lands on something.
+  let entryMs = easternMoment(session, choices.hour, choices.minute);
+  let foundSetup = null;
+  if (!choices.timeGiven && findRecentSetup) {
+    await runStep(steps, 'Find a real setup to test on', async () => {
+      const onDate = choices.dateGiven
+        ? `${session.year}-${session.month}-${session.day}` : null;
+      const tries = ticker === 'IWM' ? ['IWM', 'SPY'] : [ticker, ticker === 'SPY' ? 'IWM' : 'SPY'];
+      for (const t of tries) {
+        const hit = await findRecentSetup(token, { ticker: t, days: 30, onDate });
+        if (hit) { foundSetup = hit; break; }
+      }
+      if (!foundSetup) {
+        throw new Error(onDate
+          ? 'No clear setup was found on that day. Pick another day, or leave the day blank to search recent trading.'
+          : 'No clear setup was found in recent trading. This is rare — try again shortly.');
+      }
+      ticker = foundSetup.ticker;
+      dir = foundSetup.dir;
+      entryMs = foundSetup.entryTimestampMs;
+      session = sessionFromMs(entryMs);   // the contract and dates follow the setup's own day
+      const d = new Date(entryMs);
+      const timeStr = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+      const dayStr = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d).replace(/(\d+)\/(\d+)\/(\d+)/, '$3-$1-$2');
+      return `Found a real ${foundSetup.setup} (${dir}) on ${ticker}, ${dayStr} at ${timeStr} on the ${foundSetup.timeframe} chart.`;
+    });
+  }
+  const exitMs = entryMs + holdMinutes * 60 * 1000;
+
   // The strike is chosen around where the stock actually was, so the
   // rehearsed contract is one that could really have existed.
   let strike = 600;
   await runStep(steps, `Find where ${ticker} was`, async () => {
     const price = await getUnderlyingPriceAt(token, ticker, entryMs);
-    if (price == null) throw new Error('No price came back for that day. Schwab keeps only about a month of minute data.');
+    if (price == null) throw new Error('No price came back for that moment. Without Alpaca connected, Schwab keeps only about a month of minute data.');
     strike = Math.round(price);
-    return `${ticker} was around $${price.toFixed(2)} at ${two(choices.hour)}:${two(choices.minute)}.`;
+    const t = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(entryMs));
+    return `${ticker} was around $${price.toFixed(2)} at ${t}.`;
   });
 
-  const fills = buildFills(session, strike, entryMs, exitMs, { ticker, dir });
+  const fills = buildFills(session, strike, entryMs, exitMs, { ticker, dir, entryMs });
 
   // A FRESH, EMPTY state. Never his. Nothing read, nothing written.
   let trade = null;
@@ -359,8 +418,12 @@ async function runTestTrade(deps, rawChoices = {}) {
     // him having to remember what he typed.
     ran: {
       date: `${session.year}-${session.month}-${session.day}`,
-      time: `${two(choices.hour)}:${two(choices.minute)}`,
+      time: new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(entryMs)),
       holdMinutes, ticker, dir,
+      // What real setup this landed on, when one was found -- so the card
+      // can say "tested on a real 2-1-2 Continuation" rather than nothing.
+      setup: foundSetup ? foundSetup.setup : null,
+      setupTimeframe: foundSetup ? foundSetup.timeframe : null,
     },
   };
 }
