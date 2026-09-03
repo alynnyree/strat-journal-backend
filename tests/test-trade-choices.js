@@ -14,6 +14,8 @@ Module._load = function (request) {
   return origLoad.apply(this, arguments);
 };
 const tt = require(path.join(__dirname, '..', 'testTrade.js'));
+const { applyClassificationToTrade } = require(path.join(__dirname, '..', 'cron.js'));
+const aiSure = (result) => ({ classifyForTest: async () => ({ reached:true, tagged:true, result }), applyClassification: applyClassificationToTrade });
 
 let pass = 0, fail = 0;
 const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fail++; console.log('FAIL:', l); } };
@@ -140,7 +142,7 @@ const RECENT = (() => {
       enrichWithUnderlyingPrices: async (t, [x]) => { x.undEntry = 221.40; x.undExit = 221.05; },
       enrichWithFtfc: async () => {},
       enrichWithReplayData: async (t, [x]) => { x.replayData = { candles:[{}] }; },
-      enrichWithStopRule: async () => {}, enrichWithStrategy: async ([x]) => { x.strat = '2-2 Reversal'; },
+      enrichWithStopRule: async () => {}, ...aiSure({ strategy:'2-2 Reversal', confidence:'high' }),
       getToken: async () => 'tok',
     };
     const r = await tt.runTestTrade(deps, { date: RECENT, time: '13:15', holdMinutes: 9, dir: 'Short', ticker: 'IWM' });
@@ -167,7 +169,9 @@ const RECENT = (() => {
       getUnderlyingPriceAt: async () => { touched++; return 1; },
       enrichWithUnderlyingPrices: async () => { touched++; },
       enrichWithFtfc: async () => { touched++; }, enrichWithReplayData: async () => { touched++; },
-      enrichWithStopRule: async () => { touched++; }, enrichWithStrategy: async () => { touched++; },
+      enrichWithStopRule: async () => { touched++; },
+      classifyForTest: async () => { touched++; return { reached:true, tagged:false, result:{} }; },
+      applyClassification: applyClassificationToTrade,
       getToken: async () => { touched++; return 'tok'; },
     };
     const r = await tt.runTestTrade(deps, { time: '99:99' });
@@ -183,7 +187,7 @@ const RECENT = (() => {
       enrichWithUnderlyingPrices: async (t, [x]) => { x.undEntry = 655; x.undExit = 656; },
       enrichWithFtfc: async () => {},
       enrichWithReplayData: async (t,[x]) => { x.replayData = { candles:[{}] }; },
-      enrichWithStopRule: async () => {}, enrichWithStrategy: async ([x]) => { x.strat='x'; },
+      enrichWithStopRule: async () => {}, ...aiSure({ strategy:'2-2 Continuation', confidence:'high' }),
       getToken: async () => 'tok',
     };
     const r = await tt.runTestTrade(deps, { date: '2026-01-15' });

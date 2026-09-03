@@ -212,11 +212,17 @@ function buildFills(session, strike, entryMs, exitMs, choices = {}) {
 // Each step runs on its own and reports for itself. One failing step must
 // not stop the ones after it -- the whole value of this is finding out
 // which parts work, not stopping at the first that does not.
+// A step can end three ways, not two. Returning a plain string is a pass.
+// Returning { soft:true, summary } is "it worked, but there was nothing to
+// show" -- the AI reached the chart and honestly found no setup at this
+// minute, which is a real answer, not a fault. Throwing is a failure.
 async function runStep(steps, name, fn) {
   const startedAt = Date.now();
   try {
-    const summary = await fn();
-    steps.push({ name, ok: true, summary: summary || 'Done.', ms: Date.now() - startedAt });
+    const out = await fn();
+    const soft = out && typeof out === 'object' && out.soft === true;
+    const summary = (out && typeof out === 'object' ? out.summary : out) || 'Done.';
+    steps.push({ name, ok: true, soft: !!soft, summary, ms: Date.now() - startedAt });
     return true;
   } catch (err) {
     steps.push({
@@ -239,7 +245,11 @@ function describeAlignment(trade) {
 async function runTestTrade(deps, rawChoices = {}) {
   const {
     getUnderlyingPriceAt, enrichWithUnderlyingPrices, enrichWithFtfc,
-    enrichWithReplayData, enrichWithStopRule, enrichWithStrategy,
+    enrichWithReplayData, enrichWithStopRule,
+    // The setup reading is split for the rehearsal: classifyForTest tells
+    // "could not reach the AI" apart from "reached it, no setup here", and
+    // applyClassification writes the same fields the live sync writes.
+    classifyForTest, applyClassification,
     getToken = getValidAccessToken,
   } = deps;
 
@@ -314,16 +324,24 @@ async function runTestTrade(deps, rawChoices = {}) {
   });
 
   await runStep(steps, 'Read the setup with AI', async () => {
-    await enrichWithStrategy([trade]);
-    if (!trade.strat && !trade.play) {
-      throw new Error('The AI did not name a setup or a play it was confident about.');
+    // Throws only if the AI genuinely could not be reached -- which is the
+    // one real failure of this step. runStep catches it and marks it so.
+    const { tagged, result } = await classifyForTest(trade);
+    applyClassification(trade, result);
+    if (tagged) {
+      const bits = [];
+      if (trade.stratNotation) bits.push(`${trade.stratNotation}${trade.stratNotationDirection ? ' · ' + trade.stratNotationDirection : ''}`);
+      if (trade.strat) bits.push(trade.strat);
+      if (trade.play) bits.push(`play: ${trade.play}`);
+      return bits.join(' — ');
     }
-    const bits = [];
-    if (trade.stratNotation) bits.push(`${trade.stratNotation}${trade.stratNotationDirection ? ' · ' + trade.stratNotationDirection : ''}`);
-    if (trade.strat) bits.push(trade.strat);
-    if (trade.play) bits.push(`play: ${trade.play}`);
-    if (trade.broadeningDetected) bits.push(`broadening: ${trade.broadeningDetected}`);
-    return bits.join(' — ') || 'Read, but nothing confident.';
+    // Reached, read the chart, answered -- just not a setup it was sure of
+    // at this exact minute. That is the transfer working, not a fault, and
+    // it is exactly what happens when the moment chosen had no setup on it.
+    return {
+      soft: true,
+      summary: 'The chart was read and answered, but no setup was clear at this exact minute. That is a real answer, not a fault — pick a day and time you know had a setup to watch it name one.',
+    };
   });
 
   await runStep(steps, 'Work out the stop', async () => {

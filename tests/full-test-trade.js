@@ -19,6 +19,13 @@ Module._load = function (request) {
 };
 
 const tt = require(path.join(__dirname, '..', 'testTrade.js'));
+const { applyClassificationToTrade } = require(path.join(__dirname, '..', 'cron.js'));
+
+// Reached the AI, confident answer -> tagged. Reached, unsure -> not
+// tagged. Threw -> could not reach.
+const aiSure = (result) => ({ classifyForTest: async () => ({ reached:true, tagged:true, result }), applyClassification: applyClassificationToTrade });
+const aiUnsure = () => ({ classifyForTest: async () => ({ reached:true, tagged:false, result:{ strategy:null, play:null } }), applyClassification: applyClassificationToTrade });
+const aiUnreachable = () => ({ classifyForTest: async () => { throw new Error('The AI could not be reached.'); }, applyClassification: applyClassificationToTrade });
 
 let pass = 0, fail = 0;
 const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fail++; console.log('FAIL:', l); } };
@@ -103,12 +110,11 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
         t.replayData = { candles: new Array(120).fill({ open: 1, high: 1, low: 1, close: 1 }) };
       },
       enrichWithStopRule: async (tok, [t]) => { called.push('stop'); t.stop = 654.10; t.rrRealized = 1.9; },
-      enrichWithStrategy: async ([t]) => {
-        called.push('ai');
-        t.strat = '2-1-2 Continuation'; t.play = 'FTFC Direction Play';
-        t.stratNotation = '2U-1-2U'; t.stratNotationDirection = 'Bullish';
-        t.broadeningDetected = 'no';
-      },
+      classifyForTest: async () => { called.push('ai'); return { reached:true, tagged:true, result:{
+        strategy:'2-1-2 Continuation', confidence:'high', reasoning:'r',
+        play:'FTFC Direction Play', playConfidence:'high', playReasoning:'pr',
+        notation:'2U-1-2U', notationDirection:'Bullish', broadeningFormation:'no' } }; },
+      applyClassification: applyClassificationToTrade,
       getToken: async () => { called.push('token'); return 'tok'; },
     };
     const r = await tt.runTestTrade(deps);
@@ -158,7 +164,7 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
       enrichWithFtfc: async () => { throw new Error('Schwab refused the candle request.'); },
       enrichWithReplayData: async (tok, [t]) => { t.replayData = { candles: [{}] }; },
       enrichWithStopRule: async () => {},
-      enrichWithStrategy: async ([t]) => { t.strat = '2-2 Reversal'; },
+      ...aiSure({ strategy:'2-2 Reversal', confidence:'high' }),
       getToken: async () => 'tok',
     };
     const r = await tt.runTestTrade(deps);
@@ -180,7 +186,7 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
       enrichWithFtfc: async () => { throw new Error('Not connected'); },
       enrichWithReplayData: async () => { throw new Error('Not connected'); },
       enrichWithStopRule: async () => { throw new Error('Not connected'); },
-      enrichWithStrategy: async () => { throw new Error('Not connected'); },
+      ...aiUnreachable(),
       getToken: async () => { throw new Error('Your Schwab sign-in has run out'); },
     };
     const r = await tt.runTestTrade(deps);
@@ -205,11 +211,51 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
       getUnderlyingPriceAt: async () => 655,
       enrichWithUnderlyingPrices: async () => {}, enrichWithFtfc: async () => {},
       enrichWithReplayData: async (tok, [t]) => { t.replayData = { candles: [{}] }; },
-      enrichWithStopRule: async () => {}, enrichWithStrategy: async ([t]) => { t.strat = 'x'; },
+      enrichWithStopRule: async () => {}, ...aiSure({ strategy:'2-2 Reversal', confidence:'high' }),
       getToken: async () => 'tok',
     };
     await tt.runTestTrade(deps);
     check('the rehearsal itself stores nothing', writes === before);
+  }
+
+  // ===== A random minute with no setup is a PASS, not a failure =====
+  {
+    const deps = {
+      getUnderlyingPriceAt: async () => 655.42,
+      enrichWithUnderlyingPrices: async (tok, [t]) => { t.undEntry = 655.42; t.undExit = 656.10; },
+      enrichWithFtfc: async (tok, [t]) => { t.ftfcRun = true; t.ftfcDirection = 'bull'; t.ftfcTimeframesInRun = ['1m','3m','5m','15m']; },
+      enrichWithReplayData: async (tok, [t]) => { t.replayData = { candles: new Array(80).fill({}) }; },
+      enrichWithStopRule: async () => {},
+      ...aiUnsure(),
+      getToken: async () => 'tok',
+    };
+    const r = await tt.runTestTrade(deps);
+    const ai = r.steps.find(s => s.name === 'Read the setup with AI');
+    check('the AI step PASSES when there was simply no setup', ai.ok === true);
+    check('it is flagged as "worked, nothing to show" rather than a plain pass', ai.soft === true);
+    check(`and it says so is a real answer, not a fault ("${ai.summary.slice(0,40)}")`,
+      /not a fault/.test(ai.summary) && /no setup was clear|no setup at this/i.test(ai.summary));
+    check('the whole run is NOT marked failed just because no setup was found', r.ok === true);
+    check('no combo was invented onto the trade', !r.trade.strat && !r.trade.play);
+    check('the trade is still a rehearsal', r.trade.isTest === true);
+  }
+
+  // ===== The AI being unreachable IS a failure, and named as one =====
+  {
+    const deps = {
+      getUnderlyingPriceAt: async () => 655.42,
+      enrichWithUnderlyingPrices: async (tok, [t]) => { t.undEntry = 655.42; t.undExit = 656.10; },
+      enrichWithFtfc: async () => {},
+      enrichWithReplayData: async (tok, [t]) => { t.replayData = { candles: [{}] }; },
+      enrichWithStopRule: async () => {},
+      ...aiUnreachable(),
+      getToken: async () => 'tok',
+    };
+    const r = await tt.runTestTrade(deps);
+    const ai = r.steps.find(s => s.name === 'Read the setup with AI');
+    check('a genuinely unreachable AI fails the step', ai.ok === false);
+    check(`and says it could not be reached ("${ai.summary.slice(0,30)}")`, /could not be reached/.test(ai.summary));
+    check('the run reflects that failure', r.ok === false);
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
