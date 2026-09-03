@@ -314,8 +314,69 @@ async function runBacktest(accessToken, { ticker, setups, timeframes, days = 30,
   return { ticker, targetR, days, results, notes };
 }
 
+// ---- Finding a REAL setup to rehearse on -----------------------------
+// The full test needs a moment that genuinely HAS one of his nine combos
+// on it, so every capability -- including the setup reading -- has real
+// work to do. Rather than pick a minute and hope, this scans recent
+// candles for an actual occurrence, using the exact same detectors the
+// backtester does, and hands back where it found one.
+//
+// The data comes from fetchWindow, which prefers Alpaca (years of
+// history) and falls back to Schwab (about 35 days). That matters: the
+// enrichment steps the rehearsal runs afterwards read from those same
+// sources, so a setup found here is a setup whose surrounding data still
+// exists for the timeframes and the replay to use.
+//
+// Timeframes are tried in the order given -- 5m first, the bread and
+// butter of his intraday setups -- and within a timeframe the MOST RECENT
+// occurrence wins, so the rehearsal lands on something as fresh as
+// possible. `onDate`, when given (YYYY-MM-DD, Eastern), restricts the
+// search to that one session.
+const SETUP_SCAN_TFS = ['5m', '15m', '30m'];
+
+function easternDayString(ms) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(ms)).replace(/(\d+)\/(\d+)\/(\d+)/, '$3-$1-$2');
+}
+
+async function findRecentSetup(accessToken, { ticker = 'SPY', days = 30, onDate = null, timeframes = SETUP_SCAN_TFS } = {}) {
+  for (const tf of timeframes) {
+    const spec = TF_SPECS[tf];
+    if (!spec) continue;
+    let raw;
+    try {
+      raw = await fetchWindow(accessToken, ticker, spec.frequency, days);
+    } catch (e) {
+      continue;   // this timeframe could not be fetched; try the next
+    }
+    let bars = buildBars(raw, spec.minutes);
+    if (onDate) bars = bars.filter(b => easternDayString(b.datetime) === onDate);
+    if (bars.length < 3) continue;   // need at least three bars for the shortest combo
+    const numbered = numberBars(bars);
+
+    // Newest first: the freshest real setup is the best one to rehearse.
+    for (let i = numbered.length - 1; i >= 2; i--) {
+      for (const setup of SETUP_KEYS) {
+        const dir = DETECTORS[setup](numbered, i);
+        if (!dir) continue;
+        return {
+          ticker, timeframe: tf, setup,
+          dir: dir === 'up' ? 'Long' : 'Short',
+          // The entry fires when the trigger bar breaks, so the moment
+          // that matters is the trigger bar's own time.
+          entryTimestampMs: numbered[i].datetime,
+          when: new Date(numbered[i].datetime).toISOString(),
+        };
+      }
+    }
+  }
+  return null;
+}
+
 module.exports = {
   stratNumber, numberBars, DETECTORS, SETUP_KEYS,
   simulate, summarise, backtestOne,
-  runBacktest, fetchWindow, TIMEFRAME_OPTIONS, MAX_INTRADAY_DAYS, DAILY_TF,
+  runBacktest, fetchWindow, findRecentSetup,
+  TIMEFRAME_OPTIONS, MAX_INTRADAY_DAYS, DAILY_TF,
 };

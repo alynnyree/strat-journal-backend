@@ -27,6 +27,13 @@ const aiSure = (result) => ({ classifyForTest: async () => ({ reached:true, tagg
 const aiUnsure = () => ({ classifyForTest: async () => ({ reached:true, tagged:false, result:{ strategy:null, play:null } }), applyClassification: applyClassificationToTrade });
 const aiUnreachable = () => ({ classifyForTest: async () => { throw new Error('The AI could not be reached.'); }, applyClassification: applyClassificationToTrade });
 
+// The rehearsal now sources itself from a real setup unless a time is
+// pinned. In these unit tests we hand it a fixed found-setup so the run is
+// deterministic; the finder itself is tested in find-setup.js.
+const foundAt = Date.parse('2026-08-28T14:30:00Z');
+const finder = () => ({ findRecentSetup: async () => ({ ticker:'SPY', timeframe:'5m', setup:'2-1-2 Continuation', dir:'Long', entryTimestampMs: foundAt, when: new Date(foundAt).toISOString() }) });
+const noFinder = () => ({ findRecentSetup: async () => null });
+
 let pass = 0, fail = 0;
 const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fail++; console.log('FAIL:', l); } };
 
@@ -115,6 +122,7 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
         play:'FTFC Direction Play', playConfidence:'high', playReasoning:'pr',
         notation:'2U-1-2U', notationDirection:'Bullish', broadeningFormation:'no' } }; },
       applyClassification: applyClassificationToTrade,
+      ...finder(),
       getToken: async () => { called.push('token'); return 'tok'; },
     };
     const r = await tt.runTestTrade(deps);
@@ -122,7 +130,13 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
     check('every step ran', r.ok === true);
     check(`it calls the REAL steps in order (${called.join(' > ')})`,
       called.join(',') === 'token,price,underlying,ftfc,replay,ai,stop');
-    check(`nine steps are reported (${r.steps.length})`, r.steps.length === 9);
+    check(`ten steps are reported now the setup is sourced first (${r.steps.length})`, r.steps.length === 10);
+    const findStep = r.steps.find(s => /Find a real setup/.test(s.name));
+    check('a "find a real setup" step runs first', !!findStep && r.steps[1].name === findStep.name);
+    check(`it reports the real combo it landed on ("${findStep.summary.slice(0,44)}")`,
+      /2-1-2 Continuation/.test(findStep.summary) && /5m/.test(findStep.summary));
+    check('the run records which setup it tested on', r.ran.setup === '2-1-2 Continuation');
+    check('and it landed on the setup\'s own day', r.ran.date === '2026-08-28');
     check('each step says how long it took', r.steps.every(s => typeof s.ms === 'number'));
     check('each step says what it produced', r.steps.every(s => s.summary && s.summary.length > 3));
 
@@ -165,6 +179,7 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
       enrichWithReplayData: async (tok, [t]) => { t.replayData = { candles: [{}] }; },
       enrichWithStopRule: async () => {},
       ...aiSure({ strategy:'2-2 Reversal', confidence:'high' }),
+      ...finder(),
       getToken: async () => 'tok',
     };
     const r = await tt.runTestTrade(deps);
@@ -187,6 +202,7 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
       enrichWithReplayData: async () => { throw new Error('Not connected'); },
       enrichWithStopRule: async () => { throw new Error('Not connected'); },
       ...aiUnreachable(),
+      ...finder(),
       getToken: async () => { throw new Error('Your Schwab sign-in has run out'); },
     };
     const r = await tt.runTestTrade(deps);
@@ -212,6 +228,7 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
       enrichWithUnderlyingPrices: async () => {}, enrichWithFtfc: async () => {},
       enrichWithReplayData: async (tok, [t]) => { t.replayData = { candles: [{}] }; },
       enrichWithStopRule: async () => {}, ...aiSure({ strategy:'2-2 Reversal', confidence:'high' }),
+      ...finder(),
       getToken: async () => 'tok',
     };
     await tt.runTestTrade(deps);
@@ -227,6 +244,7 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
       enrichWithReplayData: async (tok, [t]) => { t.replayData = { candles: new Array(80).fill({}) }; },
       enrichWithStopRule: async () => {},
       ...aiUnsure(),
+      ...finder(),
       getToken: async () => 'tok',
     };
     const r = await tt.runTestTrade(deps);
@@ -249,6 +267,7 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
       enrichWithReplayData: async (tok, [t]) => { t.replayData = { candles: [{}] }; },
       enrichWithStopRule: async () => {},
       ...aiUnreachable(),
+      ...finder(),
       getToken: async () => 'tok',
     };
     const r = await tt.runTestTrade(deps);
@@ -256,6 +275,40 @@ const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fai
     check('a genuinely unreachable AI fails the step', ai.ok === false);
     check(`and says it could not be reached ("${ai.summary.slice(0,30)}")`, /could not be reached/.test(ai.summary));
     check('the run reflects that failure', r.ok === false);
+  }
+
+  // ===== No setup found: the sourcing step fails with a clear reason =====
+  {
+    const deps = {
+      getUnderlyingPriceAt: async () => 655,
+      enrichWithUnderlyingPrices: async () => {}, enrichWithFtfc: async () => {},
+      enrichWithReplayData: async () => {}, enrichWithStopRule: async () => {},
+      ...aiSure({ strategy:'x', confidence:'high' }), ...noFinder(),
+      getToken: async () => 'tok',
+    };
+    const r = await tt.runTestTrade(deps);
+    const step = r.steps.find(s => /Find a real setup/.test(s.name));
+    check('the sourcing step is there', !!step);
+    check('and it fails when no setup could be found', step.ok === false);
+    check(`saying so in plain words ("${step.summary.slice(0,40)}")`, /No clear setup/.test(step.summary));
+    check('the run reflects the failure', r.ok === false);
+  }
+
+  // ===== A pinned time skips setup-finding entirely (his explicit moment) =====
+  {
+    let finderCalled = 0;
+    const deps = {
+      getUnderlyingPriceAt: async () => 655,
+      enrichWithUnderlyingPrices: async (t,[x]) => { x.undEntry=655; x.undExit=656; },
+      enrichWithFtfc: async () => {}, enrichWithReplayData: async (t,[x])=>{ x.replayData={candles:[{}]}; },
+      enrichWithStopRule: async () => {}, ...aiSure({ strategy:'2-2 Reversal', confidence:'high' }),
+      findRecentSetup: async () => { finderCalled++; return null; },
+      getToken: async () => 'tok',
+    };
+    const r = await tt.runTestTrade(deps, { date:'2026-08-28', time:'11:15', holdMinutes:10 });
+    check('pinning a time does not go looking for a setup', finderCalled === 0);
+    check('and there is no "find a setup" step', !r.steps.some(s=>/Find a real setup/.test(s.name)));
+    check('it uses the exact minute he pinned', r.ran.time === '11:15');
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
