@@ -65,6 +65,9 @@ async function loadSavedKeys() {
 }
 
 async function saveKeys(key, secret) {
+  // A different key may be on a different plan, so forget which feed the
+  // old one had rather than carrying a stale answer forward.
+  feedInUse = null; feedDowngraded = false;
   const clean = { key: String(key || '').trim(), secret: String(secret || '').trim() };
   if (!clean.key || !clean.secret) throw new Error('Both an API key and a secret are needed.');
   await store().set(KEY_STORE, clean);
@@ -143,6 +146,58 @@ async function alpacaGet(pathname, params) {
   return resp.data;
 }
 
+// WHICH DATA FEED. Alpaca serves two: 'sip', the full consolidated tape,
+// which is part of the PAID plan; and 'iex', which is what a free key
+// gets. Every request here used to ask for 'sip' outright -- in the same
+// file whose own comment below says the plan is the free one. On a free
+// key that is refused, the refusal was caught and written to a log nobody
+// reads, and the answer came back as null. So Alpaca reported itself
+// "connected" while contributing nothing at all: no candles for Bar
+// Replay, no exact prices, nothing.
+//
+// Now it asks for the better feed, and if that is refused it drops to the
+// one the key actually has and REMEMBERS which worked, so the refusal
+// happens once rather than on every request. Which feed is in use is
+// reported, so a downgrade is never silent again.
+let feedInUse = null;      // 'sip' or 'iex', learned from the first answer
+let feedDowngraded = false;
+
+function feedRefused(err) {
+  const status = err && err.response && err.response.status;
+  const body = JSON.stringify((err && err.response && err.response.data) || '');
+  // Alpaca answers a feed the key cannot have with a 403, and sometimes a
+  // 400 whose body names the subscription.
+  return status === 403 || (status === 400 && /subscription|feed|not authorized|not permitted/i.test(body));
+}
+
+// Asks with the best feed the key has, learning which that is.
+async function alpacaGetFeed(pathname, params) {
+  const feeds = feedInUse ? [feedInUse] : ['sip', 'iex'];
+  let lastErr = null;
+  for (const feed of feeds) {
+    try {
+      const data = await alpacaGet(pathname, { ...params, feed });
+      if (feedInUse !== feed) {
+        feedInUse = feed;
+        if (feed === 'iex') {
+          feedDowngraded = true;
+          console.log('Alpaca: the full market feed was refused for this key, so the free one is in use. Prices and candles still work; they cover fewer venues.');
+        }
+      }
+      return data;
+    } catch (err) {
+      lastErr = err;
+      if (!feedRefused(err)) throw err;   // a real failure, not a feed it cannot have
+    }
+  }
+  throw lastErr;
+}
+
+// So a downgrade can be SHOWN rather than logged where nobody looks.
+function feedState() {
+  return { feed: feedInUse, downgraded: feedDowngraded };
+}
+
 // Alpaca's free plan serves full-market history for anything older than
 // 15 minutes. Asking for something more recent than that returns nothing
 // useful, so it is not worth the request — and a trade closed moments ago
@@ -166,8 +221,8 @@ async function lastTradePriceAt(symbol, timestampMs, { windowMinutes = 10 } = {}
   const end = new Date(timestampMs).toISOString();
   const start = new Date(timestampMs - windowMinutes * 60 * 1000).toISOString();
   try {
-    const data = await alpacaGet(`/stocks/${encodeURIComponent(symbol)}/trades`, {
-      start, end, limit: 10000, feed: 'sip',
+    const data = await alpacaGetFeed(`/stocks/${encodeURIComponent(symbol)}/trades`, {
+      start, end, limit: 10000,
     });
     const trades = data?.trades || [];
     if (!trades.length) return null;
@@ -192,8 +247,8 @@ async function minuteCloseAt(symbol, timestampMs) {
   const end = new Date(timestampMs).toISOString();
   const start = new Date(timestampMs - 6 * 60 * 60 * 1000).toISOString();
   try {
-    const data = await alpacaGet(`/stocks/${encodeURIComponent(symbol)}/bars`, {
-      timeframe: '1Min', start, end, limit: 10000, adjustment: 'raw', feed: 'sip',
+    const data = await alpacaGetFeed(`/stocks/${encodeURIComponent(symbol)}/bars`, {
+      timeframe: '1Min', start, end, limit: 10000, adjustment: 'raw',
     });
     const bars = data?.bars || [];
     if (!bars.length) return null;
@@ -244,10 +299,10 @@ async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false })
         timeframe,
         start: new Date(startMs).toISOString(),
         end: new Date(cappedEnd).toISOString(),
-        limit: 10000, adjustment: 'raw', feed: 'sip',
+        limit: 10000, adjustment: 'raw',
       };
       if (pageToken) params.page_token = pageToken;
-      const data = await alpacaGet(`/stocks/${encodeURIComponent(symbol)}/bars`, params);
+      const data = await alpacaGetFeed(`/stocks/${encodeURIComponent(symbol)}/bars`, params);
       for (const bar of (data?.bars || [])) {
         out.push({
           datetime: Date.parse(bar.t),
@@ -297,5 +352,6 @@ async function underlyingPriceAt(symbol, timestampMs) {
 module.exports = {
   isConfigured, isReady, underlyingPriceAt, lastTradePriceAt, minuteCloseAt,
   tooRecentForFreePlan, FREE_PLAN_DELAY_MS, fetchBars, ALPACA_TIMEFRAME,
+  feedState, feedRefused,
   saveKeys, clearKeys, loadSavedKeys, ensureKeysLoaded, keyStatus,
 };

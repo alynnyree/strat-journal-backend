@@ -240,7 +240,10 @@ router.post('/replay-trade', wrap(async (req, res) => {
 router.get('/alpaca/status', wrap(async (req, res) => {
   try {
     await alpaca.ensureKeysLoaded();
-    res.json(alpaca.keyStatus());
+    // Which feed the key actually turned out to have. A downgrade used to
+    // happen silently, so Alpaca could report itself connected while
+    // every request was being refused.
+    res.json({ ...alpaca.keyStatus(), ...alpaca.feedState() });
   } catch (err) {
     res.status(500).json({ error: 'Could not read the Alpaca connection.' });
   }
