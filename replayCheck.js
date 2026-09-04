@@ -124,7 +124,7 @@ async function runReplayCheck(deps, input) {
     enrichWithStopRule, classifyForTest, applyClassification,
     // Lets an empty answer explain itself: old trades have no minute data
     // unless Alpaca is connected.
-    alpacaReady,
+    alpacaReady, feedState,
     getToken = getValidAccessToken,
   } = deps;
 
@@ -193,7 +193,14 @@ async function runReplayCheck(deps, input) {
     if (!withAlpaca && ageDays > 30) {
       return { soft: true, summary: `Nothing to replay: this trade is ${ageDays} days old, and without Alpaca connected Schwab only keeps about a month. That is not a fault.` };
     }
-    throw new Error('No candles came back, so Bar Replay would have nothing to show.');
+    // With Alpaca connected an empty answer IS a fault -- and the useful
+    // part is WHICH source was asked and what it said, not just that
+    // nothing came back.
+    const feed = feedState ? feedState() : null;
+    const where = withAlpaca
+      ? `Alpaca is connected${feed && feed.feed ? ` and using the ${feed.feed === 'sip' ? 'full' : 'free'} market data` : ''}, and still returned nothing for that window`
+      : `Schwab was asked and returned nothing, and this trade is ${ageDays} days old`;
+    throw new Error(`No candles came back, so Bar Replay would have nothing to show. ${where}.`);
   });
 
   await runStep(steps, 'Read the setup with AI', async () => {
