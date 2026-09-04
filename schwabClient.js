@@ -230,4 +230,9 @@ async function getOptionFills(accessToken, startDate, endDate, report = null) {
   return allFills.sort((a, b) => a.timestamp - b.timestamp);
 }
 
-module.exports = { getAccountNumber, getOptionFills };
+// extractOptionFills and toEasternParts are exported so the blind replay
+// can run the REAL extraction over a rebuilt Schwab transaction, rather
+// than a copy of it. The date/time conversion and the fee-from-cash
+// arithmetic are two of the things being tested; a stand-in would test
+// the stand-in.
+module.exports = { getAccountNumber, getOptionFills, extractOptionFills, toEasternParts };

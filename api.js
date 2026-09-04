@@ -11,6 +11,7 @@ const { getReplayCandles } = require('./replayData');
 const stopRule = require('./stopRule');
 const aiClient = require('./aiClient');
 const { runTestTrade } = require('./testTrade');
+const { runReplayCheck } = require('./replayCheck');
 
 const router = express.Router();
 
@@ -212,6 +213,26 @@ router.post('/test-trade', wrap(async (req, res) => {
     // Sources the rehearsal from a real, detected setup in recent candles.
     findRecentSetup: require('./backtest').findRecentSetup,
   }, choices);
+  res.json(result);
+}));
+
+// A BLIND REPLAY of one of his real trades. The app sends only the bare
+// facts Schwab itself provides; everything else is worked out here from
+// scratch and handed back for the app to mark against what it has on
+// file. Nothing is stored -- this never touches his journal.
+router.post('/replay-trade', wrap(async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  const cron = require('./cron');
+  const result = await runReplayCheck({
+    enrichWithUnderlyingPrices: cron.enrichWithUnderlyingPrices,
+    enrichWithFtfc: cron.enrichWithFtfc,
+    enrichWithReplayData: cron.enrichWithReplayData,
+    enrichWithStopRule: cron.enrichWithStopRule,
+    classifyForTest: aiClient.classifyForTest,
+    applyClassification: cron.applyClassificationToTrade,
+  }, req.body || {});
   res.json(result);
 }));
 
