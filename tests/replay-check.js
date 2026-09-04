@@ -224,6 +224,60 @@ const deps = (over = {}) => ({
       r2.steps.find(s => /replay candles/i.test(s.name)).ok === false);
   }
 
+  // ===== 13. My own explanation must survive the scrubber =============
+  // The guard that stops machine text reaching his screen ate a careful
+  // 159-character sentence about which source was asked, and printed
+  // "no readable reason came back" -- destroying the very diagnosis it
+  // was written to give.
+  {
+    const long = 'Bar Replay has nothing to show. Alpaca is connected on the free market data and answered, but has no minute-by-minute bars for those minutes.';
+    check(`a long message is scrubbed when it comes from outside (${long.length} chars)`,
+      rc.plainStepError(new Error(long)) !== long);
+    const mine = new Error(long); mine.plain = true;
+    check('but a message written here, on purpose, survives intact',
+      rc.plainStepError(mine) === long);
+    // The guard must still work on real machine text even if flagged wrongly.
+    check('an unflagged wall of machine text is still replaced',
+      /no readable reason/.test(rc.plainStepError(new Error('{"error":{"code":500,"detail":"x".repeat(200)}}'))));
+  }
+
+  // ===== 14. An empty replay reports WHAT Alpaca actually gave =========
+  {
+    // The third case deliberately does NOT name the plan: if Alpaca has
+    // the bars, the plan is beside the point and the fault is in how the
+    // replay asks for them. That is what it should say.
+    const cases = [
+      [async () => null,  /could not be completed/,  'could not reach it', true],
+      [async () => [],    /has no minute-by-minute bars/, 'it has nothing there', true],
+      [async () => new Array(42).fill({}), /does have 42 bars.*fault is in how the replay asks/, 'it HAS the bars', false],
+    ];
+    for (const [probe, expect, label, namesPlan] of cases) {
+      const r = await rc.runReplayCheck(deps({
+        enrichWithReplayData: async () => {},
+        alpacaReady: async () => true,
+        feedState: () => ({ feed: 'iex', downgraded: true }),
+        probeCandles: probe,
+      }), REAL);
+      const step = r.steps.find(s => /replay candles/i.test(s.name));
+      check(`"${label}" is reported as such ("${step.summary.slice(0, 46)}")`, expect.test(step.summary));
+      check(`  and it survives the scrubber intact`, step.summary.length > 60);
+      check(`  and ${namesPlan ? 'names the plan in use' : 'points at the request, not the plan'}`,
+        namesPlan ? /free market data/.test(step.summary) : /how the replay asks/.test(step.summary));
+    }
+  }
+
+  // ===== 15. A probe that itself blows up does not break the run ======
+  {
+    const r = await rc.runReplayCheck(deps({
+      enrichWithReplayData: async () => {},
+      alpacaReady: async () => true,
+      probeCandles: async () => { throw new Error('boom'); },
+    }), REAL);
+    const step = r.steps.find(s => /replay candles/i.test(s.name));
+    check('a probe that throws is treated as "could not"', /could not be completed/.test(step.summary));
+    check('and the rest of the run still finished', !!r.trade && r.trade.pnlDollar != null);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

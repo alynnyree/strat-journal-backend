@@ -80,6 +80,12 @@ function rateLimited(err) {
 }
 
 function plainStepError(err) {
+  // A message written HERE, on purpose, in plain words is not the thing
+  // this guard exists to stop. Without this the guard ate its own side's
+  // explanations: a careful 159-character sentence about which source was
+  // asked came out as "no readable reason came back", which is exactly
+  // the diagnosis it was written to give.
+  if (err && err.plain === true && err.message) return String(err.message);
   const status = err && err.response && err.response.status;
   const raw = String((err && err.message) || '');
   if (status === 401 || status === 403 || /unsupported_token_type|invalid_grant|refresh token/i.test(raw)) {
@@ -125,6 +131,9 @@ async function runReplayCheck(deps, input) {
     // Lets an empty answer explain itself: old trades have no minute data
     // unless Alpaca is connected.
     alpacaReady, feedState,
+    // Asks Alpaca directly what it holds for a window, so an empty replay
+    // reports a fact instead of a guess.
+    probeCandles,
     getToken = getValidAccessToken,
   } = deps;
 
@@ -194,13 +203,33 @@ async function runReplayCheck(deps, input) {
       return { soft: true, summary: `Nothing to replay: this trade is ${ageDays} days old, and without Alpaca connected Schwab only keeps about a month. That is not a fault.` };
     }
     // With Alpaca connected an empty answer IS a fault -- and the useful
-    // part is WHICH source was asked and what it said, not just that
-    // nothing came back.
+    // part is WHICH source was asked and what it said. So ask Alpaca
+    // directly for the same window and report what actually came back:
+    // "could not reach it" and "it has nothing there" look identical from
+    // here otherwise, and they need completely different fixes.
     const feed = feedState ? feedState() : null;
-    const where = withAlpaca
-      ? `Alpaca is connected${feed && feed.feed ? ` and using the ${feed.feed === 'sip' ? 'full' : 'free'} market data` : ''}, and still returned nothing for that window`
-      : `Schwab was asked and returned nothing, and this trade is ${ageDays} days old`;
-    throw new Error(`No candles came back, so Bar Replay would have nothing to show. ${where}.`);
+    const plan = feed && feed.feed ? (feed.feed === 'sip' ? 'the full market data' : 'the free market data') : 'market data';
+    let detail;
+    if (withAlpaca && probeCandles) {
+      let probe;
+      try {
+        probe = await probeCandles(trade.ticker, trade.entryTimestamp - 15 * 60000, (trade.exitTimestamp || trade.entryTimestamp) + 15 * 60000);
+      } catch (e) { probe = undefined; }
+      if (probe === null || probe === undefined) {
+        detail = `Alpaca is connected on ${plan}, but the request for those minutes could not be completed.`;
+      } else if (!probe.length) {
+        detail = `Alpaca is connected on ${plan} and answered, but has no minute-by-minute bars for those minutes.`;
+      } else {
+        detail = `Alpaca does have ${probe.length} bars for those minutes, so the fault is in how the replay asks for them.`;
+      }
+    } else if (withAlpaca) {
+      detail = `Alpaca is connected on ${plan} and returned nothing for that window.`;
+    } else {
+      detail = `Schwab was asked and returned nothing, and this trade is ${ageDays} days old.`;
+    }
+    const err = new Error(`Bar Replay has nothing to show. ${detail}`);
+    err.plain = true;   // written here, in plain words -- let it through
+    throw err;
   });
 
   await runStep(steps, 'Read the setup with AI', async () => {
