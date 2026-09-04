@@ -233,6 +233,7 @@ router.post('/replay-trade', wrap(async (req, res) => {
     classifyForTest: aiClient.classifyForTest,
     applyClassification: cron.applyClassificationToTrade,
     alpacaReady: () => alpaca.isReady(),
+    feedState: () => alpaca.feedState(),
   }, req.body || {});
   res.json(result);
 }));
