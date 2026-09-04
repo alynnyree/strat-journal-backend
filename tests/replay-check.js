@@ -154,6 +154,76 @@ const deps = (over = {}) => ({
       r.trade.isTest === true && r.trade.source === 'replay-check');
   }
 
+  // ===== 10. Raw machine text must never reach his screen =============
+  {
+    const rough = [
+      [{ message:'Request failed with status code 429', response:{status:429} }, /out of|allowance|did not work/i],
+      [{ message:'Request failed with status code 500', response:{status:500} }, /no readable reason/i],
+      [{ message:'connect ETIMEDOUT 1.2.3.4:443' }, /connection dropped/i],
+      [{ message:'{"error":"unsupported_token_type"}' }, /sign in again/i],
+      [{ message:'<HTML><HEAD><TITLE>Access Denied' }, /turned away/i],
+      [{ message:'Error: something exploded at line 42' }, /no readable reason/i],
+    ];
+    for(const [err, expect] of rough){
+      const out = rc.plainStepError(err);
+      check(`"${String(err.message).slice(0,32)}" reads plainly ("${out.slice(0,34)}")`, expect.test(out));
+    }
+    const all = rough.map(([e]) => rc.plainStepError(e)).join(' ');
+    check(`no status codes reach the words (${/status code|\b429\b|\b500\b/.test(all) ? 'found' : 'none'})`,
+      !/status code|\b429\b|\b500\b/.test(all));
+    check('nor any web code or braces', !/[<>{}]/.test(all));
+  }
+
+  // ===== 11. A spent allowance is its own answer, not a failure =======
+  {
+    check('429 counts as out-of-allowance', rc.rateLimited({ response:{status:429} }));
+    check('503 does too', rc.rateLimited({ response:{status:503} }));
+    check('a real error does not', !rc.rateLimited({ response:{status:500} }));
+    check('nor a plain throw', !rc.rateLimited(new Error('boom')));
+
+    const r = await rc.runReplayCheck(deps({
+      classifyForTest: async () => { const e = new Error('Request failed with status code 429'); e.response = { status: 429 }; throw e; },
+    }), REAL);
+    const ai = r.steps.find(s => s.name === 'Read the setup with AI');
+    check('a spent allowance does NOT fail the step', ai.ok === true);
+    check('it is flagged as worked-with-nothing', ai.soft === true);
+    check(`and says plainly it is not a fault ("${ai.summary.slice(0,36)}")`,
+      /not a fault/.test(ai.summary) && /allowance/.test(ai.summary));
+    check('no status code in what he sees', !/429|status code/.test(ai.summary));
+
+    // A genuine AI failure still fails, and still reads plainly.
+    const r2 = await rc.runReplayCheck(deps({
+      classifyForTest: async () => { const e = new Error('Request failed with status code 500'); e.response = { status: 500 }; throw e; },
+    }), REAL);
+    const ai2 = r2.steps.find(s => s.name === 'Read the setup with AI');
+    check('a real AI failure still fails', ai2.ok === false);
+    check('and still never shows machine text', !/status code|500/.test(ai2.summary));
+  }
+
+  // ===== 12. An aged-out trade explains itself =========================
+  {
+    const old = { ...REAL,
+      entryTimestamp: Date.now() - 190 * 86400000,
+      exitTimestamp: Date.now() - 190 * 86400000 + 1320000 };
+    const r = await rc.runReplayCheck(deps({
+      enrichWithReplayData: async () => {},          // nothing comes back
+      alpacaReady: async () => false,                 // and no Alpaca to reach back
+    }), old);
+    const step = r.steps.find(s => /replay candles/i.test(s.name));
+    check('an old trade with no Alpaca does not fail the step', step.ok === true);
+    check('it is flagged as worked-with-nothing', step.soft === true);
+    check(`and explains why ("${step.summary.slice(0,40)}")`,
+      /only keeps about a month/.test(step.summary) && /not a fault/.test(step.summary));
+
+    // With Alpaca connected, an empty answer IS a fault worth showing.
+    const r2 = await rc.runReplayCheck(deps({
+      enrichWithReplayData: async () => {},
+      alpacaReady: async () => true,
+    }), old);
+    check('with Alpaca on, empty candles is still a real failure',
+      r2.steps.find(s => /replay candles/i.test(s.name)).ok === false);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

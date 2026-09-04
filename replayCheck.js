@@ -71,6 +71,35 @@ function missingFields(input) {
   return needed.filter(k => input == null || input[k] == null || input[k] === '');
 }
 
+// Never let a raw message reach his screen. "Request failed with status
+// code 429" did, and it means nothing to him -- it is the free AI tier
+// saying "come back later", which is not a fault at all.
+function rateLimited(err) {
+  const status = err && err.response && err.response.status;
+  return status === 429 || status === 503;
+}
+
+function plainStepError(err) {
+  const status = err && err.response && err.response.status;
+  const raw = String((err && err.message) || '');
+  if (status === 401 || status === 403 || /unsupported_token_type|invalid_grant|refresh token/i.test(raw)) {
+    return 'Your Schwab sign-in has run out. Sign in again from the Home tab.';
+  }
+  if (status === 404) return 'There was nothing on file for that moment.';
+  if (/timeout|ETIMEDOUT|ECONNRESET|socket hang up/i.test(raw)) {
+    return 'The connection dropped partway through. Nothing is lost.';
+  }
+  if (/access denied|forbidden/i.test(raw)) {
+    return 'The request was turned away, which usually means too many too quickly.';
+  }
+  // Anything left that still looks like machine text is not shown at all.
+  const clean = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!clean || /status code|\{|\}|https?:\/\/|Error:/i.test(clean) || clean.length > 120) {
+    return 'That part did not work, and no readable reason came back.';
+  }
+  return clean;
+}
+
 async function runStep(steps, name, fn) {
   const startedAt = Date.now();
   try {
@@ -82,7 +111,7 @@ async function runStep(steps, name, fn) {
   } catch (err) {
     steps.push({
       name, ok: false,
-      summary: (err && err.message) ? String(err.message).slice(0, 200) : 'It did not work.',
+      summary: plainStepError(err),
       ms: Date.now() - startedAt,
     });
     return false;
@@ -93,6 +122,9 @@ async function runReplayCheck(deps, input) {
   const {
     enrichWithUnderlyingPrices, enrichWithFtfc, enrichWithReplayData,
     enrichWithStopRule, classifyForTest, applyClassification,
+    // Lets an empty answer explain itself: old trades have no minute data
+    // unless Alpaca is connected.
+    alpacaReady,
     getToken = getValidAccessToken,
   } = deps;
 
@@ -153,12 +185,30 @@ async function runReplayCheck(deps, input) {
   await runStep(steps, 'Load the replay candles', async () => {
     await enrichWithReplayData(token, [trade]);
     const n = ((trade.replayData && trade.replayData.candles) || []).length;
-    if (!n) throw new Error('No candles came back, so Bar Replay would have nothing to show.');
-    return `${n} one-minute candles ready for Bar Replay.`;
+    if (n) return `${n} one-minute candles ready for Bar Replay.`;
+    // An old trade with no Alpaca is an empty answer for a reason that is
+    // nobody's fault -- Schwab simply does not keep minute data that long.
+    const withAlpaca = alpacaReady ? await alpacaReady().catch(() => false) : false;
+    const ageDays = Math.floor((Date.now() - (trade.entryTimestamp || Date.now())) / 86400000);
+    if (!withAlpaca && ageDays > 30) {
+      return { soft: true, summary: `Nothing to replay: this trade is ${ageDays} days old, and without Alpaca connected Schwab only keeps about a month. That is not a fault.` };
+    }
+    throw new Error('No candles came back, so Bar Replay would have nothing to show.');
   });
 
   await runStep(steps, 'Read the setup with AI', async () => {
-    const { tagged, result } = await classifyForTest(trade);
+    let tagged, result;
+    try {
+      ({ tagged, result } = await classifyForTest(trade));
+    } catch (err) {
+      // Out of allowance is not broken. The free tier refuses once its
+      // per-minute or per-day ceiling is hit, and that refusal looks
+      // nothing like a fault -- it means try again shortly.
+      if (rateLimited(err)) {
+        return { soft: true, summary: 'The chart reading is out of its free allowance for the moment. That is not a fault — try again in a few minutes.' };
+      }
+      throw err;
+    }
     applyClassification(trade, result);
     if (tagged) {
       const bits = [];
@@ -180,4 +230,4 @@ async function runReplayCheck(deps, input) {
   return { ok: steps.every(s => s.ok), steps, trade };
 }
 
-module.exports = { runReplayCheck, buildTransactions, missingFields };
+module.exports = { runReplayCheck, buildTransactions, missingFields, plainStepError, rateLimited };
