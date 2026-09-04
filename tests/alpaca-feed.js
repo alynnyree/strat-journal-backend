@@ -99,6 +99,46 @@ const refuse = (status, body) => { const e = new Error('Request failed with stat
     check('only one request was needed', asked.length === 1);
   }
 
+  // ===== 7. A learned feed must never be the ONLY one tried ==========
+  // His exact symptom: the stock price came back "from Alpaca, exact"
+  // (so the full feed was learned from the trades request), and then
+  // every request for chart bars was refused it -- with no fallback left,
+  // so Bar Replay was empty while everything else worked.
+  {
+    // Learn 'sip' from a request that IS allowed it.
+    await alpaca.saveKeys('k2', 's2');
+    asked.length = 0;
+    behaviour = (params) => {
+      if (String(params.timeframe || '') === '' ) return { trades: [{ t:'2026-05-15T16:00:00Z', p: 741.48 }] };
+      return { bars: [{ t:'2026-05-15T16:00:00Z', o:1,h:2,l:0.5,c:1.5,v:10 }] };
+    };
+    await alpaca.lastTradePriceAt('SPY', Date.parse('2026-05-15T16:00:00Z'));
+    check(`the price request learns the full feed (${alpaca.feedState().feed})`,
+      alpaca.feedState().feed === 'sip');
+
+    // Now bars are refused that feed -- the case that was silently failing.
+    asked.length = 0;
+    behaviour = (params) => {
+      if (params.feed === 'sip' && params.timeframe) throw refuse(403);
+      return { bars: [{ t:'2026-05-15T16:00:00Z', o:1,h:2,l:0.5,c:1.5,v:10 }] };
+    };
+    const bars = await alpaca.fetchBars('SPY', { minutes:1, startMs: Date.parse('2026-05-15T15:00:00Z'), endMs: Date.parse('2026-05-15T16:00:00Z') });
+    check(`chart bars still come back (${bars && bars.length})`, !!bars && bars.length === 1);
+    check(`it fell back rather than giving up (${asked.map(a=>a.feed).join(' > ')})`,
+      asked.length >= 2 && asked[asked.length-1].feed === 'iex');
+    check('and the remembered feed is corrected downward', alpaca.feedState().feed === 'iex');
+    check('and the downgrade is recorded', alpaca.feedState().downgraded === true);
+  }
+
+  // ===== 8. The learned feed is still tried FIRST (no wasted requests) =
+  {
+    asked.length = 0;
+    behaviour = () => ({ bars: [{ t:'2026-05-15T16:00:00Z', o:1,h:2,l:0.5,c:1.5,v:10 }] });
+    await alpaca.fetchBars('SPY', { minutes:1, startMs: Date.parse('2026-05-15T15:00:00Z'), endMs: Date.parse('2026-05-15T16:00:00Z') });
+    check(`the remembered feed is asked first and alone when it works (${asked.map(a=>a.feed).join(',')})`,
+      asked.length === 1 && asked[0].feed === 'iex');
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
