@@ -234,6 +234,7 @@ router.post('/replay-trade', wrap(async (req, res) => {
     applyClassification: cron.applyClassificationToTrade,
     alpacaReady: () => alpaca.isReady(),
     feedState: () => alpaca.feedState(),
+    probeCandles: (ticker, startMs, endMs) => alpaca.fetchBars(ticker, { minutes: 1, startMs, endMs }),
   }, req.body || {});
   res.json(result);
 }));
