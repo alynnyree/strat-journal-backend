@@ -241,41 +241,53 @@ const deps = (over = {}) => ({
       /no readable reason/.test(rc.plainStepError(new Error('{"error":{"code":500,"detail":"x".repeat(200)}}'))));
   }
 
-  // ===== 14. An empty replay reports WHAT Alpaca actually gave =========
+  // ===== 14. An empty replay reports which part came up empty =========
   {
-    // The third case deliberately does NOT name the plan: if Alpaca has
-    // the bars, the plan is beside the point and the fault is in how the
-    // replay asks for them. That is what it should say.
+    // The reason now travels WITH the empty answer, written where the
+    // failure actually happened. Nothing here probes afterwards to find
+    // out why, and nothing here invents a cause.
     const cases = [
-      [async () => null,  /could not be completed/,  'could not reach it', true],
-      [async () => [],    /has no minute-by-minute bars/, 'it has nothing there', true],
-      [async () => new Array(42).fill({}), /does have 42 bars.*fault is in how the replay asks/, 'it HAS the bars', false],
+      ['Alpaca, on the free market data, answered but has no bars for those minutes. Schwab turned down all 3 requests.',
+       /no bars for those minutes/, 'what Alpaca said'],
+      ['Schwab turned down all 3 requests for those minutes.',
+       /turned down all 3/, 'a refusal, not an absence'],
+      ['Alpaca, on the free market data, could not complete the request for those minutes. Schwab has no minute-by-minute data left for that day.',
+       /could not complete/, 'a request that did not finish'],
     ];
-    for (const [probe, expect, label, namesPlan] of cases) {
+    for (const [note, expect, label] of cases) {
       const r = await rc.runReplayCheck(deps({
-        enrichWithReplayData: async () => {},
+        enrichWithReplayData: async (tok, trades) => { trades[0].replayNote = note; },
         alpacaReady: async () => true,
-        feedState: () => ({ feed: 'iex', downgraded: true }),
-        probeCandles: probe,
       }), REAL);
       const step = r.steps.find(s => /replay candles/i.test(s.name));
-      check(`"${label}" is reported as such ("${step.summary.slice(0, 46)}")`, expect.test(step.summary));
+      check(`${label} reaches the screen ("${step.summary.slice(0, 46)}")`, expect.test(step.summary));
       check(`  and it survives the scrubber intact`, step.summary.length > 60);
-      check(`  and ${namesPlan ? 'names the plan in use' : 'points at the request, not the plan'}`,
-        namesPlan ? /free market data/.test(step.summary) : /how the replay asks/.test(step.summary));
     }
   }
 
-  // ===== 15. A probe that itself blows up does not break the run ======
+  // ===== 15. An empty replay with NOTHING said is itself the fault =====
   {
     const r = await rc.runReplayCheck(deps({
-      enrichWithReplayData: async () => {},
+      enrichWithReplayData: async () => {},   // no candles, and no reason either
       alpacaReady: async () => true,
-      probeCandles: async () => { throw new Error('boom'); },
     }), REAL);
     const step = r.steps.find(s => /replay candles/i.test(s.name));
-    check('a probe that throws is treated as "could not"', /could not be completed/.test(step.summary));
+    check('silence is called out rather than papered over', /nothing said why/.test(step.summary));
     check('and the rest of the run still finished', !!r.trade && r.trade.pnlDollar != null);
+  }
+
+  // ===== 16. A working replay says where its bars came from ============
+  {
+    const r = await rc.runReplayCheck(deps({
+      enrichWithReplayData: async (tok, trades) => {
+        trades[0].replayData = { candles: new Array(36).fill({ close: 1 }), entryIndex: 15, exitIndex: 20,
+                                 source: 'Alpaca, on the free market data', reason: null };
+      },
+      alpacaReady: async () => true,
+    }), REAL);
+    const step = r.steps.find(s => /replay candles/i.test(s.name));
+    check('a passing step names its source too', /36 candles/.test(step.summary) && /free market data/.test(step.summary));
+    check('and it is marked as having worked', step.ok === true && !step.soft);
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

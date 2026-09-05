@@ -42,30 +42,65 @@ function findClosestIndex(candles, timestampMs) {
   return closest;
 }
 
-// Pulls the full 1-minute candle window covering a trade's entry through
-// exit (plus padding on both sides) for the bar-replay feature, no matter
-// how long the hold — walking backward in Schwab-sized pages to cover the
-// whole span. Returns null if Schwab has none of that window left at
-// 1-minute resolution (its ~30-35 day retention limit, the same one the
-// underlying-price lookup runs into) — that's a hard ceiling on Schwab's
-// side once the data has aged out; no request pattern gets it back. A long
-// hold that straddles the edge of that window will come back with
-// whatever portion of it Schwab still has, rather than nothing at all.
+// One shape, every path. This function used to hand back a bare LIST of
+// bars when Alpaca answered and a labelled package when Schwab did — and
+// every reader asks for `.candles`, so an Alpaca-served replay read as
+// empty while 36 perfectly good bars sat in the return value. Bar Replay
+// had therefore never once worked on Alpaca data. Any function with more
+// than one way out returns the same shape from all of them.
+//
+// It also never comes back with a bare null. An empty answer now carries
+// the REASON it is empty, in plain words, so whatever shows it can say
+// which part refused instead of inventing a cause — the caller decides
+// whether to display it, but it never has to guess at it.
+function shapeReplay(candles, entryMs, exitMs, stepMinutes, source) {
+  const stepMs = Math.max(1, stepMinutes || 1) * 60 * 1000;
+  const at = (ms) => {
+    if (ms == null || !candles.length) return null;
+    const i = findClosestIndex(candles, ms);
+    if (i != null) return i;
+    // A bigger candle can begin after the moment it ought to mark, or end
+    // before it — the moment is still inside that bar's stretch of time,
+    // so it belongs on that bar rather than being dropped.
+    if (ms >= candles[0].datetime - stepMs) return 0;
+    if (ms <= candles[candles.length - 1].datetime + stepMs) return candles.length - 1;
+    return null;
+  };
+  const entryIndex = at(entryMs);
+  if (!candles.length) {
+    return { candles: [], entryIndex: null, exitIndex: null, source, reason: null };
+  }
+  if (entryIndex == null) {
+    return {
+      candles: [], entryIndex: null, exitIndex: null, source,
+      reason: `${source} sent ${candles.length} bars for that day, but none of them covers the minute you entered.`,
+    };
+  }
+  return { candles, entryIndex, exitIndex: at(exitMs), source, reason: null };
+}
+
+function emptyReplay(reason) {
+  return { candles: [], entryIndex: null, exitIndex: null, source: null, reason };
+}
+
+// Pulls the candle window covering a trade's entry through exit (plus
+// padding on both sides) for the bar-replay feature, no matter how long the
+// hold. Alpaca is asked first — its minute history goes back years, where
+// Schwab keeps about 30-35 days, which is why older trades used to come
+// back with nothing at all.
 //
 // For a still-open trade (no exitTimestampMs yet), pads around the entry
 // only.
 async function getReplayCandles(accessToken, ticker, entryTimestampMs, exitTimestampMs) {
-  if (!entryTimestampMs) return null;
+  if (!entryTimestampMs) return emptyReplay('That trade has no entry time on file, so there is no window to replay.');
   const paddingMs = PADDING_MINUTES * 60 * 1000;
 
   const exitMs = exitTimestampMs || entryTimestampMs;
   const windowStart = entryTimestampMs - paddingMs;
   const windowEnd = exitMs + paddingMs;
 
-  // Alpaca first. Its minute history goes back years, so a trade from
-  // March can be replayed candle by candle — Schwab keeps about 35 days,
-  // which is why older trades have always come back with nothing.
   // isReady(), not isConfigured() -- see alpacaClient.isReady.
+  let alpacaReason = null;
   if (await alpaca.isReady()) {
     // The candle size is chosen so a replay is always a sensible NUMBER of
     // bars, however long the position was held.
@@ -81,15 +116,37 @@ async function getReplayCandles(accessToken, ticker, entryTimestampMs, exitTimes
     // still visible end to end and the replay stays a few hundred bars.
     const spanMinutes = Math.max(1, Math.round((windowEnd - windowStart) / 60000));
     const step = REPLAY_STEPS.find(m => spanMinutes / m <= MAX_REPLAY_BARS) || REPLAY_STEPS[REPLAY_STEPS.length - 1];
-    const bars = await alpaca.fetchBars(ticker, { minutes: step, startMs: windowStart, endMs: windowEnd });
-    if (bars && bars.length) {
+
+    const feed = (alpaca.feedState && alpaca.feedState()) || {};
+    const grade = feed.feed === 'iex' ? 'Alpaca, on the free market data'
+                : feed.feed === 'sip' ? 'Alpaca, on the full market data'
+                : 'Alpaca';
+
+    let bars = null;
+    let failed = null;
+    try {
+      bars = await alpaca.fetchBars(ticker, { minutes: step, startMs: windowStart, endMs: windowEnd });
+    } catch (err) {
+      failed = err && err.message ? err.message : 'the request did not complete';
+    }
+
+    if (failed) {
+      // Not silent, and not fatal: Schwab still gets its turn below, but
+      // the reason survives so it can be reported if Schwab has nothing
+      // either.
+      console.log(`Replay for ${ticker}: Alpaca refused the bars request (${failed}); falling back to Schwab.`);
+      alpacaReason = `${grade}, could not complete the request for those minutes.`;
+    } else if (bars && bars.length) {
       if (step > 1) {
         console.log(`Replay for ${ticker}: held ${Math.round(spanMinutes / 60 / 24)} day(s), so built from ${step}-minute candles (${bars.length} bars) rather than ${spanMinutes.toLocaleString()} one-minute ones.`);
       }
-      return bars.slice(0, MAX_REPLAY_BARS).map(c => ({
+      const trimmed = bars.slice(0, MAX_REPLAY_BARS).map(c => ({
         open: c.open, high: c.high, low: c.low, close: c.close,
         volume: c.volume || 0, datetime: c.datetime,
       }));
+      return shapeReplay(trimmed, entryTimestampMs, exitTimestampMs, step, grade);
+    } else {
+      alpacaReason = `${grade}, answered but has no bars for those minutes.`;
     }
   }
 
@@ -97,6 +154,8 @@ async function getReplayCandles(accessToken, ticker, entryTimestampMs, exitTimes
   const candles = [];
   let chunkEndMs = windowEnd;
   let chunks = 0;
+  let refusedChunks = 0;   // a swallowed failure in a loop is an invisible failure
+  let lastRefusal = null;
   while (chunkEndMs > windowStart && chunks < MAX_CHUNKS) {
     chunks++;
     let raw;
@@ -106,6 +165,8 @@ async function getReplayCandles(accessToken, ticker, entryTimestampMs, exitTimes
       });
     } catch (e) {
       raw = [];
+      refusedChunks++;
+      lastRefusal = e && e.message ? e.message : null;
     }
     for (const c of raw) {
       if (c.datetime < windowStart || c.datetime > windowEnd) continue;
@@ -119,17 +180,23 @@ async function getReplayCandles(accessToken, ticker, entryTimestampMs, exitTimes
     chunkEndMs -= CHUNK_DAYS * 24 * 60 * 60 * 1000;
   }
 
-  if (!candles.length) return null;
-  candles.sort((a, b) => a.datetime - b.datetime);
+  if (candles.length) {
+    candles.sort((a, b) => a.datetime - b.datetime);
+    return shapeReplay(candles, entryTimestampMs, exitTimestampMs, 1, 'Schwab');
+  }
 
-  const entryIndex = findClosestIndex(candles, entryTimestampMs);
-  const exitIndex = exitTimestampMs ? findClosestIndex(candles, exitTimestampMs) : null;
-
-  // entryIndex null means the entry itself fell outside whatever Schwab
-  // returned — the replay would have no anchor, so it isn't worth showing.
-  if (entryIndex == null) return null;
-
-  return { candles, entryIndex, exitIndex };
+  // Nothing anywhere. Say which part came up empty and why, rather than
+  // leaving whoever shows this to invent a cause.
+  const ageDays = Math.floor((Date.now() - entryTimestampMs) / 86400000);
+  if (refusedChunks) {
+    console.log(`Replay for ${ticker}: Schwab refused ${refusedChunks} of ${chunks} requests (${lastRefusal || 'no reason given'}).`);
+  }
+  const schwabPart = refusedChunks === chunks
+    ? `Schwab turned down all ${chunks} request${chunks === 1 ? '' : 's'} for those minutes.`
+    : refusedChunks
+      ? `Schwab turned down ${refusedChunks} of ${chunks} requests and had nothing for the rest.`
+      : `Schwab has no minute-by-minute data left for that day — it keeps about 35 days, and this trade is ${ageDays} days old.`;
+  return emptyReplay(alpacaReason ? `${alpacaReason} ${schwabPart}` : schwabPart);
 }
 
-module.exports = { getReplayCandles };
+module.exports = { getReplayCandles, shapeReplay };

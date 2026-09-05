@@ -129,11 +129,8 @@ async function runReplayCheck(deps, input) {
     enrichWithUnderlyingPrices, enrichWithFtfc, enrichWithReplayData,
     enrichWithStopRule, classifyForTest, applyClassification,
     // Lets an empty answer explain itself: old trades have no minute data
-    // unless Alpaca is connected.
-    alpacaReady, feedState,
-    // Asks Alpaca directly what it holds for a window, so an empty replay
-    // reports a fact instead of a guess.
-    probeCandles,
+    // unless Alpaca is connected, and that is nobody's fault.
+    alpacaReady,
     getToken = getValidAccessToken,
   } = deps;
 
@@ -194,40 +191,29 @@ async function runReplayCheck(deps, input) {
   await runStep(steps, 'Load the replay candles', async () => {
     await enrichWithReplayData(token, [trade]);
     const n = ((trade.replayData && trade.replayData.candles) || []).length;
-    if (n) return `${n} one-minute candles ready for Bar Replay.`;
+    if (n) {
+      const from = (trade.replayData && trade.replayData.source) || 'the market data';
+      return `${n} candles ready for Bar Replay, from ${from}.`;
+    }
+
+    // The reason now travels WITH the empty answer, written where the
+    // failure happened, so nothing here has to guess at a cause or probe
+    // afterwards to find one out.
+    const said = trade.replayNote || null;
+    const ageDays = Math.floor((Date.now() - (trade.entryTimestamp || Date.now())) / 86400000);
+    const withAlpaca = alpacaReady ? await alpacaReady().catch(() => false) : false;
+
     // An old trade with no Alpaca is an empty answer for a reason that is
     // nobody's fault -- Schwab simply does not keep minute data that long.
-    const withAlpaca = alpacaReady ? await alpacaReady().catch(() => false) : false;
-    const ageDays = Math.floor((Date.now() - (trade.entryTimestamp || Date.now())) / 86400000);
     if (!withAlpaca && ageDays > 30) {
-      return { soft: true, summary: `Nothing to replay: this trade is ${ageDays} days old, and without Alpaca connected Schwab only keeps about a month. That is not a fault.` };
+      return { soft: true, summary: said
+        ? `Nothing to replay. ${said} That is not a fault.`
+        : `Nothing to replay: this trade is ${ageDays} days old, and without Alpaca connected Schwab only keeps about a month. That is not a fault.` };
     }
-    // With Alpaca connected an empty answer IS a fault -- and the useful
-    // part is WHICH source was asked and what it said. So ask Alpaca
-    // directly for the same window and report what actually came back:
-    // "could not reach it" and "it has nothing there" look identical from
-    // here otherwise, and they need completely different fixes.
-    const feed = feedState ? feedState() : null;
-    const plan = feed && feed.feed ? (feed.feed === 'sip' ? 'the full market data' : 'the free market data') : 'market data';
-    let detail;
-    if (withAlpaca && probeCandles) {
-      let probe;
-      try {
-        probe = await probeCandles(trade.ticker, trade.entryTimestamp - 15 * 60000, (trade.exitTimestamp || trade.entryTimestamp) + 15 * 60000);
-      } catch (e) { probe = undefined; }
-      if (probe === null || probe === undefined) {
-        detail = `Alpaca is connected on ${plan}, but the request for those minutes could not be completed.`;
-      } else if (!probe.length) {
-        detail = `Alpaca is connected on ${plan} and answered, but has no minute-by-minute bars for those minutes.`;
-      } else {
-        detail = `Alpaca does have ${probe.length} bars for those minutes, so the fault is in how the replay asks for them.`;
-      }
-    } else if (withAlpaca) {
-      detail = `Alpaca is connected on ${plan} and returned nothing for that window.`;
-    } else {
-      detail = `Schwab was asked and returned nothing, and this trade is ${ageDays} days old.`;
-    }
-    const err = new Error(`Bar Replay has nothing to show. ${detail}`);
+
+    const err = new Error(said
+      ? `Bar Replay has nothing to show. ${said}`
+      : 'Bar Replay has nothing to show, and nothing said why — that itself is the fault.');
     err.plain = true;   // written here, in plain words -- let it through
     throw err;
   });
