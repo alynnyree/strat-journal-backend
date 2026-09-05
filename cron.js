@@ -228,6 +228,11 @@ async function enrichWithStopRule(token, trades) {
 // confidence bar, so each field is written only when it survived.
 function applyClassificationToTrade(trade, result) {
   if (!result) return;
+  // Written whether or not anything was confident enough to tag, because
+  // the question "was this read with a chart in front of it?" has to be
+  // answerable for every trade the reading has touched -- not only the
+  // ones it managed to name.
+  if (result.sawCandles != null) trade.stratSawCandles = result.sawCandles;
   // The combo (WHAT he saw) and the play (HOW he chose it) are two
   // separate answers. Either can be confident while the other is not.
   if (result.strategy) {
