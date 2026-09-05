@@ -172,7 +172,19 @@ function feedRefused(err) {
 
 // Asks with the best feed the key has, learning which that is.
 async function alpacaGetFeed(pathname, params) {
-  const feeds = feedInUse ? [feedInUse] : ['sip', 'iex'];
+  // The learned feed goes FIRST, but never alone. A key can be allowed
+  // the full feed for one kind of request and refused it for another --
+  // which is exactly what happened: the stock price came back "from
+  // Alpaca, exact" (so the full feed was learned from the trades
+  // request), and every request for chart bars was then refused it with
+  // no fallback left to try. fetchBars caught the refusal and returned
+  // nothing, so Bar Replay was empty while everything else worked.
+  //
+  // Learning an answer once and never re-testing it is the fault. The
+  // remembered feed is a starting point, not a commitment.
+  const feeds = [];
+  if (feedInUse) feeds.push(feedInUse);
+  for (const f of ['sip', 'iex']) if (!feeds.includes(f)) feeds.push(f);
   let lastErr = null;
   for (const feed of feeds) {
     try {
