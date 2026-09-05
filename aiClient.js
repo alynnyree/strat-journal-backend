@@ -491,7 +491,12 @@ ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${scr
   // have been given a play by the automatic reading. Same shape of fault
   // as the others in CLAUDE.md: a second answer added later, invisible to
   // code written for the first.
-  return { ...parsed, usedScreenshot: !!imagePart };
+  // How much chart the reading actually had. Every Alpaca-served trade was
+  // read with NO candles at all for months -- the bars were there, in a
+  // shape this could not open -- and nothing anywhere recorded that, so a
+  // blind answer and a properly-read one looked identical on the card and
+  // stayed that way for ever. A reading now says what it was given.
+  return { ...parsed, usedScreenshot: !!imagePart, sawCandles: candles.length };
 }
 
 // Classifies a single newly-matched trade against the trader's own defined
