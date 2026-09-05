@@ -153,12 +153,18 @@ router.post('/trade-data/enrich', wrap(async (req, res) => {
       return res.status(400).json({ error: 'ticker and entryTimestamp are required' });
     }
     const token = await getValidAccessToken();
-    const [undEntry, undExit, replayData] = await Promise.all([
+    const [undEntry, undExit, built] = await Promise.all([
       getUnderlyingPriceAt(token, ticker, entryTimestamp),
       exitTimestamp ? getUnderlyingPriceAt(token, ticker, exitTimestamp) : Promise.resolve(null),
       getReplayCandles(token, ticker, entryTimestamp, exitTimestamp),
     ]);
-    res.json({ undEntry, undExit, replayData });
+    // Same rule as the automatic import: the bars only when there are
+    // some, and the reason alongside when there are not.
+    res.json({
+      undEntry, undExit,
+      replayData: built.candles.length ? built : null,
+      replayNote: built.candles.length ? null : (built.reason || null),
+    });
   } catch (err) {
     console.error('trade-data enrich error:', err.response?.data || err.message);
     res.status(500).json({ error: 'Enrichment failed' });
@@ -233,8 +239,6 @@ router.post('/replay-trade', wrap(async (req, res) => {
     classifyForTest: aiClient.classifyForTest,
     applyClassification: cron.applyClassificationToTrade,
     alpacaReady: () => alpaca.isReady(),
-    feedState: () => alpaca.feedState(),
-    probeCandles: (ticker, startMs, endMs) => alpaca.fetchBars(ticker, { minutes: 1, startMs, endMs }),
   }, req.body || {});
   res.json(result);
 }));

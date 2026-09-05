@@ -162,10 +162,17 @@ async function enrichWithUnderlyingPrices(token, trades) {
 async function enrichWithReplayData(token, trades) {
   for (const trade of trades) {
     try {
-      trade.replayData = await getReplayCandles(token, trade.ticker, trade.entryTimestamp, trade.exitTimestamp);
+      const built = await getReplayCandles(token, trade.ticker, trade.entryTimestamp, trade.exitTimestamp);
+      // The bars themselves only get stored when there ARE some, so every
+      // "does this trade have a replay?" test in the app keeps working.
+      // The reason it is empty is stored beside them either way, so the
+      // app can say which part refused instead of guessing at a cause.
+      trade.replayData = built.candles.length ? built : null;
+      trade.replayNote = built.candles.length ? null : (built.reason || null);
     } catch (err) {
       console.log(`Replay data enrichment failed for ${trade.ticker}:`, err.message);
       trade.replayData = null;
+      trade.replayNote = 'Building the replay did not finish.';
     }
   }
   return trades;

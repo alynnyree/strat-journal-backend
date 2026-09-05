@@ -67,7 +67,13 @@ const rss = () => Math.round(process.memoryUsage().rss/1048576);
       t.ftfc=r.timeframes; t.ftfcRun=r.runLength; t.ftfcDirection=r.direction;
     }
     for(const t of batch){
-      t.replayData = { candles: await getReplayCandles('tok', t.ticker, t.entryTimestamp, t.exitTimestamp) || [] };
+      // Stored exactly the way cron.js stores it. This used to wrap the
+      // answer in { candles: ... } itself -- which quietly papered over
+      // the fact that the real caller does not, and Alpaca was handing
+      // back a bare list. A test that stands in for the caller cannot
+      // catch a fault in what the caller receives.
+      const built = await getReplayCandles('tok', t.ticker, t.entryTimestamp, t.exitTimestamp);
+      t.replayData = built.candles.length ? built : null;
     }
     if(rss() > peak) peak = rss();
   }
@@ -77,9 +83,9 @@ const rss = () => Math.round(process.memoryUsage().rss/1048576);
   check(`rebuilding 200 trades grows memory by ${grew}MB, not hundreds`, grew < 150);
   check(`and finishes quickly (${seconds}s)`, seconds < 120);
 
-  const totalCandles = trades.reduce((s,t)=>s+(t.replayData.candles||[]).length,0);
+  const totalCandles = trades.reduce((s,t)=>s+((t.replayData&&t.replayData.candles)||[]).length,0);
   check(`no single replay is unbounded (${totalCandles.toLocaleString()} candles across 200 trades)`,
-    trades.every(t => (t.replayData.candles||[]).length <= 1200));
+    trades.every(t => ((t.replayData&&t.replayData.candles)||[]).length <= 1200));
   check('a position held for weeks still has a replay, just in bigger candles',
     (trades[0].replayData.candles||[]).length > 0);
   check(`the whole journal stays small enough to save (${Math.round(JSON.stringify(trades).length/1048576)}MB)`,
