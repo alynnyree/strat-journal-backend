@@ -116,6 +116,12 @@ function processFills(fills, state) {
         totalQuantity: fill.quantity, // how many contracts were opened in total
         remaining: fill.quantity,
         openFees: fill.fees,          // fees for the WHOLE opening, split below when it closes in pieces
+        // The same fee in whole cents, drawn down as the position closes.
+        // Kept separately because a PROPORTION of a fee, rounded, does not
+        // add back up: $1.00 over three contracts closed one at a time
+        // paid out as 33+33+33 = 99 cents, and $2.00 as 67+67+67 = $2.01.
+        // A cent lost or invented on every position that closes in pieces.
+        openFeeCents: fill.fees == null ? null : Math.round(fill.fees * 100),
       };
       openLegs.push(leg);
       newlyOpenedLegs.push(leg);
@@ -123,6 +129,9 @@ function processFills(fills, state) {
     }
     if (isClose(fill.instruction)) {
       let qtyToClose = fill.quantity;
+      // What is left of THIS closing fill's fee, in whole cents, as it is
+      // spread across however many open legs it closes.
+      const closeFee = { cents: fill.fees == null ? null : Math.round(fill.fees * 100) };
       while (qtyToClose > 0) {
         const legIdx = pickLegForClose(openLegs, fill);
         if (legIdx === -1) break; // close with no matching open on file — skip, can't reconcile
@@ -134,16 +143,29 @@ function processFills(fills, state) {
         // the position itself is betting on.
         const perContractDiff = (fill.price - leg.openPrice);
         const pnlDollar = perContractDiff * 100 * qtyMatched;
-        // Each side's fees, in proportion to the contracts being matched
-        // here. The divisors are the ORIGINAL sizes, captured before any
-        // of them are reduced -- dividing by a quantity while subtracting
-        // from it produced a false four-figure fee gap once already.
-        const openTotalQty = leg.totalQuantity;
-        const closeTotalQty = fill.quantity;
-        const shareOf = (total, part, whole) =>
-          (total == null || !whole) ? null : Math.round(total * (part / whole) * 100) / 100;
-        const entryFees = shareOf(leg.openFees, qtyMatched, openTotalQty);
-        const exitFees = shareOf(fill.fees, qtyMatched, closeTotalQty);
+        // Each side's fees, allocated in whole cents out of what is LEFT
+        // of that fill's charge, with the final piece taking the exact
+        // remainder. A fee belongs to a FILL, not to a contract, so the
+        // pieces must add back to the penny Schwab charged -- rounding
+        // each piece independently did not, and lost or invented a cent
+        // on every position closed in more than one go.
+        //
+        // A leg saved before this existed carries only the dollar figure,
+        // so it is converted here rather than being treated as unknown.
+        if (leg.openFeeCents === undefined) {
+          leg.openFeeCents = leg.openFees == null ? null : Math.round(leg.openFees * 100);
+        }
+        const drawDown = (holder, key, part, whole) => {
+          if (holder[key] == null) return null;
+          if (!whole || part >= whole) { const all = holder[key]; holder[key] = 0; return all; }
+          const share = Math.round(holder[key] * (part / whole));
+          holder[key] -= share;
+          return share;
+        };
+        const entryFeeCents = drawDown(leg, 'openFeeCents', qtyMatched, leg.remaining);
+        const exitFeeCents = drawDown(closeFee, 'cents', qtyMatched, qtyToClose);
+        const entryFees = entryFeeCents == null ? null : entryFeeCents / 100;
+        const exitFees = exitFeeCents == null ? null : exitFeeCents / 100;
         // Unknown on either side means the total is unknown. A missing fee
         // must not quietly become a fee of nothing.
         const fees = (entryFees == null || exitFees == null)
