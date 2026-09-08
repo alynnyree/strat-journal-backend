@@ -125,7 +125,10 @@ async function priceWithProvenance(token, ticker, timestampMs) {
   // worked out. Without it there is no way to tell a price that Alpaca
   // could not improve from one it was never asked about -- and the app
   // needs that to know which trades are worth looking up again.
-  return price == null ? null : { price, source: 'schwab-candle', exact: false, alpacaChecked: alpacaOn };
+  // A Schwab candle close is never improvable by waiting: Schwab has no
+  // better record of that second and never will.
+  return price == null ? null
+    : { price, source: 'schwab-candle', exact: false, feed: null, upgradable: false, alpacaChecked: alpacaOn };
 }
 
 async function enrichWithUnderlyingPrices(token, trades) {
@@ -136,6 +139,10 @@ async function enrichWithUnderlyingPrices(token, trades) {
         trade.undEntry = hit ? hit.price : null;
         trade.undEntrySource = hit ? hit.source : null;
         trade.undEntryExact = hit ? hit.exact : null;
+        // Taken from the real-time single-exchange feed while the
+        // consolidated tape was still inside its 15-minute delay. Worth
+        // asking again once, later, for the all-venues price.
+        trade.undEntryUpgradable = hit ? !!hit.upgradable : false;
         trade.undPricedWithAlpaca = hit ? !!hit.alpacaChecked : false;
       }
       if (trade.exitTimestamp) {
@@ -143,6 +150,7 @@ async function enrichWithUnderlyingPrices(token, trades) {
         trade.undExit = hit ? hit.price : null;
         trade.undExitSource = hit ? hit.source : null;
         trade.undExitExact = hit ? hit.exact : null;
+        trade.undExitUpgradable = hit ? !!hit.upgradable : false;
         trade.undPricedWithAlpaca = trade.undPricedWithAlpaca && (hit ? !!hit.alpacaChecked : false);
       }
     } catch (err) {
