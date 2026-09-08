@@ -171,7 +171,16 @@ function feedRefused(err) {
 }
 
 // Asks with the best feed the key has, learning which that is.
-async function alpacaGetFeed(pathname, params) {
+//
+// `onlyFeeds` restricts the attempt to particular feeds. That exists for
+// one real case: the free plan serves the FULL market tape only after 15
+// minutes, but serves IEX in real time. So a moment from two minutes ago
+// must be asked of IEX specifically -- asking for the full tape returns
+// nothing useful and, worse, teaches this function the wrong answer.
+//
+// `used` is an object that receives which feed actually answered, so the
+// caller can tell a consolidated price from a one-exchange one.
+async function alpacaGetFeed(pathname, params, { onlyFeeds = null, used = null } = {}) {
   // The learned feed goes FIRST, but never alone. A key can be allowed
   // the full feed for one kind of request and refused it for another --
   // which is exactly what happened: the stock price came back "from
@@ -183,13 +192,20 @@ async function alpacaGetFeed(pathname, params) {
   // Learning an answer once and never re-testing it is the fault. The
   // remembered feed is a starting point, not a commitment.
   const feeds = [];
-  if (feedInUse) feeds.push(feedInUse);
-  for (const f of ['sip', 'iex']) if (!feeds.includes(f)) feeds.push(f);
+  if (onlyFeeds) {
+    feeds.push(...onlyFeeds);
+  } else {
+    if (feedInUse) feeds.push(feedInUse);
+    for (const f of ['sip', 'iex']) if (!feeds.includes(f)) feeds.push(f);
+  }
   let lastErr = null;
   for (const feed of feeds) {
     try {
       const data = await alpacaGet(pathname, { ...params, feed });
-      if (feedInUse !== feed) {
+      if (used) used.feed = feed;
+      // A deliberately restricted ask says nothing about which feed the
+      // key HAS, so it must not overwrite what was learned.
+      if (!onlyFeeds && feedInUse !== feed) {
         feedInUse = feed;
         if (feed === 'iex') {
           feedDowngraded = true;
@@ -210,13 +226,27 @@ function feedState() {
   return { feed: feedInUse, downgraded: feedDowngraded };
 }
 
-// Alpaca's free plan serves full-market history for anything older than
-// 15 minutes. Asking for something more recent than that returns nothing
-// useful, so it is not worth the request — and a trade closed moments ago
-// still has Schwab's own 1-minute data, which is accurate at that age.
+// The free plan serves the FULL market tape (SIP) only after 15 minutes —
+// but it serves IEX in REAL TIME, with no delay at all. Checked against
+// Alpaca's own published terms, not assumed.
+//
+// This used to refuse every request under 15 minutes outright, which threw
+// away the real-time data the key already has. So a trade that closed five
+// minutes ago fell all the way back to a Schwab candle up to a minute
+// stale, when a genuine print at the right second was available.
+//
+// IEX is one exchange carrying a small share of volume: its print is real
+// but can sit a cent or two from the consolidated price, and a quiet
+// second may hold no IEX print at all. So a price taken this way is
+// marked, and replaced by the consolidated one once the 15 minutes pass.
 const FREE_PLAN_DELAY_MS = 15 * 60 * 1000;
 function tooRecentForFreePlan(timestampMs) {
   return Date.now() - timestampMs < FREE_PLAN_DELAY_MS;
+}
+// Which feeds to ask for a given moment. Inside the delay window only the
+// real-time one can answer; outside it, the usual best-first order.
+function feedsForMoment(timestampMs) {
+  return tooRecentForFreePlan(timestampMs) ? ['iex'] : null;
 }
 
 // The price of the last trade that printed at or before this moment.
@@ -229,20 +259,20 @@ function tooRecentForFreePlan(timestampMs) {
 async function lastTradePriceAt(symbol, timestampMs, { windowMinutes = 10 } = {}) {
   await ensureKeysLoaded();
   if (!isConfigured() || !Number.isFinite(timestampMs)) return null;
-  if (tooRecentForFreePlan(timestampMs)) return null;
   const end = new Date(timestampMs).toISOString();
   const start = new Date(timestampMs - windowMinutes * 60 * 1000).toISOString();
+  const used = {};
   try {
     const data = await alpacaGetFeed(`/stocks/${encodeURIComponent(symbol)}/trades`, {
       start, end, limit: 10000,
-    });
+    }, { onlyFeeds: feedsForMoment(timestampMs), used });
     const trades = data?.trades || [];
     if (!trades.length) return null;
     // Guard against anything after the moment asked for slipping in.
     const upTo = trades.filter(t => Date.parse(t.t) <= timestampMs);
     const chosen = (upTo.length ? upTo : trades)[Math.max(0, (upTo.length ? upTo : trades).length - 1)];
     const price = Number(chosen?.p);
-    return Number.isFinite(price) ? price : null;
+    return Number.isFinite(price) ? { price, feed: used.feed || null } : null;
   } catch (err) {
     console.log(`Alpaca trade lookup failed for ${symbol}:`, err.response?.status || err.message);
     return null;
@@ -255,19 +285,19 @@ async function lastTradePriceAt(symbol, timestampMs, { windowMinutes = 10 } = {}
 async function minuteCloseAt(symbol, timestampMs) {
   await ensureKeysLoaded();
   if (!isConfigured() || !Number.isFinite(timestampMs)) return null;
-  if (tooRecentForFreePlan(timestampMs)) return null;
   const end = new Date(timestampMs).toISOString();
   const start = new Date(timestampMs - 6 * 60 * 60 * 1000).toISOString();
+  const used = {};
   try {
     const data = await alpacaGetFeed(`/stocks/${encodeURIComponent(symbol)}/bars`, {
       timeframe: '1Min', start, end, limit: 10000, adjustment: 'raw',
-    });
+    }, { onlyFeeds: feedsForMoment(timestampMs), used });
     const bars = data?.bars || [];
     if (!bars.length) return null;
     const upTo = bars.filter(b => Date.parse(b.t) <= timestampMs);
     const bar = (upTo.length ? upTo : bars)[(upTo.length ? upTo : bars).length - 1];
     const close = Number(bar?.c);
-    return Number.isFinite(close) ? close : null;
+    return Number.isFinite(close) ? { price: close, feed: used.feed || null } : null;
   } catch (err) {
     console.log(`Alpaca bar lookup failed for ${symbol}:`, err.response?.status || err.message);
     return null;
@@ -352,17 +382,28 @@ async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false })
 // figure is never shown as exact when it is not.
 async function underlyingPriceAt(symbol, timestampMs) {
   await ensureKeysLoaded();
+  // A price taken from the real-time single-exchange feed is a genuine
+  // print at the right second, but from one venue. The consolidated tape
+  // covers all of them and arrives 15 minutes later, so such a price is
+  // marked as improvable and replaced once. Anything already consolidated
+  // is final -- there is nothing better to wait for.
+  const upgradable = (feed) => feed === 'iex' && tooRecentForFreePlan(timestampMs);
+
   const printed = await lastTradePriceAt(symbol, timestampMs);
-  if (printed != null) return { price: printed, source: 'alpaca-trade', exact: true };
-
+  if (printed != null) {
+    return { price: printed.price, source: 'alpaca-trade', exact: true,
+             feed: printed.feed, upgradable: upgradable(printed.feed) };
+  }
   const minute = await minuteCloseAt(symbol, timestampMs);
-  if (minute != null) return { price: minute, source: 'alpaca-1m', exact: false };
-
+  if (minute != null) {
+    return { price: minute.price, source: 'alpaca-1m', exact: false,
+             feed: minute.feed, upgradable: upgradable(minute.feed) };
+  }
   return null;
 }
 
 module.exports = {
-  isConfigured, isReady, underlyingPriceAt, lastTradePriceAt, minuteCloseAt,
+  isConfigured, isReady, underlyingPriceAt, lastTradePriceAt, minuteCloseAt, feedsForMoment,
   tooRecentForFreePlan, FREE_PLAN_DELAY_MS, fetchBars, ALPACA_TIMEFRAME,
   feedState, feedRefused,
   saveKeys, clearKeys, loadSavedKeys, ensureKeysLoaded, keyStatus,
