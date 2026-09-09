@@ -47,9 +47,58 @@ router.get('/positions', wrap(async (req, res) => {
 // which are waiting for you to tag with Strat setup / FTFC / stop / shots.
 // This is what makes sync feel automatic: by the time you open the app,
 // the background job has already done the matching — you're just tagging.
+//
+// TWO OPTIONS ON THIS, BOTH ABOUT HIS DATA ALLOWANCE. The phone asks this
+// every thirty seconds the app is open, and the answer used to carry EVERY
+// waiting trade WITH its chart bars -- measured at 8KB a trade, 161KB for
+// twenty, 2.5MB for three hundred. His hosting was suspended for going over
+// its free 5GB (2026-09-09) and this is the heaviest thing it serves.
+//
+//   ?slim=1  leaves the chart bars OUT and says whether there are any, so
+//            the phone can ask for them one trade at a time and only for
+//            the trades it is actually going to keep. During a re-import
+//            nearly every trade is already on file and its bars were
+//            downloaded and thrown away.
+//   ?limit=N hands back the first N only, so no single answer is enormous.
+//            `waiting` says how many there are in total, so the caller
+//            knows to come back rather than concluding it has them all.
+//
+// Both are optional and both default to the old behaviour, because an app
+// that has not been updated yet must keep working exactly as before.
 router.get('/trades/pending', wrap(async (req, res) => {
   const state = await tradeStore.getState();
-  res.json({ pending: state.pending || [] });
+  const all = state.pending || [];
+  const slim = String(req.query.slim || '') === '1';
+  const limit = parseInt(req.query.limit, 10);
+  let out = Number.isFinite(limit) && limit > 0 ? all.slice(0, limit) : all;
+  // The key STAYS PRESENT and null, never dropped. A shape that changes
+  // between answers is how Bar Replay silently had no chart at all for
+  // weeks -- one caller read `.candles` off something that did not have it.
+  if (slim) out = out.map(t => Object.assign({}, t, {
+    replayData: null,
+    replayWaiting: !!(t.replayData && (t.replayData.candles || []).length),
+  }));
+  res.json({ pending: out, waiting: all.length });
+}));
+
+// The chart bars for ONE waiting trade, asked for only when the phone has
+// decided to keep them. Answers with a reason rather than an empty hand:
+// "there are none for this trade" and "that trade is gone from the queue"
+// are different faults and must not share one answer.
+router.get('/trades/pending/:id/replay', wrap(async (req, res) => {
+  const state = await tradeStore.getState();
+  const t = (state.pending || []).find(p => String(p.id) === String(req.params.id));
+  if (!t) {
+    return res.status(404).json({
+      id: req.params.id, replayData: null,
+      reason: 'That trade is no longer waiting to be collected.',
+    });
+  }
+  const bars = t.replayData && (t.replayData.candles || []).length ? t.replayData : null;
+  res.json({
+    id: t.id, replayData: bars,
+    reason: bars ? null : 'No chart bars were saved for this trade.',
+  });
 }));
 
 // Call once the trade has been tagged and saved into the app's own
