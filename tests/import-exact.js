@@ -175,5 +175,44 @@ if(!FILES.length){
   check('  while the before-fee figure is still worked out', newPending[0].pnlDollar === 100);
 }
 
+// ---- Every trade says which broker fills it was built from ------------
+//
+// This is what stops a second pairing of the same fills getting in. His real
+// journal had four trades that do not exist, each sharing its purchase and
+// its sale with a real one but carrying a different size, because the fills
+// went through the matcher twice and came out matched up differently. A
+// purchase is a purchase whichever sale it is paired to, so the references
+// catch it where the trade's shape never could.
+{
+  const mk = (instruction, quantity, price, fees, n) => ({
+    occ: 'SPY   260609C00745000', ticker: 'SPY', putCall: 'CALL',
+    instruction, quantity, price, fees,
+    date: '2026-06-09', time: '09:3' + n,
+    timestamp: Date.parse('2026-06-09T13:3' + n + ':00Z'),
+    transactionId: 'fill-' + n,
+  });
+  // His real 9 June: bought 1 then 2, sold 2 then 1.
+  const fills = [mk('BUY_TO_OPEN',1,1.21,0.66,0), mk('BUY_TO_OPEN',2,1.11,1.32,1),
+                 mk('SELL_TO_CLOSE',2,1.22,1.34,2), mk('SELL_TO_CLOSE',1,1.43,0.66,3)];
+  const out = processFills(fills, { openLegs: [], pending: [], lastProcessedIds: [] });
+  const trades = out.newPending;
+  check('every trade says which fills it came from', trades.every(t => Array.isArray(t.fills) && t.fills.length));
+  check('each names both a purchase and a sale', trades.every(t => t.fills.length === 2));
+  check('every reference is one the broker actually gave',
+    trades.every(t => t.fills.every(f => fills.some(x => x.transactionId === f))));
+
+  // The same fills a second time, from a clean slate, is what produced his
+  // phantoms. However they pair, they can only cite fills already spoken for.
+  const again = processFills(fills, { openLegs: [], pending: [], lastProcessedIds: [] }).newPending;
+  const claimed = new Set(trades.flatMap(t => t.fills));
+  check(`a second pass can only cite fills already claimed (${again.length} trades)`,
+    again.length > 0 && again.every(t => t.fills.some(f => claimed.has(f))));
+
+  // And within one pass nothing is invented: every fill is accounted for.
+  const cited = new Set(trades.flatMap(t => t.fills));
+  check(`all ${fills.length} fills are accounted for, none invented`,
+    cited.size === fills.length && [...cited].every(f => fills.some(x => x.transactionId === f)));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

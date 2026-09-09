@@ -122,6 +122,10 @@ function processFills(fills, state) {
         // paid out as 33+33+33 = 99 cents, and $2.00 as 67+67+67 = $2.01.
         // A cent lost or invented on every position that closes in pieces.
         openFeeCents: fill.fees == null ? null : Math.round(fill.fees * 100),
+        // Schwab's own reference for the purchase this leg came from. See
+        // the note on `fills` below: this is what makes a trade traceable
+        // back to the broker rather than identifiable only by its shape.
+        openFillId: fill.transactionId == null ? null : String(fill.transactionId),
       };
       openLegs.push(leg);
       newlyOpenedLegs.push(leg);
@@ -210,6 +214,30 @@ function processFills(fills, state) {
           heldMs, // used to decide video-vs-screenshot for the trade-capture pipeline — see pushcut.js
           source: 'schwab-auto',
           needsTagging: true,
+          // WHICH BROKER FILLS THIS TRADE IS MADE OF.
+          //
+          // Measured on his real journal (2026-09-09): four trades in it
+          // do not exist. Two of them read
+          //   09:31 -> 09:36  1 contract  1.11 -> 1.22  fee $1.33
+          //   09:31 -> 09:36  2 contracts 1.11 -> 1.22  fee none
+          // Same purchase, same sale, same two prices, different SIZE.
+          // They are one real trade, paired twice: the fills went through
+          // the matcher a second time and came out matched up differently.
+          //
+          // Nothing downstream could catch that, because a trade was
+          // identified by its SHAPE -- contract, both minutes, both prices,
+          // size -- and a different pairing has a different shape. So the
+          // phantom looked like a brand new trade and was written down. It
+          // arrives with no fee, because the fee had already been correctly
+          // handed to the real trade, which is why he had four trades
+          // "waiting for a fee" that could never get one.
+          //
+          // These references cannot be re-pairing-dependent: a purchase is
+          // a purchase whichever sale it is matched to. Two trades sharing
+          // a fill are two versions of the same thing, and the app refuses
+          // the second one on sight.
+          fills: [leg.openFillId, fill.transactionId == null ? null : String(fill.transactionId)]
+            .filter(Boolean),
         });
         leg.remaining = remainingAfterThis;
         qtyToClose -= qtyMatched;
