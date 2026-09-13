@@ -72,11 +72,31 @@ const trade = {
     && ai.PLAYS[2].key === '2s Turning Into 3s');
 
   // The names are the stable key his performance is grouped by. Renaming one
-  // would relabel every trade already in his journal.
-  const appHtml = fs.readFileSync('/home/user/strat-journal-app/index.html', 'utf8');
-  const inApp = [...appHtml.matchAll(/class="strat-opt play-opt" data-v="([^"]+)"/g)].map(m => m[1]);
-  check(`the app's own picker offers the same three (${inApp.join(' · ')})`,
-    inApp.length === 3 && inApp.every((k, i) => k === ai.PLAYS[i].key));
+  // would relabel every trade already in his journal -- so the app's own
+  // picker has to offer exactly these three, in this order.
+  //
+  // The app is a SEPARATE project, so it is only here when both are checked
+  // out side by side. When it is not, this one check is skipped and SAYS SO
+  // -- a check that cannot run must never look like a check that passed, and
+  // must never take the other thirty down with it. It used to read one
+  // hardcoded path and throw, which is exactly what happened the first time
+  // it ran anywhere but the machine it was written on.
+  const appGuesses = [
+    process.env.APP_DIR,
+    path.join(__dirname, '..', '..', 'strat-journal-app', 'index.html'),
+    '/home/user/strat-journal-app/index.html',
+  ].filter(Boolean);
+  const appHtml = appGuesses.reduce((found, g) => {
+    if (found) return found;
+    try { return fs.readFileSync(g, 'utf8'); } catch (e) { return null; }
+  }, null);
+  if (appHtml == null) {
+    console.log("SKIPPED: the app's own picker could not be read from here — it is a separate project and is not checked out beside this one. Tried: " + appGuesses.join(', '));
+  } else {
+    const inApp = [...appHtml.matchAll(/class="strat-opt play-opt" data-v="([^"]+)"/g)].map(m => m[1]);
+    check(`the app's own picker offers the same three (${inApp.join(' · ')})`,
+      inApp.length === 3 && inApp.every((k, i) => k === ai.PLAYS[i].key));
+  }
 
   // ---- What the prompt now tells the model ------------------------------
   check('it says outright that a play is not a candle pattern',
