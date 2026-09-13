@@ -9,7 +9,7 @@
 const Module = require('module');
 const path = require('path');
 const http = require('http');
-const BACKEND = '/workspace/strat-journal-backend';
+const BACKEND = path.join(__dirname, '..');
 
 process.env.APP_SECRET = 'testkey';
 process.env.PORT = '8981';

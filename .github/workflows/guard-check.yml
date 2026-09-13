@@ -38,3 +38,9 @@ jobs:
         run: node tests/classify-queue.js
       - name: Check his own notation and the formation reading
         run: node tests/notation-broadening.js
+      - name: Check a play is handed over as a play, not as a candle shape
+        run: node tests/plays-are-not-patterns.js
+      - name: Check collecting the waiting trades stays light
+        run: node tests/queue-weight.js
+      - name: Check a picture that matches nothing is not downloaded again and again
+        run: node tests/picture-weight.js

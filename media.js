@@ -115,7 +115,65 @@ router.get('/pending', wrap(async (req, res) => {
   for (const id of dead) {
     await redis.lrem(LIST_KEY, 0, id).catch(() => {});
   }
-  res.json({ screenshots });
+
+  // ?slim=1 LEAVES THE PICTURE ITSELF OUT.
+  //
+  // A picture that matches no trade is deliberately left here to try again
+  // -- the trade may not have reached his journal yet. But the phone asks
+  // for this list every thirty seconds it is open, and the answer carried
+  // every waiting picture IN FULL, up to 3MB each and up to a hundred of
+  // them. So one mistimed picture that will never match anything was
+  // re-downloaded thousands of times over the thirty days it is kept, and
+  // nothing anywhere said so. His hosting was suspended for going over its
+  // data allowance four days before this was found.
+  //
+  // Deciding which trade a picture belongs to needs only its TIMESTAMP. So
+  // the phone takes the list without the pictures, works out which ones it
+  // is going to keep, and asks for those one at a time from /media/:id/image
+  // below. An unmatched picture now costs about a hundred bytes a check
+  // instead of megabytes.
+  //
+  // The key STAYS PRESENT and null rather than being dropped, so nothing
+  // reading this can mistake "not sent this time" for "there is no picture".
+  const slim = String(req.query.slim || '') === '1';
+  const out = slim
+    ? screenshots.map(sc => Object.assign({}, sc, {
+        image: null,
+        hasImage: !!sc.image,
+        bytes: sc.image ? sc.image.length : 0,
+      }))
+    : screenshots;
+  res.json({ screenshots: out, waiting: screenshots.length });
+}));
+
+// One picture's actual image data, asked for only once the phone has
+// decided to keep it. See the note on ?slim=1 above.
+//
+// Answers with a REASON rather than an empty hand: a picture that has left
+// the queue and a picture that never had an image are different faults.
+router.get('/:id/image', wrap(async (req, res) => {
+  if (req.query.key !== process.env.APP_SECRET) {
+    return res.status(403).send('Forbidden');
+  }
+  const raw = await redis.get(`screenshot:${req.params.id}`);
+  if (raw == null) {
+    return res.status(404).json({
+      id: req.params.id, image: null,
+      reason: 'That picture is no longer waiting to be collected.',
+    });
+  }
+  let rec;
+  try { rec = typeof raw === 'string' ? JSON.parse(raw) : raw; }
+  catch (e) {
+    return res.status(500).json({
+      id: req.params.id, image: null,
+      reason: 'That picture could not be read back from storage.',
+    });
+  }
+  res.json({
+    id: rec.id, image: rec.image || null, timestamp: rec.timestamp,
+    reason: rec.image ? null : 'That picture was stored without any image data.',
+  });
 }));
 
 // Frontend calls this once it's successfully attached a screenshot to a
@@ -168,6 +226,11 @@ router.post('/upload-video', uploadVideoMw.single('video'), wrap(async (req, res
   const record = { id, r2Key, timestamp: timestampMs, sizeBytes: req.file.buffer.length };
   await redis.set(`video:${id}`, JSON.stringify(record), { ex: VIDEO_TTL_SECONDS });
   await redis.lpush(VIDEO_LIST_KEY, id);
+  // A ceiling on what accumulates, not just on how often it loops. Each
+  // record expires on its own but its id was left on this list for ever --
+  // the same fault already found and fixed in both the trade-moment queue
+  // and the screenshot queue, still live here.
+  await redis.ltrim(VIDEO_LIST_KEY, 0, MAX_PENDING - 1);
 
   console.log(`Video uploaded: ${id} (~${Math.round(req.file.buffer.length / 1024 / 1024)}MB, ts=${new Date(timestampMs).toISOString()})`);
   res.json({ ok: true, id });
@@ -179,14 +242,26 @@ router.get('/pending-videos', wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
-  const ids = await redis.lrange(VIDEO_LIST_KEY, 0, -1);
+  const ids = await redis.lrange(VIDEO_LIST_KEY, 0, MAX_PENDING - 1);
   if (!ids.length) return res.json({ videos: [] });
 
   const raw = await Promise.all(ids.map(id => redis.get(`video:${id}`)));
-  const videos = raw
-    .map(r => { try { return typeof r === 'string' ? JSON.parse(r) : r; } catch (e) { return null; } })
-    .filter(Boolean);
-  res.json({ videos });
+  const videos = [];
+  const dead = [];
+  ids.forEach((id, i) => {
+    const r = raw[i];
+    if (r == null) { dead.push(id); return; }
+    try { videos.push(typeof r === 'string' ? JSON.parse(r) : r); }
+    catch (e) { dead.push(id); }
+  });
+  // An id whose record has expired is swept as it is found, the same as the
+  // screenshot list above. This answer is already small -- it carries only
+  // a pointer to each recording, never the recording itself -- so there is
+  // nothing here to slim.
+  for (const id of dead) {
+    await redis.lrem(VIDEO_LIST_KEY, 0, id).catch(() => {});
+  }
+  res.json({ videos, waiting: videos.length });
 }));
 
 // Frontend calls this once it's matched a pending video to a trade, so the
