@@ -219,13 +219,29 @@ function parseImageDataUrl(dataUrl) {
 // strat combos. Nothing should be disregarded."
 //
 // All three carry the same target — reward at least twice the risk.
+// THE PLAY IS NOT A CANDLE PATTERN. Corrected 2026-09-13 after he read these
+// back and said plainly what was wrong with them.
+//
+// The combo is WHAT the bars did. The play is WHERE price was and WHICH WAY
+// the market was pointing when he took it. Two of the three are not patterns
+// at all, and the old wording described them as though they were -- a
+// broadening scalp as "2-Down to 2-Up", an FTFC play as "2-1-2 continuations".
+// His words: "Broadening formation is more so about location rather than the
+// actual strat combo" and "FTFC is not combo specific either, it is mainly
+// based off trading in the direction of FTFC with ANY combo."
+//
+// That wording was actively harmful here, because this prompt hands over the
+// nine candle patterns and then asks for the play immediately afterwards --
+// so a play described as a shape pushes the model to answer a LOCATION
+// question by pattern-matching. Any of the nine combos can be any of the
+// three plays.
 const PLAYS = [
   { key: 'Broadening Formation Scalp',
-    desc: 'A broadening formation on a higher timeframe. Drop to the 1-minute or 5-minute to scalp it, entering at one edge and targeting the OTHER side of the broadening formation. Reward at least 2x the risk.' },
+    desc: 'DEFINED BY LOCATION, NOT BY THE COMBO. Price is at an edge of a broadening formation (successively wider swings making both higher highs AND lower lows). A broadening formation can form and be recognised on ANY timeframe. His own method: recognise the formation on a LARGER timeframe -- 30-minute or 1-hour, for example -- and then trade it on a LOWER one, typically the 1-minute or 5-minute, entering at one edge and targeting the OTHER side of the formation. ANY of the nine combos can trigger it; do not require a particular candle pattern and do not reject this play because the combo is not a reversal shape. Worth weighing as supporting evidence: price at such an edge is often at exhaustion, having just reached a higher-timeframe target. Stop: the 50% rule, or the trigger candle extreme. Reward at least 2x the risk.' },
   { key: 'FTFC Direction Play',
-    desc: 'A Strat setup taken in the direction the timeframes already agree on (FTFC). First target is completion of the setup itself; second target is a gap or a major pivot point. Once a pivot point or the liquidity behind it has been taken out, looking to reverse. Reward at least 2x the risk.' },
+    desc: 'DEFINED BY DIRECTION, NOT BY THE COMBO. ANY of the nine combos, taken in the direction the timeframes already agree on. Do not require a continuation shape and do not require an inside-bar break -- the play is the alignment, not the pattern. First target is completion of the setup itself; second target is a gap or a major pivot point. Once a pivot point or the liquidity behind it has been taken out, looking to reverse. Reward at least 2x the risk.' },
   { key: '2s Turning Into 3s',
-    desc: 'A directional bar (2) that expands into an outside bar (3) — one side taken out, then the other, so the bar takes out both sides of the previous range. Reward at least 2x the risk.' },
+    desc: 'One side of the previous range taken out, and then the other. There is MORE THAN ONE ROUTE to it and both count: (a) a directional bar (2) that expands into an outside bar (3), taking out both sides; (b) the Rev Strat, where an inside bar (1) must break out of one side FIRST -- which is what makes it a 2 -- then fails to hold that break and reverses through the OPPOSITE side, making it a 3. THE FAILURE AND THE REVERSAL ARE THE TRADE. Reward at least 2x the risk.' },
 ];
 
 const STRATEGIES = [
@@ -467,6 +483,8 @@ Trade data:
 - Last ~15 one-minute candles into entry: ${candleSummary || 'not available'}
 
 SECOND QUESTION, answered separately. Which of the trader's three PLAYS was this? The play is HOW he chose the trade; the combo above is WHAT he saw. A trade has both, and they are independent — answer "unclear" for this one if the evidence does not support a choice, even where the combo is obvious.
+
+THE PLAY IS NOT A CANDLE PATTERN, and this is the single most important thing to get right here. Two of the three are defined by WHERE price was and WHICH WAY the timeframes pointed — not by any shape. ANY of the nine combos above can be ANY of the three plays. Never identify a play by which combo appeared, never rule a play out because the combo "does not look like" it, and do not expect each play to have a signature shape. Judge the play on location and direction; judge the combo on the bars.
 ${PLAYS.map(p => `- "${p.key}": ${p.desc}`).join('\n')}
 
 ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${screenshotSource === 'entry' ? 'entry' : 'exit (no entry screenshot was available)'} is included below — use it as supporting visual evidence for the candle pattern and any drawn lines/indicators visible on it, weighed together with the candle data above, not in place of it.` : '- No screenshot is available for this trade — classify from the candle data alone.'}${trade.testDescription ? `\n- The trader's own written description of the setup: "${trade.testDescription}"` : ''}${teaching.text}`;
