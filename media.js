@@ -29,7 +29,15 @@ function parseTimestampToMs(raw) {
   if (!raw) return null;
   const asSeconds = Number(raw);
   if (!Number.isNaN(asSeconds) && raw.trim() !== '') return asSeconds * 1000;
-  const asDate = Date.parse(raw);
+  // An ISO time carries its timezone as an offset, and east of London that
+  // offset starts with a PLUS -- which means "a space" inside a web
+  // address. So `...T09:49:00+02:00` arrives here as `...T09:49:00 02:00`
+  // and will not read as a date at all. He is in New York, where the
+  // offset is a minus and this never bites, which is exactly the kind of
+  // thing that sits unnoticed until it matters. Repaired rather than
+  // refused: a space can only have been a plus in this position.
+  const repaired = raw.replace(/(T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?) (\d{2}:?\d{2})$/, '$1+$2');
+  const asDate = Date.parse(repaired);
   return Number.isNaN(asDate) ? null : asDate;
 }
 

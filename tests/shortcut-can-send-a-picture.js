@@ -69,6 +69,29 @@ async function run() {
   r = await post('?key=testkey&timestamp=2026-09-16T13:49:00Z');
   eq(r.status, 200, 'unencoded colons are accepted too');
 
+  // 2b. What Shortcuts' ISO 8601 actually produces: LOCAL time with the
+  //     timezone on the end. In New York that offset is a minus, which
+  //     travels fine. East of London it is a PLUS -- and a plus means "a
+  //     space" inside a web address, so it arrives broken. He is in New
+  //     York and this would never have bitten him, which is exactly why it
+  //     would have sat there unnoticed.
+  for (const t of ['2026-09-16T09:49:00-04:00', '2026-09-16T15:49:00 02:00', '2026-09-16T15:49:00 0200']) {
+    const rr = await post('?key=testkey&timestamp=' + t.replace(/ /g, '%20'));
+    eq(rr.status, 200, 'accepted: ' + t);
+  }
+  {
+    // All four spellings must land on the SAME instant, or a picture goes
+    // on the wrong trade -- which looks entirely genuine.
+    const ids = [];
+    for (const t of ['2026-09-16T13:49:00Z', '2026-09-16T09:49:00-04:00', '2026-09-16T15:49:00%2002:00']) {
+      const rr = await post('?key=testkey&timestamp=' + t);
+      ids.push(rr.body.id);
+    }
+    const times = ids.map(id => JSON.parse(store.get('screenshot:' + id)).timestamp);
+    n++; assert.ok(times.every(t => t === times[0]),
+      'every way of writing that instant lands on the same instant: ' + JSON.stringify(times));
+  }
+
   // 3. Unix seconds, the other format the route documents.
   r = await post('?key=testkey&timestamp=1758030540');
   eq(r.status, 200, 'unix seconds accepted');
