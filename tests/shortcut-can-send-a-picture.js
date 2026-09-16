@@ -92,6 +92,27 @@ async function run() {
       'every way of writing that instant lands on the same instant: ' + JSON.stringify(times));
   }
 
+  // 2c. A DATE IS NOT A MOMENT. Shortcuts' ISO 8601 has a separate
+  //     "Include ISO 8601 Time" switch, and with it off the answer is just
+  //     `2026-09-16`. Date.parse reads that as midnight UTC -- eight in the
+  //     EVENING THE DAY BEFORE in New York -- so the picture was accepted,
+  //     answered ok:true, stamped hours from its trade, and left waiting for
+  //     ever with nothing saying why. Seen on his own screen with that
+  //     switch off.
+  {
+    const rr = await post('?key=testkey&timestamp=2026-09-16');
+    eq(rr.status, 400, 'a date with no time of day is refused, not quietly filed at midnight');
+    ok(/time of day/i.test(rr.body.error), 'and says what is wrong: ' + rr.body.error);
+    ok(/Include ISO 8601 Time/.test(rr.body.error), 'and names the switch that fixes it');
+    ok(/2026-09-16/.test(rr.body.error), 'and quotes back what it was sent');
+  }
+  {
+    // A WHOLE time that happens to read midnight is a different thing and
+    // must still go through -- refusing it would be the opposite mistake.
+    const rr = await post('?key=testkey&timestamp=2026-09-16T00:00:00Z');
+    eq(rr.status, 200, 'a real time that reads midnight is still accepted');
+  }
+
   // 3. Unix seconds, the other format the route documents.
   r = await post('?key=testkey&timestamp=1758030540');
   eq(r.status, 200, 'unix seconds accepted');
