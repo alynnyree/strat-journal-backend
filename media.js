@@ -52,13 +52,32 @@ const VIDEO_TTL_SECONDS = 30 * 24 * 60 * 60; // matches SCREENSHOT_TTL_SECONDS's
 // variable. The timestamp travels as a URL query parameter.
 // URL: POST /media/upload?key=...&timestamp=<unix SECONDS, or an ISO 8601 date>
 // Form field: "image" (type File) = the Resized Image
-router.post('/upload', upload.single('image'), wrap(async (req, res) => {
+//
+// Takes ANY field rather than insisting on one called "image", because
+// this is the one part of the whole pipeline he builds by hand, in the
+// Shortcuts app, from written instructions. `upload.single('image')`
+// answers a field named anything else by throwing, which arrives as a
+// blank failure -- so the message below, which names exactly what is
+// wrong, could never be reached by the single most likely mistake. It now
+// says what he called it and what it wanted.
+router.post('/upload', upload.any(), wrap(async (req, res) => {
   if (req.query.key !== process.env.APP_SECRET) {
     return res.status(403).send('Forbidden');
   }
-  if (!req.file || !req.file.buffer || !req.file.buffer.length) {
-    return res.status(400).json({ error: 'Missing "image" file — expected a Form field named "image" with Type set to File.' });
+  const files = req.files || [];
+  const file = files.find(f => f.fieldname === 'image') || null;
+  if (!file || !file.buffer || !file.buffer.length) {
+    // Three different faults, three different fixes: nothing was attached,
+    // something was attached under the wrong name, or the right name
+    // arrived empty.
+    const error = files.length === 0
+      ? 'No picture was attached — expected a Form field named "image" with Type set to File.'
+      : !files.some(f => f.fieldname === 'image')
+        ? `The picture was attached as "${files[0].fieldname}" — it has to be named "image", with Type set to File.`
+        : 'The "image" field arrived empty — check its Type is set to File.';
+    return res.status(400).json({ error });
   }
+  req.file = file;
   const timestampMs = parseTimestampToMs(req.query.timestamp);
   if (timestampMs == null) {
     return res.status(400).json({ error: 'Missing or invalid "timestamp" query parameter — expected unix seconds (e.g. ?timestamp=1723150000) or an ISO 8601 date (e.g. ?timestamp=2026-08-22T13:49:00Z).' });
