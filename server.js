@@ -12,6 +12,7 @@ const { router: browserEventsRouter } = require('./browserEvents');
 const { startAutoSync, FTFC_RULE_VERSION } = require('./cron');
 const { startStreamer } = require('./schwabStreamer');
 const { installCrashGuards, getCrashes, uptimeSeconds, startedAt, memoryMb, watchMemory } = require('./crashGuard');
+const { lastPhoneAlert } = require('./pushcut');
 const { wrap, errorHandler } = require('./asyncRoute');
 
 // Installed before anything is started, so a failure while starting up is
@@ -41,6 +42,12 @@ app.use(express.json({ limit: '16mb' }));
 app.get('/health', wrap(async (req, res) => {
   let crashes = [];
   try { crashes = await getCrashes(5); } catch (err) { /* never let this route fail */ }
+  // What became of the last alert sent to his phone. Behind the Details
+  // tap in the app, never on his screen -- but it exists at all because
+  // every one of those alerts failed silently for months and nothing
+  // anywhere said so.
+  let phoneAlert = null;
+  try { phoneAlert = await lastPhoneAlert(); } catch (err) { /* never let this route fail */ }
   const mem = memoryMb();
   res.json({
     ok: true,
@@ -55,6 +62,7 @@ app.get('/health', wrap(async (req, res) => {
     memoryMb: mem.nowMb,
     peakMemoryMb: mem.peakMb,
     recentFailures: crashes,
+    lastPhoneAlert: phoneAlert,
   });
 }));
 
