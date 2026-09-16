@@ -1,4 +1,44 @@
 const axios = require('axios');
+const { Redis } = require('@upstash/redis');
+
+// ---- What happened to the last phone alert ----
+//
+// Every one of these alerts returned instantly and silently for months,
+// because no key was set and the very first line below simply gave up. The
+// owner had no way to learn that the whole phone path was inert, and I had
+// no way either -- the only failure report was a log line nobody reads.
+//
+// So each attempt now writes down what it asked for and what came back, in
+// plain words, and /health hands it over. Four outcomes that must never
+// share one answer: never asked (nothing set up), asked and accepted,
+// asked and REFUSED by Pushcut (the name does not exist on his phone), and
+// could not reach Pushcut at all.
+//
+// Best-effort on every side: storing this may never delay or block an
+// alert, and an alert may never fail because storing it did.
+const ALERT_KEY = 'pushcut:lastAlert';
+let redis = null;
+function store() {
+  if (redis) return redis;
+  try { redis = Redis.fromEnv(); } catch (e) { redis = null; }
+  return redis;
+}
+
+async function noteAlert(record) {
+  const r = store();
+  if (!r) return;
+  try { await r.set(ALERT_KEY, JSON.stringify(record)); } catch (e) { /* never block an alert */ }
+}
+
+async function lastPhoneAlert() {
+  const r = store();
+  if (!r) return null;
+  try {
+    const raw = await r.get(ALERT_KEY);
+    if (raw == null) return null;
+    return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch (e) { return null; }
+}
 
 // Three distinct signals for the "photo for long trades, video for short
 // trades" capture pipeline. Each maps to its own notification name/Shortcut
@@ -14,15 +54,44 @@ const axios = require('axios');
 // rather than erroring — this is a nice-to-have layered on top of the trade
 // already being safely in the Journal, never something that should block or
 // fail the sync it's called from.
-async function sendPushcut(notificationName, apiKey, payload) {
-  if (!notificationName || !apiKey) return;
+async function sendPushcut(notificationName, apiKey, payload, moment) {
+  const at = Date.now();
+  const what = moment || 'a trade';
+  if (!notificationName || !apiKey) {
+    // Not a failure to reach anything -- nothing was ever asked. Said
+    // plainly, because "it was never asked" and "it refused" are different
+    // faults with different fixes.
+    await noteAlert({
+      at, moment: what, name: notificationName || null, ok: false, asked: false,
+      reason: !notificationName && !apiKey
+        ? 'No alert name and no key are set, so nothing was sent to your phone.'
+        : !notificationName
+          ? 'No alert name is set for this moment, so nothing was sent to your phone.'
+          : 'No key is set, so nothing was sent to your phone.',
+    });
+    return;
+  }
   try {
     await axios.post(
       `https://api.pushcut.io/v1/notifications/${encodeURIComponent(notificationName)}`,
       payload,
       { headers: { 'API-Key': apiKey } }
     );
+    await noteAlert({ at, moment: what, name: notificationName, ok: true, asked: true, reason: null });
   } catch (err) {
+    // A name Pushcut has never heard of and a phone that could not be
+    // reached look identical from here unless they are told apart. Pushcut
+    // answering at all -- even to refuse -- means the key worked and the
+    // NAME is what is wrong, which is the one thing he can fix himself.
+    const status = err.response?.status ?? null;
+    const reason = status === 404
+      ? `Your phone alert list has nothing called "${notificationName}", so the alert had nowhere to go.`
+      : status === 401 || status === 403
+        ? 'Your phone alert key was not accepted.'
+        : status
+          ? `The phone alert was turned down (${status}).`
+          : 'The phone alert service could not be reached at all.';
+    await noteAlert({ at, moment: what, name: notificationName, ok: false, asked: true, status, reason });
     console.log(`Pushcut notification (${notificationName}) failed:`, err.response?.data || err.message);
   }
 }
@@ -39,8 +108,13 @@ async function notifyTradeOpened(leg) {
   await sendPushcut(notificationName, apiKey, {
     title: `${leg.ticker} ${leg.dir} opened`,
     text: 'Tap to start recording',
-    input: JSON.stringify({ legKey: legKey(leg), occ: leg.occ, openTimestamp: leg.openTimestamp }),
-  });
+    // The moment the trade actually happened, sent so the picture can be
+    // stamped with THAT rather than with whenever he gets to his phone.
+    // Same rule the laptop side already follows: a picture filed against
+    // the wrong trade looks entirely genuine, and a late stamp is how that
+    // happens.
+    input: JSON.stringify({ legKey: legKey(leg), occ: leg.occ, openTimestamp: leg.openTimestamp, timestamp: leg.openTimestamp }),
+  }, 'a trade opening');
 }
 
 // Called ~15 minutes after notifyTradeOpened, only if that same leg is still
@@ -51,8 +125,10 @@ async function notifyTradeStillOpen(leg) {
   await sendPushcut(notificationName, apiKey, {
     title: `${leg.ticker} ${leg.dir} still open after 15 min`,
     text: 'Tap to stop recording (switching to screenshot mode)',
-    input: JSON.stringify({ legKey: legKey(leg), occ: leg.occ, openTimestamp: leg.openTimestamp }),
-  });
+    // Fifteen minutes past the open -- which is the moment this picture is
+    // of, and the moment the journal will try to match it to.
+    input: JSON.stringify({ legKey: legKey(leg), occ: leg.occ, openTimestamp: leg.openTimestamp, timestamp: leg.openTimestamp + SHORT_TRADE_MS }),
+  }, 'a trade passing fifteen minutes');
 }
 
 async function notifyTradeClosed(trade) {
@@ -79,8 +155,8 @@ async function notifyTradeClosed(trade) {
     // notification's tap. JSON so one Shortcut can branch on `mode`
     // (video vs screenshot) instead of needing two separate notifications
     // for the same close event.
-    input: JSON.stringify({ tradeId: trade.id, mode }),
-  });
+    input: JSON.stringify({ tradeId: trade.id, mode, timestamp: trade.exitTimestamp ?? null }),
+  }, 'a trade closing');
 }
 
 // The seven-day Schwab sign-in, sent to his phone rather than waiting to
@@ -100,7 +176,7 @@ async function notifySignInExpiring(stageKey, hoursLeft) {
     title,
     text,
     input: JSON.stringify({ kind: 'schwabSignIn', stage: stageKey, hoursLeft }),
-  });
+  }, 'the weekly sign-in running out');
 }
 
-module.exports = { notifyTradeOpened, notifyTradeStillOpen, notifyTradeClosed, notifySignInExpiring };
+module.exports = { notifyTradeOpened, notifyTradeStillOpen, notifyTradeClosed, notifySignInExpiring, lastPhoneAlert };
