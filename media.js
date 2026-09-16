@@ -25,6 +25,25 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 3 *
 // version's Shortcuts app offers "Unix Time" as a date format choice —
 // ISO 8601 is available everywhere, so accepting both means the Shortcut
 // doesn't have to fight with whatever format list happens to be on screen.
+// A DATE is not a MOMENT. Shortcuts' ISO 8601 has a separate "Include ISO
+// 8601 Time" switch, and with it off the answer is just `2026-09-16` --
+// which Date.parse happily reads as midnight UTC, eight in the evening the
+// day BEFORE in New York. So a picture would be accepted, answered with
+// ok:true, stamped several hours from the trade it belongs to, and left
+// waiting for ever with nothing anywhere saying why. Seen on his own
+// screen with that switch off.
+//
+// Refused by name instead, because the fix is one switch and he can only
+// find it if something says so. A whole ISO time whose clock reads
+// midnight is a different thing and is let through -- only a string
+// carrying NO time of day at all is turned away.
+function timeOfDayMissing(raw) {
+  const t = String(raw).trim();
+  if (!t || !Number.isNaN(Number(t))) return false;   // unix seconds carry a moment
+  if (!/\d{4}-\d{2}-\d{2}/.test(t)) return false;     // not the shape this is about
+  return !/[T ]\d{1,2}:\d{2}/.test(t);
+}
+
 function parseTimestampToMs(raw) {
   if (!raw) return null;
   const asSeconds = Number(raw);
@@ -86,6 +105,9 @@ router.post('/upload', upload.any(), wrap(async (req, res) => {
     return res.status(400).json({ error });
   }
   req.file = file;
+  if (timeOfDayMissing(req.query.timestamp)) {
+    return res.status(400).json({ error: `The time says "${req.query.timestamp}" — that is a date with no time of day, so this picture could not be matched to a trade. Turn on "Include ISO 8601 Time" in the Format Date step.` });
+  }
   const timestampMs = parseTimestampToMs(req.query.timestamp);
   if (timestampMs == null) {
     return res.status(400).json({ error: 'Missing or invalid "timestamp" query parameter — expected unix seconds (e.g. ?timestamp=1723150000) or an ISO 8601 date (e.g. ?timestamp=2026-08-22T13:49:00Z).' });
