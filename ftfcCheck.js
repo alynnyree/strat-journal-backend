@@ -113,19 +113,73 @@ function candleContaining(candles, atMs) {
 // The entry day's candles, worked out ONCE per trade rather than once per
 // timeframe. Eight timeframes each re-scanning the whole series was eight
 // times the work and eight times the memory for one answer.
+// How many minutes into the New York day is this moment? Built on the
+// shared formatter, never a fresh one per call.
+const EASTERN_CLOCK = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', hour12: false, hour: '2-digit', minute: '2-digit',
+});
+function easternMinutesOfDay(ms) {
+  const p = Object.fromEntries(EASTERN_CLOCK.formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+  let hour = Number(p.hour);
+  if (hour === 24) hour = 0;
+  return hour * 60 + Number(p.minute);
+}
+// The regular session, in New York minutes. 09:30 to 16:00.
+const SESSION_OPEN_MIN = 9 * 60 + 30;
+const SESSION_CLOSE_MIN = 16 * 60;
+
+// REGULAR HOURS ONLY, and it must be filtered HERE rather than trusted to
+// arrive that way.
+//
+// Schwab is asked with needExtendedHoursData:false, so its candles start
+// at 09:30. Alpaca is asked FIRST for minute data and has no such setting
+// -- fetchBars sends only a timeframe and a date range -- so pre-market
+// and after-hours bars come back with everything else. Nothing downstream
+// filtered them, and this function only ever filtered by DATE.
+//
+// That mattered because intradayBarOpen below took "the first candle I
+// happen to have for this day" as the session start. Measured by running
+// these very functions, for an entry at 10:42:
+//
+//   candles from 09:30  ->  the 1-hour bar opens 10:30   (right)
+//   candles from 04:00  ->  the 1-hour bar opens 10:00   (wrong)
+//   candles from 06:07  ->  3m, 5m, 15m, 30m AND 1H all wrong
+//
+// 06:07 is the realistic case: Alpaca returns a bar only where a trade
+// happened, and IWM before dawn is thin, so the first bar of the day
+// lands on an arbitrary minute. Every intraday timeframe then anchors to
+// that arbitrary minute. The direction is read from the bar's OPEN, so a
+// wrong bar is a possibly-wrong BULLISH or BEARISH -- and FTFC is four of
+// those in a row.
+//
+// This is the same fault as bars grouped by position in a list, arriving
+// by a different door: an anchor taken from whatever the data happened to
+// start with, rather than from the clock.
 function sessionCandles(candles, atMs) {
   if (!candles || !candles.length) return [];
   const day = easternDate(atMs);
-  return candles.filter(c => easternDate(c.datetime) === day);
+  return candles.filter(c => {
+    if (easternDate(c.datetime) !== day) return false;
+    const m = easternMinutesOfDay(c.datetime);
+    return m >= SESSION_OPEN_MIN && m < SESSION_CLOSE_MIN;
+  });
 }
 
+// ANCHORED TO THE CLOCK, never to the first candle in hand.
+//
+// Even with the filter above, taking sameDay[0] would still be wrong on a
+// day whose 09:30 bar is missing -- a halt, a late open, or simply no
+// trade in that minute. The anchor is 09:30 itself, worked out from the
+// moment being asked about, so a missing first bar shifts nothing.
 function intradayBarOpen(sameDay, atMs, minutes) {
   if (!sameDay || !sameDay.length) return null;
-  const sessionStart = sameDay[0].datetime;
-  if (atMs < sessionStart) return null;                 // before the session opened
-  const len = minutes * 60 * 1000;
-  const barStart = sessionStart + Math.floor((atMs - sessionStart) / len) * len;
-  const first = sameDay.find(c => c.datetime >= barStart);
+  const minsIntoDay = easternMinutesOfDay(atMs);
+  if (minsIntoDay < SESSION_OPEN_MIN) return null;      // before the session opened
+  const sinceOpen = minsIntoDay - SESSION_OPEN_MIN;
+  const barStartMin = SESSION_OPEN_MIN + Math.floor(sinceOpen / minutes) * minutes;
+  // Back to a real instant on that same day.
+  const barStartMs = atMs - (minsIntoDay - barStartMin) * 60000;
+  const first = sameDay.find(c => c.datetime >= barStartMs);
   return first ? first.open : null;
 }
 
