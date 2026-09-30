@@ -422,4 +422,16 @@ router.get('/backup/export', wrap(async (req, res) => {
   res.json(copy);
 }));
 
+// BLOCKER 2A: a READ-ONLY look at what Schwab actually returns (see
+// brokerInspect.js). Writes nothing and never renews the Schwab sign-in.
+// Every failure comes back as an answer with its reason, never as a throw.
+router.get('/broker/inspect', wrap(async (req, res) => {
+  const { inspectOnce } = require('./brokerInspect');
+  let report;
+  try { report = await inspectOnce(); }
+  catch (e) { report = { readOnly: true, ok: false, reason: 'The inspection itself failed: ' + ((e && e.message) || String(e)).slice(0, 200) }; }
+  res.set('Cache-Control', 'no-store');
+  res.json(report);
+}));
+
 module.exports = router;
