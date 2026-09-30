@@ -436,4 +436,33 @@ router.get('/broker/inspect', wrap(async (req, res) => {
   res.json(report);
 }));
 
+// BLOCKER 2: the immutable broker ledger (brokerLedger.js, ledgerArchive.js).
+// Import writes ONLY new ledger entries and archive files; it never pairs
+// trades or touches the journal. Status and verify only read.
+router.post('/ledger/import', wrap(async (req, res) => {
+  const { importOnce } = require('./brokerLedger');
+  const years = Math.min(Math.max(parseInt(req.query.years, 10) || 10, 1), 10);
+  let summary;
+  try { summary = await importOnce({ years }); }
+  catch (e) { summary = { status: 'failed', reason: 'The import itself failed: ' + ((e && e.message) || String(e)).slice(0, 200) }; }
+  res.set('Cache-Control', 'no-store');
+  res.json(summary);
+}));
+router.get('/ledger/status', wrap(async (req, res) => {
+  const { ledgerStatus } = require('./brokerLedger');
+  let out;
+  try { out = await ledgerStatus(); }
+  catch (e) { out = { readOnly: true, error: 'Could not read the ledger: ' + ((e && e.message) || String(e)).slice(0, 200) }; }
+  res.set('Cache-Control', 'no-store');
+  res.json(out);
+}));
+router.get('/ledger/verify', wrap(async (req, res) => {
+  const { verifyLedger } = require('./brokerLedger');
+  let out;
+  try { out = await verifyLedger(); }
+  catch (e) { out = { readOnly: true, error: 'Could not verify the ledger: ' + ((e && e.message) || String(e)).slice(0, 200) }; }
+  res.set('Cache-Control', 'no-store');
+  res.json(out);
+}));
+
 module.exports = router;
