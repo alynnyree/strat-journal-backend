@@ -76,6 +76,14 @@ const crypto = require('crypto');
 
 const ENGINE = 'tradeRebuild v1';
 const RULES = ['fifo-v1', 'current-rule-v1'];
+// B3-5 is OPEN. Neither rule is approved for production. current-rule-v1 is
+// a comparison model of matcher.js only and must never become the
+// production rule; its expiry test (23:59:59 UTC) and fifo-v1's (the New
+// York expiration date) are deliberately different and stay separate.
+const RULE_STATUS = {
+  'fifo-v1': 'candidate under evaluation -- B3-5 is open; not approved as the production rule',
+  'current-rule-v1': 'comparison model of matcher.js (pickLegForClose, isLegDead) -- evidence only; never a production rule',
+};
 const DAY_MS = 86400000;
 const CURRENT_RULE_MAX_LEG_AGE_DAYS = 45;   // matcher.js MAX_LEG_AGE_DAYS
 
@@ -179,6 +187,8 @@ function readInput(items) {
     }
     const act = u.raw.activityId;
     const hasAct = act != null && String(act) !== '';
+    // The RECORD id; a fill id is always "F:" + this + ":" + n (B3-1), so a
+    // record without an activityId gives fills "F:U-<32 hex>:<n>".
     const recordId = hasAct ? String(act) : 'U-' + fp.slice(0, 32);
     const accountRef = (u.entry && u.entry.provenance && u.entry.provenance.accountRef) || null;
     const ledgerFee = u.entry && u.entry.normalized && u.entry.normalized.fees ? u.entry.normalized.fees.normalizedFee : undefined;
@@ -222,12 +232,14 @@ function normalize(records) {
   const fills = [];
   const notFills = [];
   const flags = [];
+  const optionRecordFees = [];   // every record with option lines, and its original fee
   for (const rec of records) {
     const raw = rec.raw;
     const items = Array.isArray(raw.transferItems) ? raw.transferItems : [];
     const optionLines = items.filter(ti => ti && ti.instrument && ti.instrument.assetType === 'OPTION' && Number(ti.amount) !== 0 && Number.isFinite(Number(ti.amount)));
     if (!optionLines.length) continue;
     const fees = recordFees(raw);
+    optionRecordFees.push({ recordId: rec.recordId, feeCents: fees.itemisedCents });
     if (rec.ledgerFee !== undefined && (rec.ledgerFee == null ? null : toCents(rec.ledgerFee)) !== fees.itemisedCents) {
       flags.push({ kind: 'fee-normalization-disagreement', recordId: rec.recordId, reason: 'The fee worked out from the record\'s own fee lines differs from the ledger\'s stored figure. The record\'s own lines are used.', evidence: { fromFeeLines: fees.itemisedCents, ledgerStored: rec.ledgerFee } });
     }
@@ -276,8 +288,14 @@ function normalize(records) {
       if (!Number.isFinite(price) || price <= 0) return refuse('no-positive-price', 'The line has no positive price.', { price: ti.price ?? null });
       if (!Number.isFinite(M) || M <= 0) return refuse('multiplier-not-stated', 'Schwab does not state the contract multiplier, so none is assumed.', { optionPremiumMultiplier: inst.optionPremiumMultiplier ?? null });
       if (Math.abs(Math.abs(toMicro(cost)) - toMicro(price) * M * qty) > 0.01 * MICRO) return refuse('multiplier-not-confirmed', `The cash on the line does not match price x ${M} x contracts, so the multiplier is not established.`, { cost, price, quantity: qty, multiplier: M });
+      // Every expirationDate in his ledger (587 of 587, checked 30 Sept 2026) is
+      // a full timestamp at New York midnight: "2026-06-09T04:00:00+0000" in
+      // summer, "2026-01-16T05:00:00+0000" in winter. That form is read
+      // strictly and converted to the New York calendar date. Any other form
+      // (a bare date included) is an exception with the raw value kept, never
+      // guessed at; supporting another form is a decision for the auditor.
       const expMs = parseInstant(inst.expirationDate);
-      if (expMs == null) return refuse('no-expiration', 'Schwab does not give a readable expiration date.', { expirationDate: inst.expirationDate ?? null });
+      if (expMs == null) return refuse('no-expiration', 'Schwab does not give an expiration date in the form this reads (a full timestamp, as every record in the ledger has).', { expirationDate: inst.expirationDate ?? null });
       // The contract symbol carries the date too (OCC: root, yymmdd, C/P,
       // strike). Two pieces of Schwab's own evidence must agree.
       const occ = /^.{1,6}?\s*(\d{2})(\d{2})(\d{2})([CP])\d{8}$/.exec(String(inst.symbol));
@@ -293,7 +311,7 @@ function normalize(records) {
       fills.push({
         fillId, recordId: rec.recordId, n, identityUncertain: rec.uncertain, accountRef: rec.accountRef,
         symbol: inst.symbol, underlying: inst.underlyingSymbol ?? null, putCall: inst.putCall,
-        expiration: expNy, instruction, effect, quantity: qty, price, multiplier: M,
+        expiration: expNy, expirationRaw: inst.expirationDate, instruction, effect, quantity: qty, price, multiplier: M,
         instantMs, instant: iso(instantMs), nyDate: ny.date, nyTime: ny.time,
         feeCents: feeShares[i], recordFeeCents: fees.itemisedCents,
         orderId: raw.orderId == null ? null : String(raw.orderId),          // information only (R1)
@@ -303,7 +321,7 @@ function normalize(records) {
     });
   }
   fills.sort(byOrder);
-  return { fills, notFills, flags };
+  return { fills, notFills, flags, optionRecordFees };
 }
 
 // ---- Pairing (B3-5, B3-6, B3-7) -------------------------------------------------------
@@ -419,7 +437,7 @@ function money(fills, paired, rule, asOfMs) {
 }
 
 // ---- Totals and conservation --------------------------------------------------------
-function totalsOf(fills, m) {
+function totalsOf(fills, m, notFills, optionRecordFees) {
   const sum = (xs, f) => xs.reduce((s, x) => s + f(x), 0);
   const known = m.trades.filter(t => t.feeCents != null);
   const opened = sum(fills.filter(f => f.effect === 'OPENING'), f => f.quantity);
@@ -427,8 +445,18 @@ function totalsOf(fills, m) {
   const paired = sum(m.trades, t => t.contracts);
   const lotLeft = sum(m.lots, l => l.contractsRemaining);
   const closeLeft = sum(m.closeLeft, c => c.contractsUnmatched);
+  // Fees, every cent accounted for (auditor A2):
+  //   original fee on every record with option lines
+  //     = shares on admitted fills + shares on option lines that became exceptions
+  //   shares on admitted fills
+  //     = trades' entry and exit shares + open lots' shares + unmatched closes' shares
+  const recordFeeCents = sum(optionRecordFees.filter(r => r.feeCents != null), r => r.feeCents);
   const fillFees = sum(fills.filter(f => f.feeCents != null), f => f.feeCents);
-  const pieceFees = sum(m.trades, t => (t.entryFeeCents || 0) + (t.exitFeeCents || 0)) + sum(m.lots, l => l.feeShareCents || 0) + sum(m.closeLeft, c => c.feeShareCents || 0);
+  const exceptionLineFees = sum(notFills.filter(x => x.feeShareCents != null), x => x.feeShareCents);
+  const tradeFees = sum(m.trades, t => (t.entryFeeCents || 0) + (t.exitFeeCents || 0));
+  const lotFees = sum(m.lots, l => l.feeShareCents || 0);
+  const unmatchedFees = sum(m.closeLeft, c => c.feeShareCents || 0);
+  const pieceFees = tradeFees + lotFees + unmatchedFees;
   return {
     totals: {
       trades: m.trades.length, contracts: paired,
@@ -439,7 +467,17 @@ function totalsOf(fills, m) {
     conservation: {
       contractsOpened: opened, contractsClosed: closed, pairedContracts: paired, contractsStillInLots: lotLeft, closingContractsUnmatched: closeLeft,
       openingBalances: opened === paired + lotLeft, closingBalances: closed === paired + closeLeft,
-      feeCentsOnFills: fillFees, feeCentsDistributed: pieceFees, feesBalance: fillFees === pieceFees,
+      fees: {
+        optionRecords: optionRecordFees.length,
+        optionRecordsWithUnknownFee: optionRecordFees.filter(r => r.feeCents == null).length,
+        originalFeeCentsOnOptionRecords: recordFeeCents,
+        onAdmittedFillsCents: fillFees,
+        onExceptionOptionLinesCents: exceptionLineFees,
+        recordsReconcile: recordFeeCents === fillFees + exceptionLineFees,
+        distributed: { toTradesCents: tradeFees, toOpenLotsCents: lotFees, toUnmatchedClosesCents: unmatchedFees, totalCents: pieceFees },
+        fillsReconcile: fillFees === pieceFees,
+      },
+      feesBalance: recordFeeCents === fillFees + exceptionLineFees && fillFees === pieceFees,
     },
   };
 }
@@ -458,7 +496,7 @@ function rebuild(items, options = {}) {
 }
 
 function reconstruct(input, rule, asOf) {
-  const { fills, notFills, flags } = normalize(input.records);
+  const { fills, notFills, flags, optionRecordFees } = normalize(input.records);
   let asOfMs, asOfSource;
   if (asOf != null) {
     asOfMs = parseInstant(asOf);
@@ -471,10 +509,10 @@ function reconstruct(input, rule, asOf) {
   }
   const paired = pair(fills, rule);
   const m = asOfMs == null ? { trades: [], lots: [], closeLeft: [] } : money(fills, paired, rule, asOfMs);
-  const { totals, conservation } = totalsOf(fills, m);
+  const { totals, conservation } = totalsOf(fills, m, notFills, optionRecordFees);
   const accounts = [...new Set(input.records.map(r => r.accountRef))].sort();
   return {
-    rule, asOf: asOfMs == null ? null : iso(asOfMs), asOfSource, accounts,
+    rule, ruleStatus: RULE_STATUS[rule], asOf: asOfMs == null ? null : iso(asOfMs), asOfSource, accounts,
     fills: fills.map(f => { const o = Object.assign({}, f); delete o.instantMs; return o; }),
     trades: m.trades,
     openLots: m.lots,

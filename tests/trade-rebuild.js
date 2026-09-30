@@ -91,7 +91,7 @@ const withLedgerFee = e => { e.normalized.fees.normalizedFee = -e.raw.transferIt
   check('the dividend record is evidence only: no fill, no exception', rc.exceptions.notFills.length === 0 && rc.fills.every(f => f.symbol));
   check('nothing is left open or unmatched', rc.openLots.length === 0 && rc.exceptions.closeWithoutOpen.length === 0 && rc.exceptions.excessClose.length === 0);
   check('contracts balance: opened = paired + still in lots; closed = paired + unmatched', rc.conservation.openingBalances && rc.conservation.closingBalances && rc.conservation.pairedContracts === 5, rc.conservation);   // 1 + 3 + 1
-  check('fees balance to the cent: every cent on a fill lands on a trade or a remainder', rc.conservation.feesBalance && rc.conservation.feeCentsOnFills === 66 * 7 + 200, rc.conservation);   // seven 66c fills and one $2.00
+  check('fees balance to the cent: every cent on a fill lands on a trade or a remainder', rc.conservation.feesBalance && rc.conservation.fees.onAdmittedFillsCents === 66 * 7 + 200 && rc.conservation.fees.originalFeeCentsOnOptionRecords === 66 * 7 + 200, rc.conservation);   // seven 66c fills and one $2.00
 
   const first = rc.trades.find(t => t.entryPrice === 1.11);
   check('B3-9 gross = (1.22 - 1.11) x 100 x 1 = $11.00', first.grossCents === 1100, first);
@@ -282,6 +282,59 @@ const withLedgerFee = e => { e.normalized.fees.normalizedFee = -e.raw.transferIt
   const b2 = R.rebuildBoth([entry(old), entry(late)]);
   check('B3-5 the current rule\'s 45-day limit is modelled: FIFO closes a 49-day-old lot, the current rule reports close-without-open and keeps the lot', b2.fifo.trades.length === 1 && b2.current.trades.length === 0 && b2.current.exceptions.closeWithoutOpen.length === 1 && b2.current.exceptions.stillOpen.length === 1, { f: b2.fifo.trades.length, c: b2.current.exceptions });
   check('an unknown rule name is refused, not guessed', (() => { try { R.rebuild(ledgerA, { rule: 'lifo' }); return false; } catch (e) { return /Unknown pairing rule/.test(e.message); } })());
+
+  // ---- Auditor re-review, 30 Sept 2026 (findings A1-A5) -------------------------------------
+  // A1: the fallback fill id, exactly as the acceptance test states it.
+  const noAct2 = trade({ id: null, at: '2026-06-06T14:00:00+0000', buy: true, price: 1, orderId: 778 });
+  const ua = R.rebuild([entry(ledgerA[0].raw), { raw: noAct2 }]).reconstruction.fills.find(f => f.identityUncertain);
+  const ub = R.rebuild(shuffle([{ raw: noAct2 }, entry(ledgerA[0].raw), { raw: JSON.parse(J(noAct2)) }], 5)).reconstruction.fills.find(f => f.identityUncertain);
+  check('A1 no activityId: the fill id starts "F:U-", then 32 hex of the fingerprint, then ":n"', ua.fillId.startsWith('F:U-') && ua.fillId === 'F:U-' + R.fingerprint(noAct2).slice(0, 32) + ':1' && ua.recordId === 'U-' + R.fingerprint(noAct2).slice(0, 32), ua);
+  check('A1 ...marked uncertain, and the same in any order and with duplicate copies', ua.identityUncertain === true && ub.fillId === ua.fillId);
+
+  // A2: one record, one admitted option line and one exception option line, and a fee.
+  const mixed = trade({ at: '2026-06-01T13:31:00+0000', buy: true, price: 1.00, fees: [1.00, null] });
+  mixed.transferItems.splice(1, 0, Object.assign(JSON.parse(J(mixed.transferItems[0])), { instrument: opt(PUT, 'PUT'), positionEffect: 'AUTOMATIC', price: 3.00, cost: -300 }));
+  mixed.netAmount = -401;
+  let mr = R.rebuild([entry(mixed)]).reconstruction;
+  const mf2 = mr.conservation.fees;
+  check('A2 the exception line keeps its fee share as evidence (75c of $1.00 by gross 100:300)', mr.exceptions.notFills.length === 1 && mr.exceptions.notFills[0].feeShareCents === 75 && mr.fills[0].feeCents === 25, { nf: mr.exceptions.notFills, f: mr.fills.map(f => f.feeCents) });
+  check('A2 every cent is accounted for: record fee 100 = admitted 25 + exception line 75; admitted 25 = still-open lot 25', mf2.originalFeeCentsOnOptionRecords === 100 && mf2.onAdmittedFillsCents === 25 && mf2.onExceptionOptionLinesCents === 75 && mf2.distributed.toOpenLotsCents === 25 && mf2.recordsReconcile && mf2.fillsReconcile && mr.conservation.feesBalance, mf2);
+  const onlyEx = trade({ at: '2026-06-01T13:31:00+0000', buy: true, price: 1.00, recExtra: { type: 'RECEIVE_AND_DELIVER' } });
+  mr = R.rebuild([entry(onlyEx), ...ledgerA]).reconstruction;
+  check('A2 a record whose only option line is an exception: its whole fee is still in the reconciliation', mr.conservation.fees.onExceptionOptionLinesCents === 66 && mr.conservation.fees.originalFeeCentsOnOptionRecords === 66 * 8 + 200 && mr.conservation.feesBalance, mr.conservation.fees);
+  const unknownFee = trade({ at: '2026-06-01T13:31:00+0000', buy: true, price: 1.00, fees: null });
+  mr = R.rebuild([entry(unknownFee)]).reconstruction;
+  check('A2 a record with an unknown fee is counted as unknown, not as 0 cents reconciled', mr.conservation.fees.optionRecordsWithUnknownFee === 1 && mr.conservation.fees.originalFeeCentsOnOptionRecords === 0 && mr.fills[0].feeCents === null);
+
+  // A4: the exact expirationDate form in his ledger (587 of 587): a full
+  // timestamp at New York midnight -- 04:00 UTC in summer, 05:00 in winter.
+  const expCase = (symbol, expirationDate, at) => R.rebuild([entry(trade({ at, buy: true, price: 1, symbol, instExtra: { expirationDate } }))]).reconstruction;
+  const realForms = [
+    ['SPY   260609C00740000', '2026-06-09T04:00:00+0000', '2026-06-08T14:00:00+0000', '2026-06-09'],   // summer
+    ['SPY   260116C00600000', '2026-01-16T05:00:00+0000', '2026-01-15T15:00:00+0000', '2026-01-16'],   // winter
+    ['SPY   260306C00680000', '2026-03-06T05:00:00+0000', '2026-03-05T15:00:00+0000', '2026-03-06'],   // before the March clock change
+    ['SPY   260313C00680000', '2026-03-13T04:00:00+0000', '2026-03-12T14:00:00+0000', '2026-03-13'],   // after it
+    ['SPY   251031C00680000', '2025-10-31T04:00:00+0000', '2025-10-30T14:00:00+0000', '2025-10-31'],   // before the November change
+    ['SPY   251107C00680000', '2025-11-07T05:00:00+0000', '2025-11-06T15:00:00+0000', '2025-11-07'],   // after it
+  ];
+  const got = realForms.map(([sym, e, at]) => { const r = expCase(sym, e, at); return r.fills[0] ? [r.fills[0].expiration, r.fills[0].expirationRaw] : ['EXCEPTION', r.exceptions.notFills[0] && r.exceptions.notFills[0].code]; });
+  check('A4 the real form, summer and winter and both clock changes, becomes a fill with the right New York expiration date', J(got.map(g => g[0])) === J(realForms.map(f => f[3])), got);
+  check('A4 ...and the original raw value is preserved on the fill', J(got.map(g => g[1])) === J(realForms.map(f => f[1])));
+  const exOf = (e, sym) => { const r = expCase(sym || CALL, e, '2026-06-08T14:00:00+0000'); return r.fills.length ? 'FILL' : r.exceptions.notFills[0].code + ' / ' + J(r.exceptions.notFills[0].evidence); };
+  check('A4 a bare date (a form his ledger does not use) is an exception with its raw value kept, not guessed at', exOf('2026-06-09') === 'no-expiration / {"expirationDate":"2026-06-09"}', exOf('2026-06-09'));
+  check('A4 malformed values stay exceptions', ['2026-06-09T04:00', '2026-6-9T04:00:00+0000', '2026-06-31T04:00:00+0000', 'June 9', '', null].every(e => exOf(e).startsWith('no-expiration')), ['2026-06-09T04:00', '2026-06-31T04:00:00+0000'].map(e => exOf(e)));
+  check('A4 a winter date written at the summer hour lands on the previous New York day and is caught against the symbol', exOf('2026-01-16T04:00:00+0000', 'SPY   260116C00600000').startsWith('expiration-evidence-disagrees'), exOf('2026-01-16T04:00:00+0000', 'SPY   260116C00600000'));
+
+  // A3 / A5: the two rules stay labelled as what they are, and separate.
+  const lab = R.rebuildBoth(ledgerA);
+  check('A3 current-rule-v1 is labelled a comparison model of matcher.js, never a production rule', /comparison model of matcher\.js/.test(lab.current.ruleStatus) && /never a production rule/.test(lab.current.ruleStatus));
+  check('A3 fifo-v1 is labelled a candidate, not approved (B3-5 open)', /not approved/.test(lab.fifo.ruleStatus) && /B3-5 is open/.test(lab.fifo.ruleStatus));
+  const expDay = trade({ at: '2026-06-09T23:30:00+0000', buy: false, price: 0.05 });      // 19:30 New York on expiration day, 23:30 UTC
+  const expBuy = trade({ at: '2026-06-09T14:00:00+0000', buy: true, price: 1.00 });
+  const expBoth = R.rebuildBoth([entry(expBuy), entry(expDay)]);
+  const expAfter = trade({ at: '2026-06-10T00:30:00+0000', buy: false, price: 0.05 });   // 20:30 New York, still expiration day; next day in UTC
+  const expBoth2 = R.rebuildBoth([entry(expBuy), entry(expAfter)]);
+  check('A5 the two expiry tests stay distinct: 20:30 New York on expiration day closes under fifo-v1 (New York date) but not under current-rule-v1 (23:59:59 UTC)', expBoth.fifo.trades.length === 1 && expBoth.current.trades.length === 1 && expBoth2.fifo.trades.length === 1 && expBoth2.current.trades.length === 0, [expBoth2.fifo.trades.length, expBoth2.current.trades.length]);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
