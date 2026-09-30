@@ -26,23 +26,10 @@ jobs:
       - name: Check every file still parses
         run: for f in *.js; do node --check "$f"; done
       - run: npm install --no-audit --no-fund
-      - name: Check Alpaca still works on a freshly restarted server
-        run: node tests/alpaca-cold-start.js
-      - name: Check nothing can build up an unbounded amount of memory
-        run: node tests/memory-limits.js
-      - name: Check timeframe direction uses nothing from after the trade
-        run: node tests/ftfc-truth.js
-      - name: Check rebuilding the journal does not eat the memory
-        run: node tests/rebuild-memory.js
-      - name: Check the phone never waits on the AI
-        run: node tests/classify-queue.js
-      - name: Check his own notation and the formation reading
-        run: node tests/notation-broadening.js
-      - name: Check a play is handed over as a play, not as a candle shape
-        run: node tests/plays-are-not-patterns.js
-      - name: Check collecting the waiting trades stays light
-        run: node tests/queue-weight.js
-      - name: Check a picture that matches nothing is not downloaded again and again
-        run: node tests/picture-weight.js
-      - name: Check every private route needs the app key, and the rest of the security repair
-        run: node tests/private-doors-are-locked.js
+      # Every check in tests/, not a hand-picked list: twelve were named here
+      # one by one and the other fifteen could break with nothing noticing.
+      # The runner fails on a FAIL line or a stall as well as on a bad
+      # ending, because the crash guard can let a half-finished check end
+      # as a success.
+      - name: Run every check
+        run: node tests/run-all.js
