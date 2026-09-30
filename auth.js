@@ -2,6 +2,24 @@ const express = require('express');
 const { wrap } = require('./asyncRoute');
 const axios = require('axios');
 const { saveTokens, getTokens, saveTokenFields } = require('./tokenStore');
+const crypto = require('crypto');
+const { keyOk } = require('./appKey');
+
+// Storage for the one-time "state" value that ties a Schwab sign-in back to
+// a sign-in THIS server started. Created on first use so loading this file
+// needs no database.
+let stateStore = null;
+function oauthStates() {
+  if (stateStore) return stateStore;
+  const { Redis } = require('@upstash/redis');
+  stateStore = new Redis({
+    url: process.env.UPSTASH_REDIS_REST_URL,
+    token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  });
+  return stateStore;
+}
+const STATE_PREFIX = 'oauth:state:';
+const STATE_LIFE_SECONDS = 15 * 60;
 
 const router = express.Router();
 
@@ -12,7 +30,10 @@ const router = express.Router();
 // yet), which means "up to date, no new trades" can print even when
 // Schwab was never connected at all. This gives a direct way to tell
 // those two situations apart without digging through server logs.
+// Needs the app key: it says whether his Schwab account is connected and
+// when the sign-in runs out -- nobody else's business.
 router.get('/status', wrap(async (req, res) => {
+  if (!keyOk(req)) return res.status(403).send('Forbidden');
   try {
     const store = await getTokens();
     // "Connected" has meant two different things: the app can reach this
@@ -61,22 +82,55 @@ const AUTH_BASE = 'https://api.schwabapi.com/v1/oauth';
 
 // Step 1: send the user to Schwab to approve access.
 // Visit this route once in a browser logged into your Schwab account.
-router.get('/schwab/login', (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+// Opened as a PAGE (a link), which cannot carry a header -- so this is the
+// one route that will always read the key from the address, even after the
+// old way is switched off everywhere else.
+//
+// It now also creates a one-time "state" value, remembered for fifteen
+// minutes, and sends it to Schwab. Schwab hands it back to the callback
+// below, which accepts only a value this server issued. Without it, a sign-in
+// started by someone else could be completed on this server.
+router.get('/schwab/login', wrap(async (req, res) => {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
+  }
+  const state = crypto.randomBytes(24).toString('hex');
+  try {
+    await oauthStates().set(STATE_PREFIX + state, '1', { ex: STATE_LIFE_SECONDS });
+  } catch (err) {
+    console.error('Could not start Schwab sign-in (state not saved):', err.message);
+    return res.status(503).send('Could not start the Schwab sign-in because the server could not save its sign-in check. Nothing was changed. Try again in a minute.');
   }
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: process.env.SCHWAB_CLIENT_ID,
     redirect_uri: process.env.SCHWAB_REDIRECT_URI,
+    state,
   });
   res.redirect(`${AUTH_BASE}/authorize?${params.toString()}`);
-});
+}));
 
 // Step 2: Schwab redirects back here with a one-time code.
 router.get('/schwab/callback', wrap(async (req, res) => {
-  const { code } = req.query;
+  const { code, state } = req.query;
   if (!code) return res.status(400).send('Missing authorization code');
+
+  // Only a sign-in THIS server started, and each one only once. Each way of
+  // failing says which it was.
+  if (!state) {
+    return res.status(400).send('This Schwab sign-in did not come back with its check value, so it was refused. Nothing was changed. Go back to the Strat Journal app and tap Reconnect to Schwab to start again.');
+  }
+  let known;
+  try {
+    known = await oauthStates().get(STATE_PREFIX + state);
+    if (known) await oauthStates().del(STATE_PREFIX + state);
+  } catch (err) {
+    console.error('Could not check the Schwab sign-in state:', err.message);
+    return res.status(503).send('The server could not check this sign-in, so it was refused. Nothing was changed. Try Reconnect to Schwab again in a minute.');
+  }
+  if (!known) {
+    return res.status(400).send('This Schwab sign-in link has expired (they last 15 minutes) or was not started from your journal, so it was refused. Nothing was changed. Go back to the Strat Journal app and tap Reconnect to Schwab to start again.');
+  }
 
   try {
     const basicAuth = Buffer.from(
@@ -176,11 +230,20 @@ async function noteRefreshOutcome(ok, why) {
   }
 }
 
+// One renewal at a time. The five-minute sync, the live Schwab stream and a
+// button on the phone can all find the sign-in expired at the same moment;
+// each used to renew it separately, and whichever finished last overwrote the
+// others. Now a second caller waits for the renewal already under way and
+// uses its answer.
+let refreshing = null;
 async function getValidAccessToken() {
   const store = await getTokens();
   if (!store.access_token) throw new Error('Not connected — run /auth/schwab/login first.');
   if (Date.now() > (store.expires_at || 0)) {
-    const refreshed = await refreshAccessToken();
+    if (!refreshing) {
+      refreshing = refreshAccessToken().finally(() => { refreshing = null; });
+    }
+    const refreshed = await refreshing;
     return refreshed.access_token;
   }
   return store.access_token;
