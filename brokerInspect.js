@@ -22,10 +22,13 @@ const { extractOptionFills } = require('./schwabClient');
 
 const TRADER_BASE = 'https://api.schwabapi.com/trader/v1';
 const WINDOW_DAYS = 30;
-const MAX_LOOKBACK_DAYS = 3 * 365;   // probe up to three years back
-const STOP_AFTER_REFUSED = 6;        // consecutive refused windows = past the limit
+const DEFAULT_LOOKBACK_DAYS = 3 * 365;  // how far back unless asked for more
+const MAX_ALLOWED_LOOKBACK_DAYS = 10 * 365;
+const STOP_AFTER_REFUSED = 6;        // consecutive REFUSED windows = past the limit.
+                                     // An EMPTY window never stops the walk: an empty
+                                     // period is not proof history ends there (auditor, Q5).
 const MAX_RECORDS = 20000;           // a ceiling on what is held in memory
-const PAUSE_MS = 250;                // gentle on Schwab's request allowance
+const PAUSE_MS = 600;                // under Schwab's documented 120 requests a minute
 
 // Every transaction kind Schwab documents for this endpoint.
 const ALL_TYPES = [
@@ -127,11 +130,13 @@ async function inspectBrokerHistory(options = {}) {
   let typesParam = ALL_TYPES.join(',');
   let refusedInARow = 0;
   let end = now.getTime();
-  const floor = end - MAX_LOOKBACK_DAYS * 86400000;
+  const lookbackDays = Math.min(Math.max(Number(options.lookbackDays) || DEFAULT_LOOKBACK_DAYS, 30), MAX_ALLOWED_LOOKBACK_DAYS);
+  const floor = end - lookbackDays * 86400000;
   let truncated = false;
   while (end > floor) {
     const start = Math.max(end - WINDOW_DAYS * 86400000, floor);
-    const w = { from: new Date(start).toISOString().slice(0, 10), to: new Date(end).toISOString().slice(0, 10) };
+    const w = { from: new Date(start).toISOString().slice(0, 10), to: new Date(end).toISOString().slice(0, 10),
+                fromIso: new Date(start).toISOString(), toIso: new Date(end).toISOString() };
     try {
       let raw;
       try {
@@ -174,8 +179,54 @@ async function inspectBrokerHistory(options = {}) {
     lookbackDaysProbed: Math.round((now.getTime() - end) / 86400000),
     stoppedBecause: truncated ? `held-record ceiling of ${MAX_RECORDS} reached`
       : refusedInARow >= STOP_AFTER_REFUSED ? `${STOP_AFTER_REFUSED} windows in a row refused (treated as the end of what Schwab serves)`
-      : `reached the ${MAX_LOOKBACK_DAYS}-day probe limit`,
+      : `reached the ${lookbackDays}-day probe limit asked for, with no refusal`,
   };
+
+  // ---- Is any single answer capped? --------------------------------------
+  // Re-ask the busiest window as two halves. If the halves between them hold
+  // a record the answer they came from did not, that answer was cut short.
+  // If one half comes back holding EVERYTHING the whole held, a cap at that
+  // number cannot be ruled out yet -- so narrow into that half and ask
+  // again, up to five times, and say "inconclusive" plainly if it never
+  // separates. Stopping at the first split would call a clustered, capped
+  // answer "no sign of a cap" (found by this project's own check).
+  const okWindows = report.windows.filter(w => w.status === 'ok');
+  const busiest = okWindows.slice().sort((a, b) => (b.records || 0) - (a.records || 0))[0];
+  report.capCheck = { done: false };
+  if (busiest && busiest.records > 0) {
+    try {
+      const idsOf = list => new Set((Array.isArray(list) ? list : []).map(t => String(t.activityId)));
+      let lo = Date.parse(busiest.fromIso), hi = Date.parse(busiest.toIso);
+      let prevIds = new Set(records.filter(x => x.window === busiest.from).map(x => String(x.t.activityId)));
+      let prevCount = busiest.records;
+      const levels = [];
+      let verdict = null;
+      for (let level = 0; level < 5 && !verdict; level++) {
+        const mid = Math.floor((lo + hi) / 2);
+        if (PAUSE_MS && !options.noPause) await sleep(PAUSE_MS);
+        const a = await get(`/accounts/${account}/transactions`, { startDate: new Date(lo).toISOString(), endDate: new Date(mid).toISOString(), types: typesParam });
+        if (PAUSE_MS && !options.noPause) await sleep(PAUSE_MS);
+        const b = await get(`/accounts/${account}/transactions`, { startDate: new Date(mid).toISOString(), endDate: new Date(hi).toISOString(), types: typesParam });
+        const na = Array.isArray(a) ? a.length : 0, nb = Array.isArray(b) ? b.length : 0;
+        const union = new Set([...idsOf(a), ...idsOf(b)]);
+        const missing = [...union].filter(id => !prevIds.has(id)).length;
+        levels.push({ from: new Date(lo).toISOString().slice(0, 16), to: new Date(hi).toISOString().slice(0, 16), answered: prevCount, firstHalf: na, secondHalf: nb, foundThatTheAnswerMissed: missing });
+        if (missing) verdict = 'CAPPED: a narrower request found records the wider answer left out';
+        else if (na < prevCount && nb < prevCount) verdict = 'no sign of a cap: each half held fewer than the whole, and together nothing the whole had missed';
+        else {
+          const aFull = na >= prevCount;
+          if (aFull) { hi = mid; prevIds = idsOf(a); prevCount = na; } else { lo = mid; prevIds = idsOf(b); prevCount = nb; }
+        }
+      }
+      report.capCheck = {
+        done: true, window: busiest.from + ' to ' + busiest.to, wholeWindowRecords: busiest.records, levels,
+        recordsInHalvesMissingFromWhole: levels.reduce((n, l) => n + l.foundThatTheAnswerMissed, 0),
+        verdict: verdict || 'INCONCLUSIVE: after five narrowings one part still held everything, so a cap at that size cannot be ruled out',
+      };
+    } catch (e) {
+      report.capCheck = { done: false, why: 'the narrower re-ask was refused: ' + whyFailed(e) };
+    }
+  }
 
   // ---- Describe what came back -------------------------------------------
   const byId = new Map();
@@ -185,6 +236,10 @@ async function inspectBrokerHistory(options = {}) {
   let minDate = null, maxDate = null;
   const unsafe = [];
   const exampleShape = {};
+  const r2 = x => Math.round(x * 100) / 100;
+  const decimals = x => { const m = String(x).split('.')[1]; return m ? m.length : 0; };
+  const feeCompare = { compared: 0, agree: 0, disagree: 0, cashUnknown: 0, itemisedTotal: 0, cashTotal: 0,
+                       rebateLines: 0, records: [] };
   for (const { t, window } of records) {
     const size = Buffer.byteLength(canonical(t));
     bytes += size;
@@ -221,6 +276,36 @@ async function inspectBrokerHistory(options = {}) {
       if (gross && Number.isFinite(net) && net > 0 && Math.abs(net - gross) <= gross * 0.2) cashFeeTotal += Math.abs(net - gross);
       else feeUnknown++;
       itemisedFeeTotal += (t.transferItems || []).filter(ti => ti.feeType).reduce((s, ti) => s + Math.abs(ti.cost ?? ti.amount ?? 0), 0);
+      // ---- Fee, record by record (auditor Q2): itemised lines vs the cash --
+      const feeLines = (t.transferItems || []).filter(ti => ti.feeType);
+      const itemisedAbs = r2(feeLines.reduce((s2, ti) => s2 + Math.abs(ti.cost ?? ti.amount ?? 0), 0));
+      const itemisedSigned = r2(feeLines.reduce((s2, ti) => s2 + (ti.cost ?? ti.amount ?? 0), 0));
+      const rebates = feeLines.filter(ti => (ti.cost ?? ti.amount ?? 0) > 0);
+      feeCompare.rebateLines += rebates.length;
+      const netOk = Number.isFinite(Math.abs(t.netAmount ?? NaN)) && t.netAmount != null;
+      const cashFee = gross && netOk ? r2(Math.abs(Math.abs(t.netAmount) - gross)) : null;
+      feeCompare.compared++;
+      if (cashFee == null) feeCompare.cashUnknown++;
+      else { feeCompare.itemisedTotal += itemisedAbs; feeCompare.cashTotal += cashFee; }
+      const diff = cashFee == null ? null : r2(cashFee - itemisedAbs);
+      if (cashFee != null && Math.abs(diff) < 0.005) feeCompare.agree++;
+      else {
+        feeCompare.disagree++;
+        const hints = [];
+        if (cashFee == null) hints.push(!gross ? 'no contract value to subtract (price or quantity is zero)' : 'Schwab gave no netAmount');
+        if (rebates.length) hints.push(`${rebates.length} fee line(s) are CREDITS (positive), which the itemised sum counts as charges`);
+        if (cashFee != null && gross && Math.abs(Math.abs(t.netAmount) - gross) > gross * 0.2) hints.push("cash gap is over a fifth of the trade -- the service's converter refuses it as a fee");
+        if (diff != null) for (const ti of feeLines) if (Math.abs(Math.abs(diff) - Math.abs(ti.cost ?? ti.amount ?? 0)) < 0.005) { hints.push(`the difference equals the ${ti.feeType} line`); break; }
+        if (traded.some(ti => decimals(ti.price) > 2)) hints.push('a price has more than 2 decimal places, so price x 100 x quantity is not a whole number of cents');
+        if (feeCompare.records.length < 300) feeCompare.records.push({
+          activityId: t.activityId ?? null, date: d, kind: t.type || null,
+          contracts: traded.reduce((s2, ti) => s2 + Math.abs(ti.amount || 0), 0),
+          priceDecimals: Math.max(0, ...traded.map(ti => decimals(ti.price))),
+          itemisedFee: itemisedAbs, itemisedSigned, cashDerivedFee: cashFee, difference: diff,
+          feeLines: feeLines.map(ti => ({ type: ti.feeType, cost: ti.cost ?? ti.amount ?? null })),
+          observations: hints,
+        });
+      }
       const why = unsafeReasons(t);
       if (why.length) unsafe.push({ activityId: t.activityId ?? null, date: d, kind: t.type || null, reasons: why });
     } else nonOptionRecords++;
@@ -229,6 +314,7 @@ async function inspectBrokerHistory(options = {}) {
   const conflicting = dupIds.filter(([, e]) => e.fps.size > 1);
   const perRecordOverhead = 64 /* fingerprint */ + 120 /* key, first-seen time, source, identity */;
 
+  for (const w of report.windows) { delete w.fromIso; delete w.toIso; }
   report.ok = true;
   report.totals = {
     records: records.length,
@@ -237,6 +323,9 @@ async function inspectBrokerHistory(options = {}) {
     windowsOk: report.windows.filter(w => w.status === 'ok').length,
     windowsRefused: report.windows.filter(w => w.status === 'refused').length,
     oldestWindowWithRecords: (report.windows.filter(w => w.status === 'ok' && w.records > 0).pop() || {}).from || null,
+    oldestDateSuccessfullyQueried: (report.windows.filter(w => w.status === 'ok').pop() || {}).from || null,
+    firstRefusedWindow: (report.windows.find(w => w.status === 'refused') || null),
+    largestSingleAnswer: Math.max(0, ...report.windows.map(w => w.records || 0)),
     kinds, statuses,
     optionRecords, nonOptionRecords,
     lineAssetTypes: assetTypes,
@@ -257,6 +346,11 @@ async function inspectBrokerHistory(options = {}) {
       optionRecordsWhereCashFeeUnknown: feeUnknown,
       itemisedLinesByFeeType: feeTypes,
     },
+    feeByRecord: Object.assign({}, feeCompare, {
+      itemisedTotal: r2(feeCompare.itemisedTotal), cashTotal: r2(feeCompare.cashTotal),
+      note: 'Compared on option records only, and the two totals over the SAME records (those where the cash fee is known). itemisedFee = sum of Schwab fee lines as charges; cashDerivedFee = | |netAmount| - price x 100 x quantity |, with no plausibility guard. Observations are mechanical facts about the record, not conclusions.',
+      listTruncated: feeCompare.disagree > 300,
+    }),
     cannotSafelyBecomeFills: { count: unsafe.length, records: unsafe.slice(0, 200), listTruncated: unsafe.length > 200 },
     storageEstimate: {
       rawBytesAllRecords: bytes,
@@ -285,4 +379,4 @@ function inspectOnce(options) {
   return running;
 }
 
-module.exports = { inspectBrokerHistory, inspectOnce, unsafeReasons, fingerprint, canonical, ALL_TYPES };
+module.exports = { inspectBrokerHistory, inspectOnce, unsafeReasons, fingerprint, canonical, ALL_TYPES, MAX_ALLOWED_LOOKBACK_DAYS };

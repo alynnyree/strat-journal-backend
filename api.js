@@ -428,7 +428,9 @@ router.get('/backup/export', wrap(async (req, res) => {
 router.get('/broker/inspect', wrap(async (req, res) => {
   const { inspectOnce } = require('./brokerInspect');
   let report;
-  try { report = await inspectOnce(); }
+  // ?years=N probes further back (1 to 10; default 3). Still read-only.
+  const years = Math.min(Math.max(parseInt(req.query.years, 10) || 3, 1), 10);
+  try { report = await inspectOnce({ lookbackDays: years * 365 }); }
   catch (e) { report = { readOnly: true, ok: false, reason: 'The inspection itself failed: ' + ((e && e.message) || String(e)).slice(0, 200) }; }
   res.set('Cache-Control', 'no-store');
   res.json(report);
