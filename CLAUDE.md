@@ -20,35 +20,50 @@ Status on 30 Sept 2026:
   24242754): no deletion, no force-push, changes only through a pull
   request, its check green (app: `app-checks`, service: `guard-check`),
   0 approvals. The auditor approved this arrangement (C1).
-- Blocker 2: AUTHORIZED by the owner on 30 Sept 2026, after the auditor
-  closed the read-only inspection (Blocker 2A), and COMPLETED the same
-  day. Built in the service (pull requests #79 and #80): the immutable
-  broker ledger (`brokerLedger.js`, entries under `ledger:schwab:`) and
-  its independent archive in Cloudflare storage (`ledgerArchive.js`,
-  folder `broker-ledger-archive/v1/`). Verified live: 691 Schwab records,
-  0 revisions, 691 archive record files, a second import added nothing,
-  every fingerprint matches, nothing pre-existing changed. Report:
-  "Blocker2_Completion_Report_2026-09-30".
-  The auditor's ruling on it: CONDITIONAL PASS, on two conditions --
-  (1) choose the Schwab account by an explicit, deterministic rule instead
-  of the first one Schwab lists (`ledgerAccount.js`: the ledger is tied to
-  one account, a server setting `SCHWAB_LEDGER_ACCOUNT` may name one, and
-  otherwise only a single returned account is used; anything else is
-  refused), and (2) this note. Final closure is the auditor's to give.
-  Not part of Blocker 2, and NOT authorized: automatic recurring ledger
-  imports, a restore-from-archive tool, anything that pairs trades or
-  rebuilds positions from the ledger, matcher changes, journal migration.
-- **Blocker 3: NOT STARTED and NOT AUTHORIZED.** Its rules are locked by
-  the auditor (below); building them in needs the auditor's separate
-  review of Blocker 2 and the owner's authorization in words.
+- Blocker 2: CLOSED by the auditor (30 Sept 2026). Authorized by the
+  owner after the read-only inspection (Blocker 2A) and built in the
+  service (pull requests #79, #80): the immutable broker ledger
+  (`brokerLedger.js`, entries under `ledger:schwab:`) and its independent
+  archive in Cloudflare storage (`ledgerArchive.js`, folder
+  `broker-ledger-archive/v1/`). Verified live: 691 Schwab records, 0
+  revisions, 691 archive record files, a second import added nothing,
+  every fingerprint matches. The auditor's two closing conditions were met
+  in #81: the Schwab account is chosen by an explicit rule
+  (`ledgerAccount.js`; the ledger is tied to one account, a server setting
+  `SCHWAB_LEDGER_ACCOUNT` may name one, otherwise only a single returned
+  account is used, anything else is refused), and this note.
+  NOT authorized: automatic recurring ledger imports, a restore tool.
+- Blocker 3A: CLOSED by the auditor (30 Sept 2026). PR #82 MERGED to the
+  service's main as 00341fb (content identical to the approved head
+  09e4671). It added exactly two files: `tradeRebuild.js`, a PURE
+  reconstruction (ledger records in -> fills, positions, trades,
+  exceptions out; loads only `crypto`, no storage, network, files, clock,
+  matcher or journal) and `tests/trade-rebuild.js` (82 checks, 10
+  deliberate faults caught). NOTHING in the service calls it, and nothing
+  may, until a later phase is authorized. Rules B3-1..B3-11 are locked
+  (the authoritative wording is the header of `tradeRebuild.js`); **B3-5,
+  the pairing rule, is OPEN**: `fifo-v1` is a candidate and
+  `current-rule-v1` is only a comparison model of `matcher.js` -- neither
+  may be chosen or used as the production rule. Reports:
+  "Blocker3A_Report", "Blocker3A_Corrections_Report",
+  "Blocker3A_Merge_Report".
+- **Blocker 3B: NOT AUTHORIZED and NOT STARTED.** It needs the owner's
+  separate authorization in words AND a fresh journal export taken
+  immediately before. When authorized it is a read-only dry run: rebuild
+  from the immutable ledger under BOTH rules, compare against the fresh
+  journal, report every discrepancy (pairings, missing/extra trades,
+  unmatched closes, open and past-expiry lots, fees, profit, what his own
+  entries would need), change nothing, choose no rule, then STOP for the
+  auditor.
 - Phase 0 and Phase 1A were carried out and are live, before this
   sequence was set. See "Auditor_Review_Pack_Phase1".
 - The 7 known failures stay as baseline until the phase that owns them
   (auditor, C2). No new known failure without the owner's authorization.
 
 **Rules locked by the auditor (30 Sept 2026). No code may contradict
-them once built. The broker ledger follows R1 and keeps the original fee
-untouched; the journal's sync and pairing do NOT yet follow R1 or R12:**
+them once built. The broker ledger and `tradeRebuild.js` follow R1 and
+R12; the LIVE journal sync and pairing (`schwabClient.js`, `matcher.js`)
+still do NOT:**
 - **R1** Schwab `activityId` is authoritative. `orderId` is NOT an
   acceptable fill/execution identity fallback (the service currently
   uses `activityId || orderId` -- to be removed). A missing activityId
@@ -75,7 +90,10 @@ untouched; the journal's sync and pairing do NOT yet follow R1 or R12:**
 - run the old reconciliation repair ("Put this right");
 - delete the 50 duplicate trades that came back on 30 Sept;
 - begin any live migration;
-- start Blocker 3, or build the trade engine;
+- start Blocker 3B, choose a pairing rule (B3-5), or build the trade
+  engine;
+- call `tradeRebuild.js` from anything live, or change it outside an
+  authorized step;
 - extend the broker ledger beyond what Blocker 2 authorized (no automatic
   imports, no restore tool, nothing that pairs or rebuilds from it);
 - merge ANY change to `main` without: his written authorization for that
