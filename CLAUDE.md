@@ -1,5 +1,65 @@
 # Strat Trading Journal — Project Context
 
+## FREEZE IN EFFECT (since 30 September 2026) -- read this before anything else
+
+An independent audit is running. The owner makes every decision; the
+auditor (ChatGPT) reviews; Claude implements only what the owner has
+authorized IN WORDS, naming the step. The same note is at the top of both
+projects (app and service).
+
+**The auditor's sequence, which nothing may skip or reorder:**
+Blocker 1 (freeze/protect the codebase) -> Blocker 2 (immutable
+broker-fill storage) -> Blocker 3 (lock the trade identity, pairing and
+user-data rules) -> Phase 0 safety -> Phase 1A security -> Phase 1B broker
+ledger -> trade engine -> synchronization -> reconciliation -> backtesting
+-> analytics -> frontend migration.
+
+Status on 30 Sept 2026:
+- Blocker 1: authorized (option a) and being done.
+- Blockers 2 and 3: approved by the auditor at the decision level --
+  2 with Redis PLUS an independent archive, 3 with corrections to R1 and
+  R12 and a new R19 -- but NOT authorized by the owner to build.
+- Phase 0 and Phase 1A were carried out and are live, before this
+  sequence was set. See "Auditor_Review_Pack_Phase1".
+
+**Until the owner authorizes otherwise, never:**
+- modify his production journal data (the phone's `strat_trades`, or the
+  service's stored trades) -- read-only copies and dry runs only;
+- run the old reconciliation repair ("Put this right");
+- delete the 50 duplicate trades that came back on 30 Sept;
+- begin any live migration;
+- start building the broker ledger or the trade engine;
+- merge ANY change to `main` without: his written authorization for that
+  step, the automatic checks green, and the auditor having seen the plan.
+
+**How the protection works (Blocker 1, option a):**
+- Every proposed change runs the automatic checks on GitHub -- the app's
+  syntax check and every browser check (`tests/ci/run-all.js`), and every
+  service check (`tests/run-all.js`). A check that fails blocks the change.
+- `main` is protected on GitHub: changes arrive only through a proposed
+  change (pull request) whose checks are green; no direct pushes, no
+  force-pushes, no deleting it.
+- Required REVIEWS are deliberately NOT switched on: every change is filed
+  under his one GitHub account and GitHub forbids approving your own
+  change, so a required review would block everything, including urgent
+  fixes. His written approval in the conversation is the review (his
+  choice, option a, 30 Sept 2026).
+- Known failures that predate the audit are listed in
+  `tests/ci/known-failures.json` (app only). Any failure not on it fails
+  the run; a listed one that starts passing also fails the run until it is
+  taken off. Adding to that list needs his written approval.
+
+**Recovery points** (exact copies that can be restored):
+- `recovery-2026-09-29-before-audit-repairs` -- app 7d04b32, service de6a520
+- `recovery-2026-09-30-after-phase1` -- app 29952e2, service 20275b3
+
+**Every data migration** first runs as a dry run that writes a log of
+exactly what it WOULD change; the owner and the auditor inspect that log
+before anything live changes, and a backup is taken immediately before.
+
+**Every step ends with a report file for the auditor** (owner's standing
+instruction).
+
 ## Who you're working with
 
 The owner is a discretionary options trader, **not a developer**. Assume no
