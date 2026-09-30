@@ -1,9 +1,13 @@
 const express = require('express');
+const { keyOk, requireAppKey } = require('./appKey');
 const { wrap } = require('./asyncRoute');
 const { Redis } = require('@upstash/redis');
 const { uploadVideo, getPlaybackUrl, isConfigured: isVideoStorageConfigured } = require('./videoStorage');
 
 const router = express.Router();
+// Every route in this file needs the app key (see appKey.js). Checked
+// here once, first, so a route added later cannot forget it.
+router.use(requireAppKey);
 
 // Uses the SDK's own documented fromEnv() helper, which reads
 // UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN — the standard names
@@ -88,7 +92,7 @@ const VIDEO_TTL_SECONDS = 30 * 24 * 60 * 60; // matches SCREENSHOT_TTL_SECONDS's
 // wrong, could never be reached by the single most likely mistake. It now
 // says what he called it and what it wanted.
 router.post('/upload', upload.any(), wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const files = req.files || [];
@@ -139,7 +143,7 @@ router.post('/upload', upload.any(), wrap(async (req, res) => {
 // each one against trades already in the Journal by how close its
 // timestamp is to an entry or exit time.
 router.get('/pending', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   // Bounded, and swept. Each picture expires on its own but its id was
@@ -201,7 +205,7 @@ router.get('/pending', wrap(async (req, res) => {
 // Answers with a REASON rather than an empty hand: a picture that has left
 // the queue and a picture that never had an image are different faults.
 router.get('/:id/image', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const raw = await redis.get(`screenshot:${req.params.id}`);
@@ -228,7 +232,7 @@ router.get('/:id/image', wrap(async (req, res) => {
 // Frontend calls this once it's successfully attached a screenshot to a
 // trade, so the same one isn't offered again on the next poll.
 router.delete('/:id', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const { id } = req.params;
@@ -247,7 +251,7 @@ router.delete('/:id', wrap(async (req, res) => {
 // URL: POST /media/upload-video?key=...&timestamp=<unix SECONDS, or an ISO 8601 date>
 // Form field: "video" (type File)
 router.post('/upload-video', uploadVideoMw.single('video'), wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   if (!isVideoStorageConfigured()) {
@@ -288,7 +292,7 @@ router.post('/upload-video', uploadVideoMw.single('video'), wrap(async (req, res
 // Frontend polls this the same way it polls /pending for screenshots, and
 // matches each one to a trade by timestamp.
 router.get('/pending-videos', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const ids = await redis.lrange(VIDEO_LIST_KEY, 0, MAX_PENDING - 1);
@@ -318,7 +322,7 @@ router.get('/pending-videos', wrap(async (req, res) => {
 // but under its own path since a video's pending id lives in a separate
 // Redis list from screenshots' ids.
 router.delete('/video/:id', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const { id } = req.params;
@@ -332,7 +336,7 @@ router.delete('/video/:id', wrap(async (req, res) => {
 // from its raw storage address without one of these. Expires on its own
 // (1 hour), so there's no standing public link sitting around forever.
 router.get('/video-url', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   if (!isVideoStorageConfigured()) {
@@ -362,7 +366,7 @@ function escapeAttr(str) {
 }
 
 router.get('/preview', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
 

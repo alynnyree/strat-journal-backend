@@ -1,4 +1,5 @@
 const express = require('express');
+const { keyOk, requireAppKey } = require('./appKey');
 const { wrap } = require('./asyncRoute');
 const axios = require('axios');
 const { getValidAccessToken } = require('./auth');
@@ -14,6 +15,9 @@ const { runTestTrade } = require('./testTrade');
 const { runReplayCheck } = require('./replayCheck');
 
 const router = express.Router();
+// Every route in this file needs the app key (see appKey.js). Checked
+// here once, first, so a route added later cannot forget it.
+router.use(requireAppKey);
 
 // Schwab Trader API base, per developer.schwab.com. Verify exact paths
 // (they're versioned and have changed before) against current docs.
@@ -239,7 +243,7 @@ router.post('/trade-data/enrich', wrap(async (req, res) => {
 // lastProcessedIds. The finished trade comes back in the answer marked as
 // a rehearsal and the app keeps it well away from his journal.
 router.post('/test-trade', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   // Required here rather than at the top: cron.js requires this file's
@@ -276,7 +280,7 @@ router.post('/test-trade', wrap(async (req, res) => {
 // scratch and handed back for the app to mark against what it has on
 // file. Nothing is stored -- this never touches his journal.
 router.post('/replay-trade', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const cron = require('./cron');
@@ -305,7 +309,7 @@ router.get('/alpaca/status', wrap(async (req, res) => {
 }));
 
 router.post('/alpaca/keys', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).json({ error: 'Wrong app key.' });
   }
   try {
@@ -321,7 +325,7 @@ router.post('/alpaca/keys', wrap(async (req, res) => {
 }));
 
 router.delete('/alpaca/keys', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).json({ error: 'Wrong app key.' });
   }
   try {
@@ -392,6 +396,30 @@ router.post('/stop-rule/compute', wrap(async (req, res) => {
     console.error('stop-rule compute error:', err.response?.data || err.message);
     res.status(500).json({ error: `Could not work out a stop: ${err.message}` });
   }
+}));
+
+// A READ-ONLY copy of everything the server stores, minus his Schwab sign-in
+// and Alpaca keys (see backupExport.js). Taken before any phase that changes
+// how the server stores things. It never writes; it is safe to call at any
+// time. Behind the app key like every route in this file.
+let backupRedis = null;
+router.get('/backup/export', wrap(async (req, res) => {
+  const { exportState } = require('./backupExport');
+  if (!backupRedis) {
+    if (!process.env.UPSTASH_REDIS_REST_URL) {
+      return res.status(503).json({ error: 'This server has no database set up, so there is nothing to copy.' });
+    }
+    const { Redis } = require('@upstash/redis');
+    backupRedis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+  }
+  const copy = await exportState(backupRedis);
+  const stamp = copy.exportedAt.replace(/[:.]/g, '-');
+  res.set('Cache-Control', 'no-store');
+  res.set('Content-Disposition', `attachment; filename="server-backup-${stamp}.json"`);
+  res.json(copy);
 }));
 
 module.exports = router;

@@ -44,3 +44,5 @@ jobs:
         run: node tests/queue-weight.js
       - name: Check a picture that matches nothing is not downloaded again and again
         run: node tests/picture-weight.js
+      - name: Check every private route needs the app key, and the rest of the security repair
+        run: node tests/private-doors-are-locked.js
