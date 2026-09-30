@@ -47,14 +47,37 @@ Status on 30 Sept 2026:
   may be chosen or used as the production rule. Reports:
   "Blocker3A_Report", "Blocker3A_Corrections_Report",
   "Blocker3A_Merge_Report".
-- **Blocker 3B: NOT AUTHORIZED and NOT STARTED.** It needs the owner's
-  separate authorization in words AND a fresh journal export taken
-  immediately before. When authorized it is a read-only dry run: rebuild
-  from the immutable ledger under BOTH rules, compare against the fresh
-  journal, report every discrepancy (pairings, missing/extra trades,
-  unmatched closes, open and past-expiry lots, fees, profit, what his own
-  entries would need), change nothing, choose no rule, then STOP for the
-  auditor.
+- Blocker 3B: CLOSED AS A READ-ONLY DRY RUN by the auditor (30 Sept
+  2026). Authorized by the owner with a fresh journal export; nothing was
+  written anywhere. Report: "Blocker3B_Report" and "Blocker3B_Details".
+  Proven: the ledger rebuilt under either rule reconciles to BOTH Schwab
+  files to the cent (4 May-23 Jul: 151 contracts, -$541.00 gross, $199.94
+  fees, -$740.94 net; 2 Jan-23 Jul: 306 contracts, $404.73, -$1,100.73),
+  once the two midnight-dated sales (D3) are counted. The journal does
+  not, for these proven reasons -- none of them may be repaired without a
+  separately authorized phase:
+  - D1 38 file-read trades double-count fills already in live trades
+    (journal 219 contracts vs Schwab 151 in that window).
+  - D2 the old shape-based duplicate check threw away 8 real 1-contract
+    trades that had identical-shape twins. Shape/price/time/size alone is
+    NEVER an identity; use durable fill ids.
+  - D3 3 option records have tradeDate at New York midnight while Schwab's
+    `time` holds the real moment; two are sales dated before their own
+    purchase. tradeDate stays authoritative (B3-2/B3-3); they stay
+    explicit exceptions until a later authorized rule change.
+  - D4 the old "Put this right" plan removed 6 genuine trades and kept
+    mispaired file copies: that is the historical $49 gap, reproduced
+    exactly. It is historical evidence only, never a repair algorithm.
+  - D5 the journal splits fee cents differently from R12's largest
+    remainder; fill totals agree. No fee rewrite now; R12 applies to any
+    future canonical data.
+  B3-5 remains OPEN: fifo-v1 and current-rule-v1 differ on 10 sales, with
+  identical money on every contract-day. The two NIO trades carrying his
+  chart drawings must be migrated non-destructively, never mapped by
+  contract count.
+  **Nothing further is authorized.** Any next implementation phase must
+  first be presented to the auditor with its exact scope, tests, dry-run
+  output and rollback plan, and needs the owner's authorization in words.
 - Phase 0 and Phase 1A were carried out and are live, before this
   sequence was set. See "Auditor_Review_Pack_Phase1".
 - The 7 known failures stay as baseline until the phase that owns them
@@ -90,8 +113,10 @@ still do NOT:**
 - run the old reconciliation repair ("Put this right");
 - delete the 50 duplicate trades that came back on 30 Sept;
 - begin any live migration;
-- start Blocker 3B, choose a pairing rule (B3-5), or build the trade
-  engine;
+- choose a pairing rule (B3-5), build the trade engine, or start any
+  phase after Blocker 3B without the auditor seeing its plan first;
+- substitute Schwab's `time` field for `tradeDate`, or identify a trade by
+  its shape (contract, minutes, prices, size) alone;
 - call `tradeRebuild.js` from anything live, or change it outside an
   authorized step;
 - extend the broker ledger beyond what Blocker 2 authorized (no automatic
