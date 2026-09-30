@@ -257,13 +257,14 @@ async function importLedger(options = {}) {
 
 // ---- Read-only: counts and integrity ----------------------------------------
 async function scanKeys(r, match) {
-  const keys = []; let cursor = 0, rounds = 0;
+  // The page marker is kept exactly as given (see backupExport.js allKeys).
+  const keys = []; let cursor = '0', rounds = 0;
   do {
     const [next, batch] = await r.scan(cursor, { match, count: 1000 });
     for (const k of batch || []) keys.push(k);
-    cursor = Number(next);
+    cursor = String(next);
     if (++rounds > 2000) throw new Error('listing ledger keys did not finish');
-  } while (cursor !== 0);
+  } while (cursor !== '0');
   return [...new Set(keys)];
 }
 

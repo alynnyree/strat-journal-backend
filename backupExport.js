@@ -31,14 +31,19 @@ function whyExcluded(key) {
 
 async function allKeys(redis) {
   const keys = [];
-  let cursor = 0;
+  // The page marker is kept EXACTLY as the database gave it. It was turned
+  // into a number, and Upstash's markers can be larger than a number holds
+  // exactly: the last digits changed, the next page was asked for at the
+  // wrong place, and the listing ended after the first 200 entries. Found on
+  // 30 Sept 2026, the first time the service held more than one page.
+  let cursor = '0';
   let rounds = 0;
   do {
     const [next, batch] = await redis.scan(cursor, { count: 200 });
     for (const k of batch || []) keys.push(k);
-    cursor = Number(next);
+    cursor = String(next);
     if (++rounds > 1000) throw new Error('Stopped listing keys after 1000 rounds -- the database did not finish answering.');
-  } while (cursor !== 0);
+  } while (cursor !== '0');
   return [...new Set(keys)].sort();
 }
 
