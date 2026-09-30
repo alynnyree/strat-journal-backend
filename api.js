@@ -1,4 +1,5 @@
 const express = require('express');
+const { keyOk, requireAppKey } = require('./appKey');
 const { wrap } = require('./asyncRoute');
 const axios = require('axios');
 const { getValidAccessToken } = require('./auth');
@@ -14,6 +15,9 @@ const { runTestTrade } = require('./testTrade');
 const { runReplayCheck } = require('./replayCheck');
 
 const router = express.Router();
+// Every route in this file needs the app key (see appKey.js). Checked
+// here once, first, so a route added later cannot forget it.
+router.use(requireAppKey);
 
 // Schwab Trader API base, per developer.schwab.com. Verify exact paths
 // (they're versioned and have changed before) against current docs.
@@ -239,7 +243,7 @@ router.post('/trade-data/enrich', wrap(async (req, res) => {
 // lastProcessedIds. The finished trade comes back in the answer marked as
 // a rehearsal and the app keeps it well away from his journal.
 router.post('/test-trade', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   // Required here rather than at the top: cron.js requires this file's
@@ -276,7 +280,7 @@ router.post('/test-trade', wrap(async (req, res) => {
 // scratch and handed back for the app to mark against what it has on
 // file. Nothing is stored -- this never touches his journal.
 router.post('/replay-trade', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const cron = require('./cron');
@@ -305,7 +309,7 @@ router.get('/alpaca/status', wrap(async (req, res) => {
 }));
 
 router.post('/alpaca/keys', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).json({ error: 'Wrong app key.' });
   }
   try {
@@ -321,7 +325,7 @@ router.post('/alpaca/keys', wrap(async (req, res) => {
 }));
 
 router.delete('/alpaca/keys', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).json({ error: 'Wrong app key.' });
   }
   try {

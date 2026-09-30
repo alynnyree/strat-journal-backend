@@ -1,8 +1,12 @@
 const express = require('express');
+const { keyOk, requireAppKey } = require('./appKey');
 const { wrap } = require('./asyncRoute');
 const { Redis } = require('@upstash/redis');
 
 const router = express.Router();
+// Every route in this file needs the app key (see appKey.js). Checked
+// here once, first, so a route added later cannot forget it.
+router.use(requireAppKey);
 const redis = Redis.fromEnv();
 
 // A lightweight queue of "a trade just opened / is still open / closed"
@@ -34,7 +38,7 @@ async function queueBrowserEvent(type, { ticker, dir, timestamp, test }) {
 // minute — Chrome's alarms API doesn't allow finer granularity). Mirrors
 // the shape of /media/pending.
 router.get('/events', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   // Bounded on purpose. Each record expires after 20 minutes but its id
@@ -67,7 +71,7 @@ router.get('/events', wrap(async (req, res) => {
 // Called by the extension once it's captured and uploaded a picture for an
 // event, so the same one isn't offered again on the next poll.
 router.delete('/events/:id', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const { id } = req.params;
@@ -103,7 +107,7 @@ async function queueTestTrade(now = Date.now()) {
 }
 
 router.post('/test-trade', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const queued = await queueTestTrade();

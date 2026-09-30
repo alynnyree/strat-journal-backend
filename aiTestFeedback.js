@@ -1,8 +1,12 @@
 const express = require('express');
+const { keyOk, requireAppKey } = require('./appKey');
 const { wrap } = require('./asyncRoute');
 const { Redis } = require('@upstash/redis');
 
 const router = express.Router();
+// Every route in this file needs the app key (see appKey.js). Checked
+// here once, first, so a route added later cannot forget it.
+router.use(requireAppKey);
 const redis = Redis.fromEnv();
 
 // A small log of "Test Classification" tool runs the owner has marked
@@ -30,7 +34,7 @@ const FULL_IMAGE_TTL_SECONDS = 90 * 24 * 60 * 60;
 const fullImageKey = id => `aiTestFeedback:img:${id}`;
 
 router.post('/test-classify-feedback', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const body = req.body || {};
@@ -91,7 +95,7 @@ router.post('/test-classify-feedback', wrap(async (req, res) => {
 }));
 
 router.get('/test-classify-feedback', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const ids = await redis.lrange(LIST_KEY, 0, -1);
@@ -116,7 +120,7 @@ router.get('/test-classify-feedback', wrap(async (req, res) => {
 // index, the record itself, and its full-size picture, so nothing is
 // left teaching from beyond the grave.
 router.delete('/test-classify-feedback/:id', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const { id } = req.params;

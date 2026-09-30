@@ -1,4 +1,5 @@
 const express = require('express');
+const { keyOk, requireAppKey } = require('./appKey');
 const { wrap } = require('./asyncRoute');
 const { runPortfolioAnalysis, classifyStrategy, testClassifyStrategy, interpretBacktest } = require('./aiClient');
 const { getFtfcForTrade } = require('./ftfcCheck');
@@ -7,10 +8,13 @@ const { getValidAccessToken } = require('./auth');
 const testFeedbackRouter = require('./aiTestFeedback');
 
 const router = express.Router();
+// Every route in this file needs the app key (see appKey.js). Checked
+// here once, first, so a route added later cannot forget it.
+router.use(requireAppKey);
 router.use(testFeedbackRouter);
 
 router.post('/analyze', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const trades = (req.body && req.body.trades) || [];
@@ -44,7 +48,7 @@ router.post('/analyze', wrap(async (req, res) => {
 // time; the app collects the answers from /classify/results on the
 // polling it already does.
 router.post('/classify', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const trade = req.body && req.body.trade;
@@ -64,7 +68,7 @@ router.post('/classify', wrap(async (req, res) => {
 // The answers worked out so far. Collecting them clears them, so the same
 // answer is never applied twice.
 router.get('/classify/results', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   try {
@@ -93,7 +97,7 @@ router.get('/classify/results', wrap(async (req, res) => {
 // confidence) rather than hiding it the way the real auto-tagging does,
 // since the whole point is to see what the AI actually thinks.
 router.post('/test-classify', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const body = req.body || {};
@@ -165,7 +169,7 @@ router.post('/test-classify', wrap(async (req, res) => {
 // real candles, the reading is the model's only job, and the model never
 // sees a request to produce a figure.
 router.post('/backtest', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const body = req.body || {};

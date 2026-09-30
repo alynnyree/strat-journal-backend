@@ -12,6 +12,8 @@ const http = require('http');
 const BACKEND = path.join(__dirname, '..');
 
 process.env.APP_SECRET = 'testkey';
+// Every route here needs the key since the Phase 1 security repair.
+const AUTH = { Authorization: 'Bearer testkey' };
 process.env.PORT = '8981';
 process.env.SYNC_CRON = '0 0 31 2 *';
 process.env.UPSTASH_REDIS_REST_URL = 'https://example.invalid';
@@ -36,11 +38,25 @@ Module._load = function (request) {
   return origLoad.apply(this, arguments);
 };
 
-require(path.join(BACKEND, 'server.js'));
+// server.js only starts listening when run for real (so tests can build the
+// real routes without starting the sync); start it here on the test port.
+require(path.join(BACKEND, 'server.js')).buildApp().listen(process.env.PORT);
+
+// The server's crash guard keeps a failed step from ending the process, so a
+// check that throws half-way would otherwise end quietly as a success.
+process.on('beforeExit', () => {
+  console.log('FAIL: this check ended before reaching its last step');
+  process.exit(1);
+});
+// ...and one that stalls (the listening server keeps it alive) fails too.
+setTimeout(() => {
+  console.log('FAIL: this check stalled and never reached its last step');
+  process.exit(1);
+}, 180000).unref();
 const tradeStore = require(path.join(BACKEND, 'tradeStore.js'));
 
 const get = (p) => new Promise((resolve) => {
-  const req = http.get({ host:'127.0.0.1', port:8981, path:p, timeout:8000 }, res => {
+  const req = http.get({ host:'127.0.0.1', port:8981, path:p, headers: AUTH, timeout:8000 }, res => {
     let body = ''; res.on('data', d => body += d);
     res.on('end', () => resolve({ status: res.statusCode, bytes: Buffer.byteLength(body), body }));
   });
@@ -129,7 +145,7 @@ function trade(i){
       bytes += bars.bytes;
       collected++;
       await new Promise((res) => {
-        const req = http.request({ host:'127.0.0.1', port:8981, path:'/api/trades/pending/'+t.id, method:'DELETE' }, x => { x.resume(); x.on('end', res); });
+        const req = http.request({ host:'127.0.0.1', port:8981, path:'/api/trades/pending/'+t.id, method:'DELETE', headers: AUTH }, x => { x.resume(); x.on('end', res); });
         req.on('error', res); req.end();
       });
     }

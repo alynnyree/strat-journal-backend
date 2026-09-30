@@ -48,7 +48,21 @@ Module._load = function (request) {
   return origLoad.apply(this, arguments);
 };
 
-require(path.join(BACKEND, 'server.js'));
+// server.js only starts listening when run for real (so tests can build the
+// real routes without starting the sync); start it here on the test port.
+require(path.join(BACKEND, 'server.js')).buildApp().listen(process.env.PORT);
+
+// The server's crash guard keeps a failed step from ending the process, so a
+// check that throws half-way would otherwise end quietly as a success.
+process.on('beforeExit', () => {
+  console.log('FAIL: this check ended before reaching its last step');
+  process.exit(1);
+});
+// ...and one that stalls (the listening server keeps it alive) fails too.
+setTimeout(() => {
+  console.log('FAIL: this check stalled and never reached its last step');
+  process.exit(1);
+}, 180000).unref();
 
 const get = (p) => new Promise((resolve) => {
   const req = http.get({ host:'127.0.0.1', port:8983, path:p, timeout:8000 }, res => {

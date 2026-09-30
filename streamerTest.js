@@ -1,4 +1,5 @@
 const express = require('express');
+const { keyOk, requireAppKey } = require('./appKey');
 const { wrap } = require('./asyncRoute');
 const axios = require('axios');
 const WebSocket = require('ws');
@@ -7,6 +8,9 @@ const { getStreamerStatus } = require('./schwabStreamer');
 const { getAccountNumber, getOptionFills } = require('./schwabClient');
 
 const router = express.Router();
+// Every route in this file needs the app key (see appKey.js). Checked
+// here once, first, so a route added later cannot forget it.
+router.use(requireAppKey);
 const TRADER_BASE = 'https://api.schwabapi.com/trader/v1';
 
 // Live view of the persistent streamer's connection state — whether it's
@@ -15,7 +19,7 @@ const TRADER_BASE = 'https://api.schwabapi.com/trader/v1';
 // keep-alive ping, since a real response here also confirms the streamer
 // itself is alive, not just that the server process is up.
 router.get('/streamer-status', (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   res.json(getStreamerStatus());
@@ -30,7 +34,7 @@ router.get('/streamer-status', (req, res) => {
 //
 // Visit once in a browser: /debug/fills-check?key=YOUR_APP_SECRET&days=90
 router.get('/fills-check', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
   const days = parseInt(req.query.days, 10) || 90;
@@ -68,7 +72,7 @@ router.get('/fills-check', wrap(async (req, res) => {
 // Collects everything the streamer sends back for ~8 seconds, then
 // returns it all as plain JSON — the raw truth, not a guess.
 router.get('/streamer-test', wrap(async (req, res) => {
-  if (req.query.key !== process.env.APP_SECRET) {
+  if (!keyOk(req)) {
     return res.status(403).send('Forbidden');
   }
 
