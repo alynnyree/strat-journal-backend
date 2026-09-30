@@ -232,7 +232,9 @@ const snapshot = pre => JSON.stringify(ledgerKeys(pre).map(k => [k, db.get(k)]))
   // ---- M9: a failure part-way leaves only whole records ---------------------
   for (const k of ledgerKeys(L.PREFIX)) db.delete(k);
   bucket.clear();
-  failAfterSets = setsDone + 4;
+  // One save goes to the ledger's account entry (ledgerAccount.js), written
+  // before any record; the failure then comes after four records.
+  failAfterSets = setsDone + 5;
   s = await run();
   failAfterSets = null;
   const partial = ledgerKeys(L.PREFIX + 'rec:');

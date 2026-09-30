@@ -27,6 +27,7 @@ const axios = require('axios');
 const { getTokens } = require('./tokenStore');
 const { canonical, fingerprint, ALL_TYPES } = require('./brokerInspect');
 const archive = require('./ledgerArchive');
+const ledgerAccount = require('./ledgerAccount');
 
 const SCHEMA = 'broker-ledger/v1';
 const CODE = 'brokerLedger v1';
@@ -110,7 +111,7 @@ function entryFor(t, fp, ctx) {
 }
 
 // ---- Fetch: every kind, 30 days at a time, keeping each answer's bytes ----
-async function fetchHistory({ http, now, years, noPause, onResponse }) {
+async function fetchHistory({ r, http, now, years, noPause, onResponse, tieAs }) {
   const tokens = await getTokens();
   if (!tokens || !tokens.access_token) throw Object.assign(new Error('Not signed in to Schwab. Reconnect to Schwab, then import again.'), { plain: true });
   if (Date.now() > (tokens.expires_at || 0)) throw Object.assign(new Error("Schwab's short-lived access pass has run out. The import does not renew it; the five-minute sync does. Try again in a few minutes."), { plain: true });
@@ -119,10 +120,22 @@ async function fetchHistory({ http, now, years, noPause, onResponse }) {
     const res = await http.get(`${TRADER_BASE}${path}`, { headers, params, responseType: 'text', transformResponse: [d => d] });
     return typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
   };
+  // Which account: an explicit, deterministic rule (ledgerAccount.js),
+  // never "whichever Schwab lists first". Settled, and the ledger tied to it,
+  // BEFORE a single transaction is asked for.
   const list = JSON.parse(await getText('/accounts/accountNumbers'));
-  const account = Array.isArray(list) && list[0] && list[0].hashValue;
-  if (!account) throw Object.assign(new Error('Schwab answered the account lookup with no account.'), { plain: true });
-  const accountRef = 'acct-' + crypto.createHash('sha256').update(String(account)).digest('hex').slice(0, 16);
+  let chosen, tie;
+  try {
+    chosen = await ledgerAccount.resolveAccount(r, list);
+    if (chosen.ok) tie = await ledgerAccount.writeTie(r, chosen, Object.assign({ basis: chosen.tieSource }, tieAs));
+  } catch (e) {
+    if (e && e.plain) throw e;
+    throw Object.assign(new Error('Could not read or record which account the ledger is for, so nothing was fetched: ' + whyFailed(e)), { plain: true });
+  }
+  if (!chosen.ok) throw Object.assign(new Error(chosen.reason), { plain: true });
+  const account = chosen.hashValue;
+  const accountRef = chosen.ref;
+  const accountChoice = { ref: chosen.ref, how: chosen.how, basis: chosen.tieSource, accountsReturned: chosen.accountsReturned, tie };
 
   const windows = [];
   const got = [];
@@ -148,7 +161,7 @@ async function fetchHistory({ http, now, years, noPause, onResponse }) {
     end = start;
     if (!noPause) await sleep(PAUSE_MS);
   }
-  return { windows, got, accountRef };
+  return { windows, got, accountRef, accountChoice };
 }
 
 // ---- Write one record: create-only, database-decided ---------------------
@@ -192,7 +205,7 @@ async function importLedger(options = {}) {
   let fetched;
   try {
     fetched = await fetchHistory({
-      http, now: nowMs, years: options.years, noPause: options.noPause,
+      r, http, now: nowMs, years: options.years, noPause: options.noPause, tieAs: { importId, at },
       onResponse: async (w, text) => {
         try { const key = await archive.putResponse(importId, w, text); summary.archive.responses++; return key; }
         catch (e) { throw Object.assign(new Error('The archive refused Schwab\'s answer, so nothing was written to the ledger: ' + whyFailed(e)), { archiveFailed: true, plain: true }); }
@@ -201,6 +214,7 @@ async function importLedger(options = {}) {
   } catch (e) {
     return finish('failed', (e && e.plain) ? e.message : 'Fetching from Schwab failed: ' + whyFailed(e));
   }
+  summary.account = fetched.accountChoice;
   summary.windows.asked = fetched.windows.length;
   summary.windows.ok = fetched.windows.filter(w => w.status === 'ok').length;
   summary.windows.refused = fetched.windows.filter(w => w.status === 'refused').length;
@@ -256,17 +270,8 @@ async function importLedger(options = {}) {
 }
 
 // ---- Read-only: counts and integrity ----------------------------------------
-async function scanKeys(r, match) {
-  // The page marker is kept exactly as given (see backupExport.js allKeys).
-  const keys = []; let cursor = '0', rounds = 0;
-  do {
-    const [next, batch] = await r.scan(cursor, { match, count: 1000 });
-    for (const k of batch || []) keys.push(k);
-    cursor = String(next);
-    if (++rounds > 2000) throw new Error('listing ledger keys did not finish');
-  } while (cursor !== '0');
-  return [...new Set(keys)];
-}
+// Listing keys lives in ledgerAccount.js, shared with the account rule.
+const { scanKeys } = ledgerAccount;
 
 async function ledgerStatus(options = {}) {
   const r = options.redis || store();
@@ -275,7 +280,8 @@ async function ledgerStatus(options = {}) {
   const imports = (await r.lrange(IMPORTS, 0, 9) || []).map(asObject);
   let archived = null, archiveError = null;
   try { archived = archive.ready() ? (await archive.listRecordKeys()).size : null; } catch (e) { archiveError = whyFailed(e); }
-  return { readOnly: true, ledgerRecords: recs.length, ledgerRevisions: revs.length, archiveRecordFiles: archived, archiveError, recentImports: imports };
+  const account = asObject(await r.get(ledgerAccount.TIE_KEY)) || null;
+  return { readOnly: true, account, ledgerRecords: recs.length, ledgerRevisions: revs.length, archiveRecordFiles: archived, archiveError, recentImports: imports };
 }
 
 // Every entry: does its raw record still produce its fingerprint, and does
@@ -283,7 +289,8 @@ async function ledgerStatus(options = {}) {
 async function verifyLedger(options = {}) {
   const r = options.redis || store();
   const keys = (await scanKeys(r, `${PREFIX}rec:*`)).sort();
-  const out = { readOnly: true, checked: 0, fingerprintMatches: 0, fingerprintMismatches: [], identityMismatches: [], missingFromArchive: [], kinds: {} };
+  const tie = asObject(await r.get(ledgerAccount.TIE_KEY));
+  const out = { readOnly: true, account: tie ? tie.ref : null, checked: 0, fingerprintMatches: 0, fingerprintMismatches: [], identityMismatches: [], accountMismatches: [], missingFromArchive: [], kinds: {} };
   let present = null;
   try { present = archive.ready() ? await archive.listRecordKeys() : null; } catch (e) { out.archiveError = whyFailed(e); }
   for (let i = 0; i < keys.length; i += 100) {
@@ -296,6 +303,7 @@ async function verifyLedger(options = {}) {
       out.kinds[e.raw.type || '(none)'] = (out.kinds[e.raw.type || '(none)'] || 0) + 1;
       if (fingerprint(e.raw) === e.fingerprint) out.fingerprintMatches++; else out.fingerprintMismatches.push(batch[j]);
       if (REC(identityOf(e.raw).value) !== batch[j]) out.identityMismatches.push(batch[j]);
+      if (tie && (!e.provenance || e.provenance.accountRef !== tie.ref)) out.accountMismatches.push(batch[j]);
       if (present && !present.has(archive.recordKey(e.identity.value, e.fingerprint))) out.missingFromArchive.push(batch[j]);
     });
   }

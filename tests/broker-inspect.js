@@ -22,6 +22,8 @@ class FakeRedis {
   constructor() {}
   async get(k) { return db.has(k) ? JSON.parse(JSON.stringify(db.get(k))) : null; }
   async hgetall() { return null; }
+  async mget(...ks) { return ks.map(k => (db.has(k) ? JSON.parse(JSON.stringify(db.get(k))) : null)); }
+  async scan(cursor, o) { const re = new RegExp('^' + String(o.match || '*').replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'); return ['0', [...db.keys()].filter(k => re.test(k))]; }
 }
 for (const m of ['set', 'del', 'hset', 'hdel', 'lpush', 'rpush', 'rpop', 'lpop', 'ltrim', 'lrem', 'incr', 'expire', 'sadd', 'zadd', 'setnx', 'hsetnx', 'mset', 'append']) {
   FakeRedis.prototype[m] = async function (...a) { writes.push(m + ' ' + a[0]); return 'OK'; };
