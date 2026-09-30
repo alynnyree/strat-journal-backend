@@ -398,4 +398,28 @@ router.post('/stop-rule/compute', wrap(async (req, res) => {
   }
 }));
 
+// A READ-ONLY copy of everything the server stores, minus his Schwab sign-in
+// and Alpaca keys (see backupExport.js). Taken before any phase that changes
+// how the server stores things. It never writes; it is safe to call at any
+// time. Behind the app key like every route in this file.
+let backupRedis = null;
+router.get('/backup/export', wrap(async (req, res) => {
+  const { exportState } = require('./backupExport');
+  if (!backupRedis) {
+    if (!process.env.UPSTASH_REDIS_REST_URL) {
+      return res.status(503).json({ error: 'This server has no database set up, so there is nothing to copy.' });
+    }
+    const { Redis } = require('@upstash/redis');
+    backupRedis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+  }
+  const copy = await exportState(backupRedis);
+  const stamp = copy.exportedAt.replace(/[:.]/g, '-');
+  res.set('Cache-Control', 'no-store');
+  res.set('Content-Disposition', `attachment; filename="server-backup-${stamp}.json"`);
+  res.json(copy);
+}));
+
 module.exports = router;
