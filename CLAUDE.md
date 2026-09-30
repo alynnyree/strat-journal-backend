@@ -15,12 +15,42 @@ ledger -> trade engine -> synchronization -> reconciliation -> backtesting
 -> analytics -> frontend migration.
 
 Status on 30 Sept 2026:
-- Blocker 1: authorized (option a) and being done.
-- Blockers 2 and 3: approved by the auditor at the decision level --
-  2 with Redis PLUS an independent archive, 3 with corrections to R1 and
-  R12 and a new R19 -- but NOT authorized by the owner to build.
+- Blocker 1: COMPLETE (30 Sept 2026). Automatic checks in both projects,
+  and `main` locked by a GitHub ruleset in both (app 24242244, service
+  24242754): no deletion, no force-push, changes only through a pull
+  request, its check green (app: `app-checks`, service: `guard-check`),
+  0 approvals. The auditor approved this arrangement (C1).
+- Blocker 2: approved by the auditor at the decision level, NOT
+  authorized by the owner to build. When authorized it starts with a
+  read-only dry run.
+- Blocker 3: rules locked by the auditor (below); building them in is
+  NOT authorized yet.
 - Phase 0 and Phase 1A were carried out and are live, before this
   sequence was set. See "Auditor_Review_Pack_Phase1".
+- The 7 known failures stay as baseline until the phase that owns them
+  (auditor, C2). No new known failure without the owner's authorization.
+
+**Rules locked by the auditor (30 Sept 2026). No code may contradict
+them once built; today's code does not yet follow R1 or R12:**
+- **R1** Schwab `activityId` is authoritative. `orderId` is NOT an
+  acceptable fill/execution identity fallback (the service currently
+  uses `activityId || orderId` -- to be removed). A missing activityId
+  gets a deterministic composite identity explicitly marked uncertain.
+  Normalized fills get their own deterministic ids that tell apart
+  several legs of one broker transaction.
+- **R12** Schwab's transaction-level fee is kept as an immutable broker
+  fact. Known fees are allocated proportionally and deterministically
+  across legs, rounding reconciled exactly to the original fee; the
+  allocation never replaces the original. Unknown stays null, never 0.
+- **R19** Automatic processes may not silently downgrade established
+  evidence, confidence or authoritative values. Missing later information
+  cannot erase earlier information. Contradictions need an auditable
+  conflict/correction record.
+- **Archive (Blocker 2)** Redis/Upstash may be the operational broker
+  ledger but never the only copy. An independent archive holds the
+  original Schwab records, metadata, identities, fingerprints/checksums
+  and import information. It is evidence and recovery, not a second
+  pairing engine.
 
 **Until the owner authorizes otherwise, never:**
 - modify his production journal data (the phone's `strat_trades`, or the
@@ -36,9 +66,9 @@ Status on 30 Sept 2026:
 - Every proposed change runs the automatic checks on GitHub -- the app's
   syntax check and every browser check (`tests/ci/run-all.js`), and every
   service check (`tests/run-all.js`). A check that fails blocks the change.
-- `main` is protected on GitHub: changes arrive only through a proposed
-  change (pull request) whose checks are green; no direct pushes, no
-  force-pushes, no deleting it.
+- `main` is protected on GitHub by a ruleset (see above): changes arrive
+  only through a proposed change (pull request) whose checks are green;
+  no direct pushes, no force-pushes, no deleting it.
 - Required REVIEWS are deliberately NOT switched on: every change is filed
   under his one GitHub account and GitHub forbids approving your own
   change, so a required review would block everything, including urgent
