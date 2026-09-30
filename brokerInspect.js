@@ -19,6 +19,15 @@ const crypto = require('crypto');
 const axios = require('axios');
 const { getTokens } = require('./tokenStore');
 const { extractOptionFills } = require('./schwabClient');
+const ledgerAccount = require('./ledgerAccount');
+
+let redis = null;
+function ledgerStore() {
+  if (redis) return redis;
+  const { Redis } = require('@upstash/redis');
+  redis = new Redis({ url: process.env.UPSTASH_REDIS_REST_URL, token: process.env.UPSTASH_REDIS_REST_TOKEN });
+  return redis;
+}
 
 const TRADER_BASE = 'https://api.schwabapi.com/trader/v1';
 const WINDOW_DAYS = 30;
@@ -114,16 +123,26 @@ async function inspectBrokerHistory(options = {}) {
   const get = (path, params) => http.get(`${TRADER_BASE}${path}`, { headers, params }).then(r => r.data);
 
   // ---- The account (its number never leaves this function) --------------
-  let account;
+  // Chosen by the same explicit rule as the ledger import (ledgerAccount.js),
+  // never "whichever Schwab lists first". Read only: this never writes the
+  // ledger's account entry.
+  let list;
   try {
-    const list = await get('/accounts/accountNumbers');
-    account = Array.isArray(list) && list[0] && list[0].hashValue;
+    list = await get('/accounts/accountNumbers');
     report.accountsReturned = Array.isArray(list) ? list.length : 0;
   } catch (e) {
     report.reason = 'Schwab refused the account lookup: ' + whyFailed(e);
     return report;
   }
-  if (!account) { report.reason = 'Schwab answered the account lookup with no account.'; return report; }
+  let chosen;
+  try { chosen = await ledgerAccount.resolveAccount(options.redis || ledgerStore(), list); }
+  catch (e) {
+    report.reason = (e && e.plain) ? e.message : 'Could not read which account the ledger is for: ' + whyFailed(e);
+    return report;
+  }
+  if (!chosen.ok) { report.reason = chosen.reason; return report; }
+  const account = chosen.hashValue;
+  report.account = { ref: chosen.ref, how: chosen.how, basis: chosen.tieSource };
 
   // ---- Walk back through history, newest first ---------------------------
   const records = [];

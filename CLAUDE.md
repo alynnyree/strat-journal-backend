@@ -20,18 +20,35 @@ Status on 30 Sept 2026:
   24242754): no deletion, no force-push, changes only through a pull
   request, its check green (app: `app-checks`, service: `guard-check`),
   0 approvals. The auditor approved this arrangement (C1).
-- Blocker 2: approved by the auditor at the decision level, NOT
-  authorized by the owner to build. When authorized it starts with a
-  read-only dry run.
-- Blocker 3: rules locked by the auditor (below); building them in is
-  NOT authorized yet.
+- Blocker 2: AUTHORIZED by the owner on 30 Sept 2026, after the auditor
+  closed the read-only inspection (Blocker 2A), and COMPLETED the same
+  day. Built in the service (pull requests #79 and #80): the immutable
+  broker ledger (`brokerLedger.js`, entries under `ledger:schwab:`) and
+  its independent archive in Cloudflare storage (`ledgerArchive.js`,
+  folder `broker-ledger-archive/v1/`). Verified live: 691 Schwab records,
+  0 revisions, 691 archive record files, a second import added nothing,
+  every fingerprint matches, nothing pre-existing changed. Report:
+  "Blocker2_Completion_Report_2026-09-30".
+  The auditor's ruling on it: CONDITIONAL PASS, on two conditions --
+  (1) choose the Schwab account by an explicit, deterministic rule instead
+  of the first one Schwab lists (`ledgerAccount.js`: the ledger is tied to
+  one account, a server setting `SCHWAB_LEDGER_ACCOUNT` may name one, and
+  otherwise only a single returned account is used; anything else is
+  refused), and (2) this note. Final closure is the auditor's to give.
+  Not part of Blocker 2, and NOT authorized: automatic recurring ledger
+  imports, a restore-from-archive tool, anything that pairs trades or
+  rebuilds positions from the ledger, matcher changes, journal migration.
+- **Blocker 3: NOT STARTED and NOT AUTHORIZED.** Its rules are locked by
+  the auditor (below); building them in needs the auditor's separate
+  review of Blocker 2 and the owner's authorization in words.
 - Phase 0 and Phase 1A were carried out and are live, before this
   sequence was set. See "Auditor_Review_Pack_Phase1".
 - The 7 known failures stay as baseline until the phase that owns them
   (auditor, C2). No new known failure without the owner's authorization.
 
 **Rules locked by the auditor (30 Sept 2026). No code may contradict
-them once built; today's code does not yet follow R1 or R12:**
+them once built. The broker ledger follows R1 and keeps the original fee
+untouched; the journal's sync and pairing do NOT yet follow R1 or R12:**
 - **R1** Schwab `activityId` is authoritative. `orderId` is NOT an
   acceptable fill/execution identity fallback (the service currently
   uses `activityId || orderId` -- to be removed). A missing activityId
@@ -58,7 +75,9 @@ them once built; today's code does not yet follow R1 or R12:**
 - run the old reconciliation repair ("Put this right");
 - delete the 50 duplicate trades that came back on 30 Sept;
 - begin any live migration;
-- start building the broker ledger or the trade engine;
+- start Blocker 3, or build the trade engine;
+- extend the broker ledger beyond what Blocker 2 authorized (no automatic
+  imports, no restore tool, nothing that pairs or rebuilds from it);
 - merge ANY change to `main` without: his written authorization for that
   step, the automatic checks green, and the auditor having seen the plan.
 
