@@ -105,6 +105,18 @@ Status on 30 Sept 2026:
       the reason in `lastSync`.
     Checked by `tests/sync-state-safety.js`. Never write a copy of this
     record that was read earlier.
+  - **Step C (implemented here)** changes the live fill identity:
+    - extractOptionFills names a record by its activityId, unchanged;
+    - without one, it uses "U-" + 32 hex of the record's fingerprint,
+      identical to brokerLedger.identityOf, marked identityUncertain, with
+      the orderId kept only as legacyId;
+    - no tradeDate means no fill, reported in report.unusable and lastSync,
+      and never replaced by `time`;
+    - notYetProcessed uses a recorded orderId only to recognise the one
+      fill it can positively be (identityCutoverAt, written once, and a
+      single record per order); anything else is listed in
+      lastSync.legacyAmbiguous, never guessed at.
+    Checked by `tests/fill-identity.js`.
 - The 7 known failures stay as baseline until the phase that owns them
   (auditor, C2). No new known failure without the owner's authorization.
 
@@ -114,7 +126,7 @@ R12; the LIVE journal sync and pairing (`schwabClient.js`, `matcher.js`)
 still do NOT:**
 - **R1** Schwab `activityId` is authoritative. `orderId` is NOT an
   acceptable fill/execution identity fallback (the service currently
-  uses `activityId || orderId` -- to be removed). A missing activityId
+  used `activityId || orderId`; REMOVED in Step C, see below). A missing activityId
   gets a deterministic composite identity explicitly marked uncertain.
   Normalized fills get their own deterministic ids that tell apart
   several legs of one broker transaction.
