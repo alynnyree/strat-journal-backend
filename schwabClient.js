@@ -1,4 +1,32 @@
 const axios = require('axios');
+const crypto = require('crypto');
+
+// ---- Fill identity (audit Step C: F1 + R1) -------------------------------
+// Schwab's activityId is the identity of a fill's record. A record without
+// one is named by its own content: "U-" + the first 32 hex characters of the
+// SHA-256 of its canonical form, marked uncertain. That is EXACTLY the broker
+// ledger's rule (brokerLedger.identityOf, using brokerInspect's canonical and
+// fingerprint), copied here because brokerInspect already loads this file and
+// loading it back would be a loop. tests/fill-identity.js proves the two give
+// the same id, character for character, on representative records.
+//
+// It used to be `activityId || orderId`. Every execution of one order shares
+// the orderId, so a later piece of a partly filled order looked "already
+// handled" and was dropped without a word. orderId is never an identity now;
+// it is kept only as `legacyId`, for recognising fills an older version of
+// this service recorded by it (see notYetProcessed in cron.js).
+function canonical(v) {
+  if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']';
+  if (v && typeof v === 'object') {
+    return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}';
+  }
+  return JSON.stringify(v);
+}
+const fingerprint = rec => crypto.createHash('sha256').update(canonical(rec)).digest('hex');
+function recordIdentity(t) {
+  if (t && t.activityId != null) return { value: t.activityId, uncertain: false };
+  return { value: 'U-' + fingerprint(t).slice(0, 32), uncertain: true };
+}
 
 // Schwab Trader API base, per developer.schwab.com. Verify exact paths
 // against current docs if a call starts 404ing — Schwab has changed these before.
@@ -93,10 +121,29 @@ function feesForTransaction(transaction, optionItems) {
   return itemised > 0 ? Math.round(itemised * 100) / 100 : null;
 }
 
-function extractOptionFills(transaction) {
+// `problems`, if passed, collects the records that could not become fills
+// and why -- an unusable record is reported, never quietly skipped.
+function extractOptionFills(transaction, problems = null) {
   const fills = [];
   const items = transaction.transferItems || [];
   const optionItems = items.filter(ti => ti.instrument?.assetType === 'OPTION' && Math.abs(ti.amount || 0));
+  if (!optionItems.length) return fills;
+  const identity = recordIdentity(transaction);
+
+  // The tradeDate is the ONLY date a fill has (B3-2, audit Step C / H-5).
+  // It used to fall back to Schwab's `time` when missing -- a different
+  // moment, used silently. Missing or unreadable now means no fill, and the
+  // reason goes back to whoever asked.
+  const dt = transaction.tradeDate ? new Date(transaction.tradeDate) : null;
+  if (!dt || Number.isNaN(dt.getTime())) {
+    if (problems) problems.push({
+      id: identity.value,
+      kind: 'no-trade-date',
+      tradeDate: transaction.tradeDate ?? null,
+      reason: 'Schwab gave no usable tradeDate; no other time is substituted.',
+    });
+    return fills;
+  }
   const txFees = feesForTransaction(transaction, optionItems);
   const grossTotal = optionItems.reduce(
     (sum, ti) => sum + Math.abs(ti.price || 0) * 100 * Math.abs(ti.amount || 0), 0);
@@ -112,10 +159,13 @@ function extractOptionFills(transaction) {
     if (isOpening) instruction = receivedMoney ? 'SELL_TO_OPEN' : 'BUY_TO_OPEN';
     else instruction = receivedMoney ? 'SELL_TO_CLOSE' : 'BUY_TO_CLOSE';
 
-    const dt = new Date(transaction.tradeDate || transaction.time);
     const { date, time } = toEasternParts(dt);
     fills.push({
-      transactionId: transaction.activityId || transaction.orderId,
+      transactionId: identity.value,
+      ...(identity.uncertain ? {
+        identityUncertain: true,
+        ...(transaction.orderId != null ? { legacyId: transaction.orderId } : {}),
+      } : {}),
       occ: ti.instrument.symbol,
       ticker: ti.instrument.underlyingSymbol || ti.instrument.symbol,
       instruction,
@@ -160,7 +210,9 @@ async function getOptionFills(accessToken, startDate, endDate, report = null) {
     report.windowsFailed = 0;
     report.failures = [];
     report.oldestWindowWithData = null;
+    report.unusable = { count: 0, examples: [] };
   }
+  const problems = [];
 
   const rangeEndMs = new Date(toSchwabTimestamp(endDate, true)).getTime();
   const rangeStartMs = new Date(toSchwabTimestamp(startDate, false)).getTime();
@@ -210,7 +262,7 @@ async function getOptionFills(accessToken, startDate, endDate, report = null) {
 
     let addedHere = 0;
     for (const t of (raw || [])) {
-      for (const fill of extractOptionFills(t)) {
+      for (const fill of extractOptionFills(t, problems)) {
         const dedupeKey = `${fill.transactionId}-${fill.occ}-${fill.instruction}-${fill.timestamp}`;
         if (seen.has(dedupeKey)) continue;
         seen.add(dedupeKey);
@@ -227,6 +279,11 @@ async function getOptionFills(accessToken, startDate, endDate, report = null) {
     chunkEndMs = chunkStartMs;
   }
 
+  if (report) {
+    // The same record can come back in two windows; count it once.
+    const unique = [...new Map(problems.map(p => [String(p.id), p])).values()];
+    report.unusable = { count: unique.length, examples: unique.slice(0, 5) };
+  }
   return allFills.sort((a, b) => a.timestamp - b.timestamp);
 }
 

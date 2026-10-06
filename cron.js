@@ -328,9 +328,49 @@ function unionIds(a, b) {
 // A broker fill is handled once. Asked against the record as it is at the
 // moment of saving, so a fill another operation handled meanwhile is skipped
 // while the rest of the same batch still goes through.
-function notYetProcessed(fills, record) {
+//
+// THE CHANGEOVER (audit Step C). Fills with no activityId used to be recorded
+// by their ORDER number; they are recorded by their own "U-..." id now. A
+// recorded order number is NOT taken as proof that every execution of that
+// order was handled -- that is the very loss Step C removes. It is used only
+// to recognise the one fill it can positively be:
+//   a. a fill dated at or after `cutoverMs` (the new code's first run) can
+//      never have been seen by the old code: only its own id counts;
+//   b. a fill dated before it is taken as the old fill only when it is the
+//      ONLY record carrying that order number in the data fetched;
+//   c. otherwise which execution the old code handled cannot be known, so
+//      none is processed and none is guessed at: each goes into `ambiguous`,
+//      to be listed with its reason and settled by the rebuild from the
+//      ledger, which never uses order numbers.
+function notYetProcessed(fills, record, { cutoverMs = Infinity, ambiguous = null } = {}) {
   const seen = new Set(record.lastProcessedIds || []);
-  return fills.filter(f => !seen.has(f.transactionId));
+  const recordsPerOrder = new Map();
+  for (const f of fills) {
+    if (!f.identityUncertain || f.legacyId == null || f.timestamp >= cutoverMs) continue;
+    if (!recordsPerOrder.has(f.legacyId)) recordsPerOrder.set(f.legacyId, new Set());
+    recordsPerOrder.get(f.legacyId).add(f.transactionId);
+  }
+  return fills.filter(f => {
+    if (seen.has(f.transactionId)) return false;
+    if (!f.identityUncertain || f.legacyId == null || !seen.has(f.legacyId)) return true;
+    if (f.timestamp >= cutoverMs) return true;                                          // a
+    if ((recordsPerOrder.get(f.legacyId) || new Set()).size <= 1) return false;         // b
+    if (ambiguous && !ambiguous.some(a => a.id === f.transactionId)) {                  // c
+      ambiguous.push({
+        id: f.transactionId, orderId: f.legacyId, date: f.date, time: f.time,
+        reason: 'An older version recorded this order by its order number; which executions it processed cannot be established.',
+      });
+    }
+    return false;
+  });
+}
+const cutoverOf = record => (record.identityCutoverAt ? Date.parse(record.identityCutoverAt) : Infinity);
+// What the sync could not use, said in its own words (H-5, Step C).
+function syncProblems(report, ambiguous) {
+  const out = {};
+  if (report.unusable && report.unusable.count) out.unusable = report.unusable;
+  if (ambiguous.length) out.legacyAmbiguous = { count: ambiguous.length, examples: ambiguous.slice(0, 5) };
+  return out;
 }
 
 async function runSyncCheck() {
@@ -373,7 +413,11 @@ async function syncOnce() {
     };
 
     const state = await tradeStore.getState();
-    const freshFills = notYetProcessed(fills, state);
+    // The changeover moment is set once, by the first run of this code, and
+    // never moved (Step C).
+    const cutoverIso = state.identityCutoverAt || now.toISOString();
+    const cutoverMs = Date.parse(cutoverIso);
+    const freshFills = notYetProcessed(fills, state, { cutoverMs });
 
     // The slow part -- prices, timeframes, chart, setup, stop -- is done on a
     // private trial match, and nothing is written while it runs.
@@ -400,10 +444,16 @@ async function syncOnce() {
     let landed = [];
     let opened = [];
     await tradeStore.updateState(latest => {
-      const take = notYetProcessed(freshFills, latest);
-      const hadRefusal = !!(latest.lastSync && latest.lastSync.windowsFailed);
-      if (!take.length && !syncNote && !hadRefusal) return null;
+      const ambiguous = [];
+      const latestCutover = latest.identityCutoverAt ? cutoverOf(latest) : cutoverMs;
+      const take = notYetProcessed(fills, latest, { cutoverMs: latestCutover, ambiguous });
+      const problems = syncProblems(report, ambiguous);
+      const hasProblems = Object.keys(problems).length > 0;
+      const prev = latest.lastSync || {};
+      const hadProblems = !!(prev.windowsFailed || prev.unusable || prev.legacyAmbiguous);
+      if (!take.length && !syncNote && !hasProblems && !hadProblems && latest.identityCutoverAt) return null;
       const next = { ...latest };
+      if (!next.identityCutoverAt) next.identityCutoverAt = cutoverIso;
       if (take.length) {
         const m = processFills(take, { openLegs: clone(latest.openLegs || []), pending: [] });
         landed = m.newPending.map(t => enriched.get(tradeKey(t)) || t);
@@ -412,8 +462,11 @@ async function syncOnce() {
         next.pending = [...landed, ...(latest.pending || [])];
         next.lastProcessedIds = unionIds(latest.lastProcessedIds, take.map(f => f.transactionId));
       }
-      if (syncNote) next.lastSync = syncNote;
-      else if (hadRefusal) next.lastSync = { at: now.toISOString(), windowsFailed: 0, recoveredFrom: latest.lastSync.at || null };
+      if (syncNote) next.lastSync = { ...syncNote, ...problems };
+      else if (hasProblems || hadProblems) {
+        next.lastSync = { at: now.toISOString(), windowsFailed: 0, ...problems,
+          ...(prev.windowsFailed ? { recoveredFrom: prev.at || null } : {}) };
+      }
       return next;
     });
 
@@ -550,6 +603,7 @@ async function backfillOnce(daysBack) {
       windowsFailed: report.windowsFailed ?? null,
       failures: report.failures || [],
       oldestWindowWithData: report.oldestWindowWithData || null,
+      unusable: report.unusable || null,
     });
 
     // Matched on its own, from no open legs, as before -- but SAVED as a
@@ -564,12 +618,15 @@ async function backfillOnce(daysBack) {
     // stare at an empty journal through all of it.
     let newPending = [];
     await tradeStore.updateState(latest => {
-      const take = notYetProcessed(fills, latest);
+      const cutoverIso = latest.identityCutoverAt || new Date().toISOString();
+      const ambiguous = [];
+      const take = notYetProcessed(fills, latest, { cutoverMs: Date.parse(cutoverIso), ambiguous });
       const m = processFills(take, { openLegs: [], pending: [] });
       newPending = m.newPending;
       const have = new Set((latest.openLegs || []).map(legKey));
       return {
         ...latest,
+        identityCutoverAt: cutoverIso,
         openLegs: [...(latest.openLegs || []), ...m.updatedState.openLegs.filter(l => !have.has(legKey(l)))],
         pending: [...newPending, ...(latest.pending || [])],
         lastProcessedIds: unionIds(latest.lastProcessedIds, take.map(f => f.transactionId)),
@@ -578,6 +635,7 @@ async function backfillOnce(daysBack) {
           phase: 'enriching',
           tradesMatched: newPending.length,
           freshFills: take.length,
+          legacyAmbiguous: ambiguous.length ? { count: ambiguous.length, examples: ambiguous.slice(0, 5) } : null,
         },
       };
     });
