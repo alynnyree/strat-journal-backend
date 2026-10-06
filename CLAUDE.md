@@ -117,6 +117,10 @@ Status on 30 Sept 2026:
       single record per order); anything else is listed in
       lastSync.legacyAmbiguous, never guessed at.
     Checked by `tests/fill-identity.js`.
+  - **Step D (service half)**: each trade from the matcher also carries
+    closeQuantity, the contracts in its closing fill. It is data only, and
+    pairing is unchanged. The app uses it with contractsOpened to refuse
+    only a pair that would over-use a fill (tests/close-quantity.js).
 - The 7 known failures stay as baseline until the phase that owns them
   (auditor, C2). No new known failure without the owner's authorization.
 

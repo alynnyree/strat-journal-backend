@@ -185,6 +185,10 @@ function processFills(fills, state) {
           dir: leg.dir,
           contracts: qtyMatched,
           contractsOpened: leg.totalQuantity,
+          // How many contracts the CLOSING fill held (audit Step D). With
+          // contractsOpened it lets the app tell a genuine partial close from
+          // the same fills paired up twice. Data only: pairing is unchanged.
+          closeQuantity: fill.quantity,
           // 'Closed' once every contract from the original opening has been
           // matched to a close (possibly across several closing fills);
           // 'Partial Fill' if some of the original position is still open.
