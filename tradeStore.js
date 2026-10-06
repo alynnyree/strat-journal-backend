@@ -24,20 +24,51 @@ async function getState() {
   return await read();
 }
 
+// ONE CHANGE AT A TIME (audit Step B, F4; authorized 6 Oct 2026).
+//
+// Every writer used to read this whole record, work -- the sync for
+// minutes, while it fetched prices and charts -- and then write back the
+// copy it had read. Anything written in between was lost: the phone saying
+// "I have taken this trade" came undone and the trade was served again, and
+// a backfill's save erased open positions recorded by a sync. Now every
+// change reads the record as it is AT THAT MOMENT, applies a small change,
+// and writes it, strictly one after another -- the same arrangement the
+// sign-in store has used since Phase 1. One queue is enough because one
+// server process writes this record (Render runs a single instance); if
+// that stops being true this must become a lock held in the database.
+//
+// `change` receives the latest record and returns the record to write, or
+// null to write nothing. It must not wait on anything slow: the record is
+// held between the read and the write.
+let queue = Promise.resolve();
+function oneAtATime(job) {
+  const run = queue.then(job, job);
+  queue = run.catch(() => {});
+  return run;
+}
+
+async function updateState(change) {
+  return oneAtATime(async () => {
+    const latest = await read();
+    const next = await change(latest);
+    if (next == null) return latest;
+    await write(next);
+    return next;
+  });
+}
+
+// Replaces the whole record. Kept for tests that set up a starting record;
+// nothing in the running service calls it with a copy read earlier.
 async function saveState(state) {
-  await write(state);
+  return oneAtATime(() => write(state));
 }
 
 async function addPendingTrade(trade) {
-  const state = await read();
-  state.pending.unshift(trade);
-  await write(state);
+  return updateState(state => ({ ...state, pending: [trade, ...(state.pending || [])] }));
 }
 
 async function removePendingTrade(id) {
-  const state = await read();
-  state.pending = state.pending.filter(t => t.id !== id);
-  await write(state);
+  return updateState(state => ({ ...state, pending: (state.pending || []).filter(t => t.id !== id) }));
 }
 
-module.exports = { getState, saveState, addPendingTrade, removePendingTrade };
+module.exports = { getState, saveState, updateState, addPendingTrade, removePendingTrade };

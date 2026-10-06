@@ -6,7 +6,7 @@ const { getValidAccessToken } = require('./auth');
 const { getTokens, setLastCheck } = require('./tokenStore');
 const tradeStore = require('./tradeStore');
 const alpaca = require('./alpacaClient');
-const { runBackfill, runSyncCheck } = require('./cron');
+const { runBackfill, runSyncCheck, resetSyncState, jobRunning } = require('./cron');
 const { getFtfcForTrade, getUnderlyingPriceAt } = require('./ftfcCheck');
 const { getReplayCandles } = require('./replayData');
 const stopRule = require('./stopRule');
@@ -130,7 +130,11 @@ router.post('/trades/backfill', wrap(async (req, res) => {
   // capped at three so a typo cannot ask Schwab for a decade.
   const requested = parseInt(req.body?.daysBack, 10);
   const daysBack = Number.isFinite(requested) ? Math.max(1, Math.min(1095, requested)) : 365;
-  res.json({ started: true, daysBack });
+  // Only one history import at a time (audit Step B). A second request while
+  // one is running says so instead of claiming to have started another.
+  const alreadyRunning = jobRunning() === 'backfill';
+  res.json({ started: !alreadyRunning, alreadyRunning, daysBack });
+  if (alreadyRunning) return;
   runBackfill(daysBack)
     .then(newPending => console.log(`Background backfill complete: ${newPending.length} trade(s) imported.`))
     .catch(err => console.error('Background backfill failed:', err.response?.data || err.message));
@@ -186,7 +190,9 @@ router.post('/ftfc/check', wrap(async (req, res) => {
 // This does NOT touch your saved Journal (that's local to the app).
 router.post('/trades/reset', wrap(async (req, res) => {
   try {
-    await tradeStore.saveState({ openLegs: [], pending: [], lastProcessedIds: [] });
+    // Through the one-job-at-a-time guard (audit Step B): waits for a running
+    // sync or import, so neither can save its results over the emptied record.
+    await resetSyncState();
     res.json({ ok: true });
   } catch (err) {
     console.error('reset error:', err.message);

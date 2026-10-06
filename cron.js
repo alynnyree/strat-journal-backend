@@ -279,7 +279,70 @@ async function enrichWithStrategy(trades) {
   return trades;
 }
 
+// ---- One sync job at a time; save changes, not copies ---------------------
+// (audit Step B: F3, F4, H-3, H-7; authorized by the owner 6 Oct 2026)
+//
+// The five-minute tick, the streamer, "sync now", a backfill and the reset
+// all change the same record. Run side by side, each could save the copy it
+// read before the others had finished. Only one runs at a time now: a tick
+// that finds another job running is skipped and does NOT move the
+// checkpoint, so the next tick simply looks again. A backfill waits for a
+// running sync; a second backfill is not started while one is running.
+let currentJob = null;
+async function runExclusive(kind, fn, { wait = false } = {}) {
+  while (currentJob) {
+    if (!wait || currentJob.kind === kind) return { ran: false, busyWith: currentJob.kind };
+    await currentJob.done;
+  }
+  let finish;
+  const done = new Promise(r => { finish = r; });
+  currentJob = { kind, done };
+  try {
+    return { ran: true, value: await fn() };
+  } finally {
+    currentJob = null;
+    finish();
+  }
+}
+function jobRunning() { return currentJob ? currentJob.kind : null; }
+
+const clone = v => JSON.parse(JSON.stringify(v));
+// An open leg is named by the broker fill it came from; a leg saved before
+// those references existed falls back to what it is made of.
+const legKey = l => (l.openFillId
+  ? 'F:' + l.openFillId
+  : `S:${l.occ}|${l.openTimestamp}|${l.openPrice}|${l.totalQuantity}`);
+// The same trade out of two runs of the matcher over the same fills.
+const tradeKey = t => `${(t.fills || []).join('+')}|${t.contracts}|${t.entryTimestamp}|${t.exitTimestamp}`;
+// ONE RULE for the list of fills already handled (H-3): kept whole, each id
+// once, in every path. It used to be cut to the last 500 by the sync and kept
+// whole by the backfill, so a backfill after the cut re-queued old history.
+function unionIds(a, b) {
+  const seen = new Set();
+  const out = [];
+  for (const id of [...(a || []), ...(b || [])]) {
+    if (!seen.has(id)) { seen.add(id); out.push(id); }
+  }
+  return out;
+}
+// A broker fill is handled once. Asked against the record as it is at the
+// moment of saving, so a fill another operation handled meanwhile is skipped
+// while the rest of the same batch still goes through.
+function notYetProcessed(fills, record) {
+  const seen = new Set(record.lastProcessedIds || []);
+  return fills.filter(f => !seen.has(f.transactionId));
+}
+
 async function runSyncCheck() {
+  const out = await runExclusive('sync', syncOnce);
+  if (!out.ran) {
+    console.log(`Auto-sync skipped: a ${out.busyWith} is still running; the next tick will look again.`);
+    return { skipped: out.busyWith };
+  }
+  return out.value;
+}
+
+async function syncOnce() {
   try {
     const token = await getValidAccessToken();
     const store = await getTokens();
@@ -288,51 +351,96 @@ async function runSyncCheck() {
       : new Date(Date.now() - 24 * 60 * 60 * 1000);
     const now = new Date();
 
+    // H-7: a window Schwab refused used to look exactly like a quiet one, and
+    // the checkpoint moved past it, so those days were never asked for again.
+    // Refused, empty and answered are three different results now.
+    const report = {};
     const fills = await getOptionFills(
       token,
       since.toISOString().slice(0, 10),
-      now.toISOString().slice(0, 10)
+      now.toISOString().slice(0, 10),
+      report
     );
+    const refused = (report.windowsFailed || 0) > 0 || report.accountFound === false;
+    const syncNote = !refused ? null : {
+      at: now.toISOString(),
+      windowsAsked: report.windowsAsked ?? null,
+      windowsOk: report.windowsOk ?? null,
+      windowsFailed: report.windowsFailed ?? null,
+      failures: report.failures || [],
+      error: report.error || null,
+      checkpointKeptAt: store.last_transaction_check || null,
+    };
 
     const state = await tradeStore.getState();
-    const alreadySeen = new Set(state.lastProcessedIds || []);
-    const freshFills = fills.filter(f => !alreadySeen.has(f.transactionId));
+    const freshFills = notYetProcessed(fills, state);
 
+    // The slow part -- prices, timeframes, chart, setup, stop -- is done on a
+    // private trial match, and nothing is written while it runs.
+    const enriched = new Map();
     if (freshFills.length) {
-      const { updatedState, newPending, newlyOpenedLegs } = processFills(freshFills, state);
-      if (newPending.length) {
-        await enrichWithUnderlyingPrices(token, newPending);
-        await enrichWithFtfc(token, newPending);
-        await enrichWithReplayData(token, newPending);
-        await enrichWithStrategy(newPending);
-        await enrichWithStopRule(token, newPending);
+      const trial = processFills(freshFills, { openLegs: clone(state.openLegs || []), pending: [] });
+      if (trial.newPending.length) {
+        await enrichWithUnderlyingPrices(token, trial.newPending);
+        await enrichWithFtfc(token, trial.newPending);
+        await enrichWithReplayData(token, trial.newPending);
+        await enrichWithStrategy(trial.newPending);
+        await enrichWithStopRule(token, trial.newPending);
       }
-      updatedState.lastProcessedIds = [
-        ...(state.lastProcessedIds || []).slice(-500), // keep this list bounded
-        ...freshFills.map(f => f.transactionId),
-      ];
-      await tradeStore.saveState(updatedState);
-      // Only here, in the live 5-minute/streamer-triggered check — never
-      // from runBackfill() below, which can surface a hundred-plus
-      // historical trades/legs at once and would spam notifications.
-      if (newlyOpenedLegs.length) {
-        console.log(`Auto-sync: ${newlyOpenedLegs.length} newly-opened position(s).`);
-        for (const leg of newlyOpenedLegs) {
-          notifyTradeOpened(leg).catch(() => {});
-          queueBrowserEvent('opened', { ticker: leg.ticker, dir: leg.dir, timestamp: leg.openTimestamp }).catch(() => {});
-          scheduleStillOpenCheck(leg);
-        }
+      for (const t of trial.newPending) enriched.set(tradeKey(t), t);
+    }
+
+    // Then the match is made again ON THE RECORD AS IT IS NOW and only the
+    // changes are saved: fills already handled meanwhile are skipped, the
+    // rest are matched against the open legs as they now stand, and an
+    // acknowledgement from the phone made meanwhile stays made. When nothing
+    // got in the way this is the same match as the trial, so every trade
+    // keeps its details; a trade the trial did not produce is queued without
+    // them and the app's catch-up fills them in.
+    let landed = [];
+    let opened = [];
+    await tradeStore.updateState(latest => {
+      const take = notYetProcessed(freshFills, latest);
+      const hadRefusal = !!(latest.lastSync && latest.lastSync.windowsFailed);
+      if (!take.length && !syncNote && !hadRefusal) return null;
+      const next = { ...latest };
+      if (take.length) {
+        const m = processFills(take, { openLegs: clone(latest.openLegs || []), pending: [] });
+        landed = m.newPending.map(t => enriched.get(tradeKey(t)) || t);
+        opened = m.newlyOpenedLegs;
+        next.openLegs = m.updatedState.openLegs;
+        next.pending = [...landed, ...(latest.pending || [])];
+        next.lastProcessedIds = unionIds(latest.lastProcessedIds, take.map(f => f.transactionId));
       }
-      if (newPending.length) {
-        console.log(`Auto-sync: ${newPending.length} closed trade(s) ready for tagging.`);
-        for (const trade of newPending) {
-          notifyTradeClosed(trade).catch(() => {}); // notifyTradeClosed already logs its own failures
-          queueBrowserEvent('closed', { ticker: trade.ticker, dir: trade.dir, timestamp: trade.exitTimestamp }).catch(() => {});
-        }
+      if (syncNote) next.lastSync = syncNote;
+      else if (hadRefusal) next.lastSync = { at: now.toISOString(), windowsFailed: 0, recoveredFrom: latest.lastSync.at || null };
+      return next;
+    });
+
+    // Only here, in the live 5-minute/streamer-triggered check — never
+    // from runBackfill() below, which can surface a hundred-plus
+    // historical trades/legs at once and would spam notifications.
+    if (opened.length) {
+      console.log(`Auto-sync: ${opened.length} newly-opened position(s).`);
+      for (const leg of opened) {
+        notifyTradeOpened(leg).catch(() => {});
+        queueBrowserEvent('opened', { ticker: leg.ticker, dir: leg.dir, timestamp: leg.openTimestamp }).catch(() => {});
+        scheduleStillOpenCheck(leg);
+      }
+    }
+    if (landed.length) {
+      console.log(`Auto-sync: ${landed.length} closed trade(s) ready for tagging.`);
+      for (const trade of landed) {
+        notifyTradeClosed(trade).catch(() => {}); // notifyTradeClosed already logs its own failures
+        queueBrowserEvent('closed', { ticker: trade.ticker, dir: trade.dir, timestamp: trade.exitTimestamp }).catch(() => {});
       }
     }
 
-    await setLastCheck(now.toISOString());
+    if (refused) {
+      console.log(`Auto-sync: Schwab refused ${syncNote.windowsFailed ?? 'the'} window(s); the checkpoint stays at ${syncNote.checkpointKeptAt} so the next tick asks again.`);
+    } else {
+      await setLastCheck(now.toISOString());
+    }
   } catch (err) {
     // Most common cause: not connected yet (no refresh token on file).
     // Read defensively: a rejection carrying something that is not an
@@ -340,6 +448,16 @@ async function runSyncCheck() {
     // contain it, and end the process.
     console.log('Auto-sync check skipped:', (err && err.message) || err);
   }
+}
+
+// Empties the record of what is waiting (see the reset route). Waits for a
+// running job, so a sync cannot save its results over the emptied record
+// half-way through.
+async function resetSyncState() {
+  const out = await runExclusive('reset',
+    () => tradeStore.updateState(() => ({ openLegs: [], pending: [], lastProcessedIds: [] })),
+    { wait: true });
+  return out.ran;
 }
 
 // One-time (or on-demand) wide-range pull for historical backfill.
@@ -357,9 +475,10 @@ async function runSyncCheck() {
 // "Schwab had nothing new", which was not something it could know.
 async function noteBackfillProgress(patch) {
   try {
-    const state = await tradeStore.getState();
-    state.lastBackfill = { ...(state.lastBackfill || {}), ...patch };
-    await tradeStore.saveState(state);
+    await tradeStore.updateState(latest => ({
+      ...latest,
+      lastBackfill: { ...(latest.lastBackfill || {}), ...patch },
+    }));
   } catch (err) {
     // Progress reporting must never be the thing that breaks an import.
     console.log('Could not record backfill progress:', err.message);
@@ -371,7 +490,31 @@ async function noteBackfillProgress(patch) {
 // whole journal on every trade.
 const ENRICH_BATCH = 25;
 
+// Saves the enriched copies of a backfill's own trades -- but only those
+// still waiting. One the phone has already taken stays taken.
+async function refreshWaiting(trades) {
+  const byId = new Map(trades.map(t => [t.id, t]));
+  await tradeStore.updateState(latest => {
+    let changed = false;
+    const pending = (latest.pending || []).map(p => {
+      if (!byId.has(p.id)) return p;
+      changed = true;
+      return byId.get(p.id);
+    });
+    return changed ? { ...latest, pending } : null;
+  });
+}
+
 async function runBackfill(daysBack = 365) {
+  const out = await runExclusive('backfill', () => backfillOnce(daysBack), { wait: true });
+  if (!out.ran) {
+    console.log('A backfill is already running; not starting a second one.');
+    return [];
+  }
+  return out.value;
+}
+
+async function backfillOnce(daysBack) {
   const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
   const now = new Date();
   const requestedFrom = start.toISOString().slice(0, 10);
@@ -409,30 +552,35 @@ async function runBackfill(daysBack = 365) {
       oldestWindowWithData: report.oldestWindowWithData || null,
     });
 
-    const state = await tradeStore.getState();
-    const alreadySeen = new Set(state.lastProcessedIds || []);
-    const freshFills = fills.filter(f => !alreadySeen.has(f.transactionId));
-
-    const { updatedState, newPending } = processFills(freshFills, {
-      openLegs: [],
-      pending: state.pending, // keep any trades already queued
+    // Matched on its own, from no open legs, as before -- but SAVED as a
+    // change to the record as it is now (F3). The live open legs are kept
+    // and this run's still-open legs are added beside them: it used to save
+    // its own empty list over them, so a position open at the time lost its
+    // purchase and its sale was later thrown away as unmatched. Fills
+    // handled meanwhile are skipped; the rest still go through.
+    //
+    // Queued BEFORE enriching. Enrichment is the slow part -- thirteen
+    // timeframes of candles per trade -- and there is no reason to make him
+    // stare at an empty journal through all of it.
+    let newPending = [];
+    await tradeStore.updateState(latest => {
+      const take = notYetProcessed(fills, latest);
+      const m = processFills(take, { openLegs: [], pending: [] });
+      newPending = m.newPending;
+      const have = new Set((latest.openLegs || []).map(legKey));
+      return {
+        ...latest,
+        openLegs: [...(latest.openLegs || []), ...m.updatedState.openLegs.filter(l => !have.has(legKey(l)))],
+        pending: [...newPending, ...(latest.pending || [])],
+        lastProcessedIds: unionIds(latest.lastProcessedIds, take.map(f => f.transactionId)),
+        lastBackfill: {
+          ...(latest.lastBackfill || {}),
+          phase: 'enriching',
+          tradesMatched: newPending.length,
+          freshFills: take.length,
+        },
+      };
     });
-
-    // Queue the matched trades BEFORE enriching them. Enrichment is the
-    // slow part -- thirteen timeframes of candles per trade -- and there
-    // is no reason to make him stare at an empty journal through all of
-    // it. The details fill themselves in on the next sync.
-    updatedState.lastProcessedIds = [
-      ...(state.lastProcessedIds || []),
-      ...freshFills.map(f => f.transactionId),
-    ];
-    updatedState.lastBackfill = {
-      ...(state.lastBackfill || {}),
-      phase: 'enriching',
-      tradesMatched: newPending.length,
-      freshFills: freshFills.length,
-    };
-    await tradeStore.saveState(updatedState);
 
     if (newPending.length) {
       // Worked through in batches, saving after each one.
@@ -450,19 +598,18 @@ async function runBackfill(daysBack = 365) {
         await enrichWithReplayData(token, batch);
         await enrichWithStrategy(batch);
         await enrichWithStopRule(token, batch);
-        // The batch holds the same objects the queue does, so saving the
-        // state is what actually keeps the work done so far.
-        await tradeStore.saveState(updatedState);
+        // Saved as it goes, onto the record as it is now: only this run's
+        // own trades that are still waiting are updated.
+        await refreshWaiting(batch);
         await noteBackfillProgress({
           phase: 'enriching',
           tradesMatched: newPending.length,
           tradesEnriched: Math.min(i + ENRICH_BATCH, newPending.length),
         });
       }
-      // The enriched copies are the same objects the queue holds, so
-      // saving the state again is what actually persists the extra detail.
-      const latest = await tradeStore.getState();
-      await tradeStore.saveState({ ...latest, pending: updatedState.pending });
+      // Once more for the whole run, as before; it changes only this run's
+      // own trades that are still waiting.
+      await refreshWaiting(newPending);
     }
 
     await noteBackfillProgress({
@@ -578,6 +725,7 @@ function startAutoSync(intervalCron = '*/5 * * * *') {
 // REAL ones. A rehearsal that calls a copy of the pipeline proves only
 // that the copy works.
 module.exports = { FTFC_RULE_VERSION, startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded,
+                   resetSyncState, jobRunning,
                    enrichWithUnderlyingPrices, priceWithProvenance,
                    enrichWithFtfc, enrichWithReplayData, enrichWithStopRule, enrichWithStrategy,
                    applyClassificationToTrade };

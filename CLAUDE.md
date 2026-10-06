@@ -80,6 +80,31 @@ Status on 30 Sept 2026:
   output and rollback plan, and needs the owner's authorization in words.
 - Phase 0 and Phase 1A were carried out and are live, before this
   sequence was set. See "Auditor_Review_Pack_Phase1".
+- **6 Oct 2026, the owner changed the process to end revision loops.**
+  - The Level 2 read-only code audit is COMPLETE for existing code. Its
+    blockers are F1 to F6.
+  - The Trade Engine design (v21, A-4, A-5, A-6, C-7, C-8, OD-1 to OD-9b)
+    is PARKED as written.
+  - Remaining work, in a fixed order:
+    - A: gate F5 (app; done, PR #169);
+    - B: F3 + F4 + H-3 + H-7 (this service);
+    - C: F1 + H-5;
+    - D: F2;
+    - E: rebuild the journal from the ledger, after the owner picks
+      B3-5.
+  - Each step: one-page plan, ONE auditor review round, the owner's
+    authorization in words, a PR with green checks, then a separate
+    merge authorization.
+  - **Step B (implemented here)** changes how "trades:state" is written:
+    - every write goes through `tradeStore.updateState(change)`, one at a
+      time, onto the record as it is at that moment;
+    - only one sync job (sync, backfill, reset) runs at a time;
+    - a backfill keeps the live open legs;
+    - lastProcessedIds is kept whole and de-duplicated in every path;
+    - a window Schwab refused leaves the checkpoint where it was, with
+      the reason in `lastSync`.
+    Checked by `tests/sync-state-safety.js`. Never write a copy of this
+    record that was read earlier.
 - The 7 known failures stay as baseline until the phase that owns them
   (auditor, C2). No new known failure without the owner's authorization.
 
