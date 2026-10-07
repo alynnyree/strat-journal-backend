@@ -48,7 +48,7 @@ const ENTRY_FACTS = ['ftfc', 'ftfcRun', 'ftfcConfirmed', 'ftfcDirection', 'ftfcT
 // citing the same closing fill.
 const EXIT_FACTS = ['undExit', 'undExitSource', 'undExitExact', 'undExitUpgradable'];
 // Only from the exact same pair (never carried to an added trade).
-const PAIR_ONLY = ['replayData', 'replayNote', 'undPricedWithAlpaca'];
+const PAIR_ONLY = ['replayData', 'replayNote', 'replayMissingReason', 'undPricedWithAlpaca'];
 // Worked out from other fields, or catch-up bookkeeping.
 const DERIVED = ['realizedRR', 'needsTagging', 'settled', 'fillAttempts', 'moneyDisagreement', 'classifyTries', 'stepE'];
 // Owner fields that exist whatever userSet says.
