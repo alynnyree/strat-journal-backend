@@ -140,6 +140,12 @@ Status on 30 Sept 2026:
       requires it. Owner data moves only by fill identity and the tool
       STOPS rather than discard, guess or merge (tests/stepE-prepare.js).
       Its outputs are owner data: never commit them.
+    - Correction (authorized 7 Oct 2026: "I authorize the Step E
+      correction"; plan accepted by the auditor after the first dry run's
+      L0 was BLOCKED): `replayMissingReason` is the app's own note about
+      a failed chart-bar fetch, so it is PAIR_ONLY machine state, never
+      owner data, and never moved to a new pair (tests/stepE-prepare.js
+      case 13). A field on no list still falls to "his" as a fail-safe.
     - The dry run and the APPLY on his phone are separate gates: the log
       goes to the auditor, and the apply needs the owner's words naming
       "Step E apply".

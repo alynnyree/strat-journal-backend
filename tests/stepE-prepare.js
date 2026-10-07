@@ -294,5 +294,25 @@ console.log('\n--- 12. hand corrections are never overwritten or copied ---');
   check('they travel only as his data, to the one trade with the same purchase', ac && ac.ftfc['5m'] === 'his' && ac.userSet && ac.userSet.ftfc === true);
 }
 
+console.log('\n--- 13. replayMissingReason is the app\'s own note: same pair only, never moved ---');
+{
+  // Authorized by the owner on 7 October 2026 ("I authorize the Step E
+  // correction"); correction plan accepted by the auditor. The app writes this
+  // field itself when a chart-bar fetch fails (index.html), so it is machine
+  // state about ONE pair, not his data.
+  const why = 'Could not reach the server for the chart bars: Load failed';
+  const j = [live('j-plain', P1, S1, 1), live('j-ad', A, Dd, 1, { replayData: null, replayMissingReason: why }), live('j-bc', B, C, 1, { replayData: null, replayMissingReason: why }),
+    live('j-t1', T1, U1, 1, { replayData: null, replayMissingReason: why }), live('j-t2', T2, U2, 1)];
+  const r = run(j);
+  check('not stopped', !r.stopped, r.stops);
+  check('its class is "machine fact, same pair only"', /^ {2}replayMissingReason: machine fact, same pair only$/m.test(r.log), r.log.split('\n').filter(l => /replayMissingReason:/.test(l)));
+  check('nothing is moved as his data', !/^MOVED/m.test(r.log) && /his data moved 0\./.test(r.log), r.log.split('\n').filter(l => /^MOVED|his data moved/.test(l)));
+  check('the removed trades carry no "his data" note', !/^REMOVED .*his data: .*replayMissingReason/m.test(r.log));
+  const ac = ledgerId(r, A, C), bd = ledgerId(r, B, Dd);
+  check('the added trades (new pairs) do not receive it', ac && bd && !('replayMissingReason' in ac) && !('replayMissingReason' in bd), [ac && ac.replayMissingReason, bd && bd.replayMissingReason]);
+  const t1 = byId(r, 'j-t1');
+  check('a kept trade (same pair) keeps its own, unchanged', t1 && t1.replayMissingReason === why);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
