@@ -57,18 +57,29 @@ function isLegDead(leg, atTimestamp) {
   return false;
 }
 
-function sameTradingDay(aMs, bMs) {
-  if (!aMs || !bMs) return false;
-  return new Date(aMs).toDateString() === new Date(bMs).toDateString();
-}
-
 // Picks which open leg a closing fill should be matched against.
 //
-// Plain FIFO (always the oldest) is what caused the mis-pairing. This
-// trader scalps — opens and closes are almost always the same session — so
-// a same-day open is overwhelmingly the right match. Only when there's no
-// same-day candidate does it fall back to FIFO, and dead legs are never
-// eligible at all.
+// THE OLDEST ELIGIBLE PURCHASE FIRST (fifo-v1). The owner chose this rule on
+// 7 October 2026 ("Option 1", audit Step E, B3-5), replacing "newest
+// same-day purchase first". The journal is rebuilt from the broker ledger
+// under the same rule, so trades that arrive from now on pair the way the
+// rebuilt history does. Equal purchase moments are ordered by the broker's
+// own fill id, compared as a number (the ledger's tie-break), so the choice
+// never depends on the order the fills happened to arrive in.
+//
+// Eligibility is unchanged: a dead leg (past its expiry, or older than
+// MAX_LEG_AGE_DAYS) is never eligible, and a close can't precede its open.
+// Known difference from the ledger's fifo-v1, kept deliberately and listed in
+// the Step E plan: this expiry test is 23:59:59 UTC on the expiry day and
+// there is a 45-day age limit; fifo-v1 uses the New York expiry date and has
+// no age limit.
+function compareFillIds(a, b) {
+  const x = a == null ? '' : String(a), y = b == null ? '' : String(b);
+  const dx = /^\d+$/.test(x), dy = /^\d+$/.test(y);
+  if (dx && dy) return x.length - y.length || (x < y ? -1 : x > y ? 1 : 0);
+  if (dx !== dy) return dx ? -1 : 1;
+  return x < y ? -1 : x > y ? 1 : 0;
+}
 function pickLegForClose(openLegs, fill) {
   const eligible = openLegs
     .map((leg, idx) => ({ leg, idx }))
@@ -79,16 +90,9 @@ function pickLegForClose(openLegs, fill) {
       !isLegDead(leg, fill.timestamp)
     );
   if (!eligible.length) return -1;
-
-  const sameDay = eligible.filter(({ leg }) => sameTradingDay(leg.openTimestamp, fill.timestamp));
-  if (sameDay.length) {
-    // Newest same-day open first — matches how a scalper actually layers in
-    // and out within a session.
-    sameDay.sort((a, b) => b.leg.openTimestamp - a.leg.openTimestamp);
-    return sameDay[0].idx;
-  }
-  // No same-day open: fall back to oldest-first (standard FIFO).
-  eligible.sort((a, b) => a.leg.openTimestamp - b.leg.openTimestamp);
+  eligible.sort((a, b) => (a.leg.openTimestamp - b.leg.openTimestamp)
+    || compareFillIds(a.leg.openFillId, b.leg.openFillId)
+    || (a.idx - b.idx));
   return eligible[0].idx;
 }
 
