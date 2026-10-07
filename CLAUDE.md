@@ -71,8 +71,13 @@ Status on 30 Sept 2026:
   - D5 the journal splits fee cents differently from R12's largest
     remainder; fill totals agree. No fee rewrite now; R12 applies to any
     future canonical data.
-  B3-5 remains OPEN: fifo-v1 and current-rule-v1 differ on 10 sales, with
-  identical money on every contract-day. The two NIO trades carrying his
+  B3-5 remained OPEN at 3B: fifo-v1 and current-rule-v1 differ on 10
+  sales, with identical money on every contract-day. **DECIDED 7 Oct 2026
+  by the owner: "Option 1", fifo-v1 (oldest purchase first) is the
+  production pairing rule** (Step E); current-rule-v1 stays a comparison
+  model only. tradeRebuild.js is still frozen, so its RULE_STATUS text
+  still says "candidate"; this note and the Step E files record the
+  decision. The two NIO trades carrying his
   chart drawings must be migrated non-destructively, never mapped by
   contract count.
   **Nothing further is authorized.** Any next implementation phase must
@@ -121,6 +126,23 @@ Status on 30 Sept 2026:
     closeQuantity, the contracts in its closing fill. It is data only, and
     pairing is unchanged. The app uses it with contractsOpened to refuse
     only a pair that would over-use a fill (tests/close-quantity.js).
+  - **Step E (plan v7, accepted by the auditor; implementation authorized
+    7 Oct 2026: "I authorize Step E implementation")**:
+    - E3: `matcher.js` pickLegForClose picks the OLDEST eligible purchase
+      (ties by fill id as a number), replacing "newest same-day first", so
+      new trades pair as fifo-v1 does (tests/oldest-first.js). Eligibility
+      (expiry 23:59:59 UTC, 45 days) is unchanged and is a known,
+      listed difference from fifo-v1.
+    - E1: `tools/stepE-prepare.js` (pure; crypto + tradeRebuild only) and
+      `tools/stepE-cli.js` (reads the journal export and the backup copy
+      read-only) produce the dry-run log, the prepared journal and the
+      restore file OFFLINE. Not part of the running server; nothing
+      requires it. Owner data moves only by fill identity and the tool
+      STOPS rather than discard, guess or merge (tests/stepE-prepare.js).
+      Its outputs are owner data: never commit them.
+    - The dry run and the APPLY on his phone are separate gates: the log
+      goes to the auditor, and the apply needs the owner's words naming
+      "Step E apply".
 - The 7 known failures stay as baseline until the phase that owns them
   (auditor, C2). No new known failure without the owner's authorization.
 
