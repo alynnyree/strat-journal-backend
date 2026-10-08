@@ -146,6 +146,19 @@ Status on 30 Sept 2026:
       a failed chart-bar fetch, so it is PAIR_ONLY machine state, never
       owner data, and never moved to a new pair (tests/stepE-prepare.js
       case 13). A field on no list still falls to "his" as a fail-safe.
+    - stepE-compare (plan approved by the auditor; implementation
+      authorized 7 Oct 2026: "I authorize step E-compare implementation"):
+      `tools/stepE-compare.js` (pure; crypto + stepE-prepare only) and
+      `tools/stepE-compare-cli.js` (inputs read-only, writes only the
+      report, never over an existing file). It re-runs E1 itself on X0 +
+      B0 (must reproduce the approved P0 fingerprint AND L0 byte for byte)
+      and on X_n + B0 with the approved range GIVEN, requires the P_n file
+      to be byte-identical to that result, and applies C1-C9. Field
+      classes are asked of E1 (a probe run's FIELD CLASSES), never copied;
+      a name E1 does not answer for is held to the broker rule. Trades are
+      matched by stepE.ledgerTradeId, never by shape. PASS or STOP with
+      every difference listed (tests/stepE-compare.js). It writes no
+      journal and repairs nothing; the apply still needs "Step E apply".
     - The dry run and the APPLY on his phone are separate gates: the log
       goes to the auditor, and the apply needs the owner's words naming
       "Step E apply".
