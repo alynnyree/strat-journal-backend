@@ -91,9 +91,21 @@ const tradeStore = require(path.join(BACKEND, 'tradeStore.js'));
 // ---- Fills, the way schwabClient hands them over.
 const OCC = 'SPY   261231C00600000';           // expires end of 2026: never "dead"
 const T0 = Date.now() - 3 * 60 * 60 * 1000;
+// M-1: a fill id must be a decimal broker id, and every fill carries its
+// account. The readable names below stay in the cases; ID() turns each into a
+// fixed decimal id.
+const NAMES = new Map();
+const ID = name => {
+  if (name == null) return null;
+  const id = /^[0-9]+$/.test(String(name)) ? String(name) : '9' + [...String(name)].map(c => c.charCodeAt(0)).join('');
+  NAMES.set(id, String(name));
+  return id;
+};
+const NAME = id => NAMES.get(String(id)) || id;   // back to the readable name, for the checks
+const ACCT = 'acct-test';
 function fill(id, kind, minute, price = 1, qty = 1, occ = OCC){
   const ts = T0 + minute * 60000; const d = new Date(ts);
-  return { transactionId: id, occ, ticker: 'SPY', putCall: 'CALL',
+  return { transactionId: ID(id), accountRef: ACCT, occ, ticker: 'SPY', putCall: 'CALL',
     instruction: kind === 'open' ? 'BUY_TO_OPEN' : 'SELL_TO_CLOSE',
     price, quantity: qty, fees: 0.66,
     date: d.toISOString().slice(0, 10), time: d.toISOString().slice(11, 16), timestamp: ts };
@@ -101,9 +113,9 @@ function fill(id, kind, minute, price = 1, qty = 1, occ = OCC){
 const liveLeg = (id, minute) => {
   const f = fill(id, 'open', minute);
   return { occ: f.occ, ticker: 'SPY', dir: 'Long', openPrice: f.price, openDate: f.date, openTime: f.time,
-    openTimestamp: f.timestamp, totalQuantity: 1, remaining: 1, openFees: 0.66, openFeeCents: 66, openFillId: id };
+    openTimestamp: f.timestamp, totalQuantity: 1, remaining: 1, openFees: 0.66, openFeeCents: 66, openFillId: ID(id), accountRef: ACCT };
 };
-const pairs = st => (st.pending || []).map(t => (t.fills || []).join('+'));
+const pairs = st => (st.pending || []).map(t => (t.fills || []).map(NAME).join('+'));
 const fresh = (s) => { for (const k of Object.keys(store)) delete store[k]; writeState(s); tokens.last_transaction_check = null; schwab.answers = []; schwab.asked = []; };
 const noRepeats = list => new Set(list.map(String)).size === list.length;
 
@@ -129,17 +141,17 @@ const noRepeats = list => new Set(list.map(String)).size === list.length;
     // =====================================================================
     console.log('\n--- 2 & 3. a live open leg survives a backfill; its close still becomes a trade ---');
     {
-      fresh({ openLegs: [liveLeg('o-live', 100)], pending: [], lastProcessedIds: ['o-live'] });
+      fresh({ openLegs: [liveLeg('o-live', 100)], pending: [], lastProcessedIds: [ID('o-live')] });
       schwab.answers.push({ fills: [fill('h1', 'open', 0), fill('h2', 'close', 3)] });   // history
       await cron.runBackfill(30);
       const st = readState();
-      check('2. the live open leg is still there after the backfill', (st.openLegs || []).some(l => l.openFillId === 'o-live'));
+      check('2. the live open leg is still there after the backfill', (st.openLegs || []).some(l => l.openFillId === ID('o-live')));
       check('the backfill\'s own historical trade was queued', pairs(st).includes('h1+h2'));
       schwab.answers.push({ fills: [fill('c-live', 'close', 110)] });
       await cron.runSyncCheck();
       const after = readState();
       check('3. the later close becomes a trade with its opening', pairs(after).includes('o-live+c-live'));
-      check('and the closed leg is gone from the open legs', !(after.openLegs || []).some(l => l.openFillId === 'o-live'));
+      check('and the closed leg is gone from the open legs', !(after.openLegs || []).some(l => l.openFillId === ID('o-live')));
     }
 
     // =====================================================================
@@ -201,7 +213,7 @@ const noRepeats = list => new Set(list.map(String)).size === list.length;
       // Another operation (a second process, say) handles m1+m2 meanwhile.
       const s = readState();
       s.pending.unshift({ id: 'OTHER-OP', fills: ['m1', 'm2'] });
-      s.lastProcessedIds = [...s.lastProcessedIds, 'm1', 'm2'];
+      s.lastProcessedIds = [...s.lastProcessedIds, ID('m1'), ID('m2')];
       writeState(s);
       release(); await job;
       const st = readState();
@@ -221,7 +233,7 @@ const noRepeats = list => new Set(list.map(String)).size === list.length;
       schwab.answers.push({ fills: many });
       await cron.runBackfill(30);
       const st = readState();
-      const mine = st.pending.filter(t => /^p\d+\+q\d+$/.test((t.fills || []).join('+')));
+      const mine = st.pending.filter(t => /^p\d+\+q\d+$/.test((t.fills || []).map(NAME).join('+')));
       check(`8. all 60 trades from a three-batch backfill are waiting (${mine.length})`, mine.length === 60);
       check('8. and every one carries its enrichment from the later batches', mine.every(t => t.undEntry === 500));
       check('8. processed ids have no repeats', noRepeats(st.lastProcessedIds) && st.lastProcessedIds.length === 120);

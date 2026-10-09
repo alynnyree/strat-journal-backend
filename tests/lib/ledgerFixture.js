@@ -43,8 +43,12 @@ const entry = (raw, accountRef = 'acct-aaaaaaaaaaaaaaaa') => ({
 const wrapped = e => ({ type: 'string', value: e });
 
 // The same record as the live sync hands it to the matcher (schwabClient's
-// extractOptionFills shape).
-function fillOf(raw) {
+// extractOptionFills shape, plus the account reference getOptionFills stamps
+// on every fill since M-1 -- the same default account as `entry` above).
+// (Used as `.map(fillOf)`, so a second argument that is not a string -- the
+// array index -- is ignored rather than taken as an account.)
+function fillOf(raw, acct) {
+  const accountRef = typeof acct === 'string' ? acct : 'acct-aaaaaaaaaaaaaaaa';
   const line = raw.transferItems[0];
   const ms = Date.parse(raw.tradeDate.replace(/\+0000$/, 'Z'));
   const d = new Date(ms);
@@ -55,6 +59,7 @@ function fillOf(raw) {
     putCall: line.instrument.putCall, instruction: buy ? 'BUY_TO_OPEN' : 'SELL_TO_CLOSE',
     price: line.price, quantity: Math.abs(line.amount), fees: Math.round(fees * 100) / 100,
     date: d.toISOString().slice(0, 10), time: d.toISOString().slice(11, 16), timestamp: ms,
+    accountRef,
   };
 }
 

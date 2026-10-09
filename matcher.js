@@ -86,6 +86,8 @@ function pickLegForClose(openLegs, fill) {
     .filter(({ leg }) =>
       leg.occ === fill.occ &&
       leg.remaining > 0 &&
+      // M-1: the same account, both sides known. Never inferred.
+      !!leg.accountRef && !!fill.accountRef && leg.accountRef === fill.accountRef &&
       leg.openTimestamp <= fill.timestamp && // a close can't precede its own open
       !isLegDead(leg, fill.timestamp)
     );
@@ -119,6 +121,8 @@ function pickLegForClose(openLegs, fill) {
 // unpaired is never listed -- part paired is not paired.
 const legShapeKey = l => `S:${l.occ}|${l.openTimestamp}|${l.openPrice}|${l.totalQuantity}`;
 const closeShapeKey = f => `S:${f.occ}|${f.timestamp}|${f.price}|${f.quantity}`;
+// The kinds a sale's unpaired remainder can be recorded as (H-2, M-1).
+const CLOSE_KINDS = ['close-without-open', 'account-mismatch', 'account-unknown'];
 function exceptionKey(kind, fillId, shapeKey) {
   return fillId != null ? `${kind}:${fillId}` : `${kind}:${shapeKey}`;
 }
@@ -132,10 +136,88 @@ function whyUnpaired(openLegs, fill, partial) {
   return 'the purchase on file is past its expiry or older than 45 days';
 }
 
+// A TRADE'S ID COMES FROM ITS BROKER FILLS (audit M-1, plan v4; authorized
+// by the owner 9 Oct 2026: "I authorize M-1 implementation").
+//
+// It used to end in five random characters, so the same two fills paired
+// again got a different id every time. Now it is the contract, both times
+// (readable only -- they carry no identity) and "p" plus the first 32 hex
+// characters of the SHA-256 of one canonical string built from the ONE
+// account both fills belong to and the two broker fill ids, each with its
+// length in front and in a fixed order:
+//   "m1v1|" + len(acct) + ":" + acct + "|" + len(open) + ":" + open + "|" + len(close) + ":" + close
+// "m1v1" is a version: any later change gives different ids, never
+// silently equal ones.
+//
+// A fill id is valid only as Schwab's activityId (decimal digits, after
+// String(), nothing else) or "U-" + exactly 32 lowercase hex characters
+// (schwabClient's deterministic id for a record with no activityId).
+// Anything else counts as MISSING: nothing is trimmed, padded, case-folded
+// or replaced. A pairing with a missing id is never queued as a trade (no
+// random fallback): it is recorded as "pair-unidentified" instead.
+//
+// Pairing requires both fills to carry the SAME account reference
+// (schwabClient stamps it, from the ledger's own refOf). A sale whose only
+// purchase on file is in another account is recorded "account-mismatch";
+// one where either side has no reference, "account-unknown". Nothing is
+// inferred: a leg with no reference is never assumed to be the only account.
+//
+// Two DIFFERENT fill pairs under one id (a hash collision, which a 128-bit
+// hash makes practically impossible -- detected, never trusted away) queue
+// neither trade: one "id-collision" incident holds both pairs.
+const crypto = require('crypto');
+const sha256hex = s => crypto.createHash('sha256').update(s).digest('hex');
+function validFillId(id) {
+  if (id == null) return null;
+  const s = String(id);
+  return /^[0-9]+$/.test(s) || /^U-[0-9a-f]{32}$/.test(s) ? s : null;
+}
+function canonicalPair(acct, open, close) {
+  const part = v => `${String(v).length}:${v}`;
+  return `m1v1|${part(acct)}|${part(open)}|${part(close)}`;
+}
+function tradeIdFor(occ, openTime, closeTime, acct, open, close, idHash = sha256hex) {
+  return `${occ}-${openTime}-${closeTime}-p${idHash(canonicalPair(acct, open, close)).slice(0, 32)}`;
+}
+// One incident record for two (or more) different pairs under one id. The
+// key is the same however often, and by whichever layer, it is seen again.
+function collisionIncident(id, trades, layer) {
+  const canon = trades.map(t => canonicalPair(t.accountRef, t.fills[0], t.fills[1]));
+  return {
+    kind: 'id-collision',
+    key: collisionKey(id, canon),
+    id,
+    pairs: trades.map(t => ({ fills: t.fills, accountRef: t.accountRef, occ: t.occ, contracts: t.contracts,
+      entryTimestamp: t.entryTimestamp, exitTimestamp: t.exitTimestamp,
+      entryFeeCents: t.entryFees == null ? null : Math.round(t.entryFees * 100),
+      exitFeeCents: t.exitFees == null ? null : Math.round(t.exitFees * 100) })),
+    detectedBy: [layer],
+    reason: 'two different broker fill pairs produced the same trade id; neither was queued',
+  };
+}
+function collisionKey(id, canonicals) {
+  return `id-collision:${id}:${sha256hex([...new Set(canonicals)].sort().join('\n'))}`;
+}
+// The same naming of a leg the sync uses (cron.js legKey).
+const legKeyOf = l => (l.openFillId ? 'F:' + l.openFillId
+  : `S:${l.occ}|${l.openTimestamp}|${l.openPrice}|${l.totalQuantity}`);
+// Why a sale's remainder found no purchase in ITS account (M-1). null when
+// the account is not the reason, and the H-2 reasons apply.
+function accountReason(openLegs, fill) {
+  if (!fill.accountRef) return { kind: 'account-unknown', reason: 'the sale carries no account reference' };
+  const otherwise = openLegs.filter(l => l.occ === fill.occ && l.remaining > 0
+    && l.openTimestamp <= fill.timestamp && !isLegDead(l, fill.timestamp));
+  if (otherwise.some(l => !l.accountRef)) return { kind: 'account-unknown', reason: 'a purchase of this contract on file carries no account reference' };
+  if (otherwise.some(l => l.accountRef !== fill.accountRef)) return { kind: 'account-mismatch', reason: 'the purchase of this contract on file is in another account' };
+  return null;
+}
+
 // state: { openLegs: [...], pending: [...] }
 // fills: array of normalized fills, already sorted by time, not yet processed
 // (caller is responsible for not re-feeding already-processed transactionIds)
-function processFills(fills, state) {
+// opts.idHash: tests only, to force a collision. Never passed by the service.
+function processFills(fills, state, opts = {}) {
+  const idHash = opts.idHash || sha256hex;
   const openLegs = [...state.openLegs];
   const newPending = [];
   const exceptions = [];
@@ -169,6 +251,8 @@ function processFills(fills, state) {
         // the note on `fills` below: this is what makes a trade traceable
         // back to the broker rather than identifiable only by its shape.
         openFillId: fill.transactionId == null ? null : String(fill.transactionId),
+        // M-1: the account of the opening fill; a sale pairs only with its own.
+        accountRef: fill.accountRef || null,
       };
       openLegs.push(leg);
       newlyOpenedLegs.push(leg);
@@ -222,8 +306,11 @@ function processFills(fills, state) {
         const pnlPercent = leg.openPrice ? (perContractDiff / leg.openPrice) * 100 : 0;
         const remainingAfterThis = leg.remaining - qtyMatched;
         const heldMs = fill.timestamp - leg.openTimestamp;
-        newPending.push({
-          id: `${fill.occ}-${leg.openTime}-${fill.time}-${Math.random().toString(36).slice(2, 7)}`,
+        // M-1: both ids valid, or this piece is not queued (see the header).
+        const vOpen = validFillId(leg.openFillId), vClose = validFillId(fill.transactionId);
+        const queued = !!(vOpen && vClose);
+        const trade = {
+          id: queued ? tradeIdFor(fill.occ, leg.openTime, fill.time, leg.accountRef, vOpen, vClose, idHash) : null,
           ticker: leg.ticker,
           occ: leg.occ,
           dir: leg.dir,
@@ -284,27 +371,49 @@ function processFills(fills, state) {
           // a purchase whichever sale it is matched to. Two trades sharing
           // a fill are two versions of the same thing, and the app refuses
           // the second one on sight.
-          fills: [leg.openFillId, fill.transactionId == null ? null : String(fill.transactionId)]
-            .filter(Boolean),
-        });
+          fills: [vOpen, vClose],
+          // M-1: what the id rests on. "uncertain-fill-id" when either fill
+          // is one Schwab sent without an activityId (a "U-" id).
+          idBasis: /^U-/.test(vOpen || '') || /^U-/.test(vClose || '') ? 'uncertain-fill-id' : 'fill-pair',
+          accountRef: leg.accountRef,
+        };
+        if (queued) newPending.push(trade);
+        else {
+          const rawClose = fill.transactionId == null ? null : String(fill.transactionId);
+          exceptions.push({
+            kind: 'pair-unidentified',
+            key: `pair-unidentified:${legKeyOf(leg)}>${rawClose != null ? 'F:' + rawClose : closeShapeKey(fill)}`,
+            identityUncertain: true,
+            legKey: legKeyOf(leg),
+            openFillId: leg.openFillId || null, closeFillId: rawClose,
+            occ: fill.occ, ticker: leg.ticker,
+            entryDate: leg.openDate, entryTime: leg.openTime, entryTimestamp: leg.openTimestamp,
+            exitDate: fill.date, exitTime: fill.time, exitTimestamp: fill.timestamp,
+            optEntry: leg.openPrice, optExit: fill.price,
+            contracts: qtyMatched, entryFeeCents, exitFeeCents,
+            reason: 'a broker fill id is missing or not in a recognised form, so no trade id can be made',
+          });
+        }
         leg.remaining = remainingAfterThis;
         qtyToClose -= qtyMatched;
         const closeId = fill.transactionId == null ? null : String(fill.transactionId);
-        pairedWith.push({ fillId: leg.openFillId || null, contracts: qtyMatched });
+        pairedWith.push({ fillId: leg.openFillId || null, contracts: qtyMatched, queued });
         if (!pairsOfLeg.has(leg)) pairsOfLeg.set(leg, []);
-        pairsOfLeg.get(leg).push({ fillId: closeId, contracts: qtyMatched });
-        if (remainingAfterThis === 0 && leg.openFillId) {
+        pairsOfLeg.get(leg).push({ fillId: closeId, contracts: qtyMatched, queued });
+        // Evidence only when every piece of this purchase in this call became
+        // a queued trade (M-1: a piece with no id is not a trade).
+        if (remainingAfterThis === 0 && leg.openFillId && pairsOfLeg.get(leg).every(x => x.queued)) {
           fullyPaired.push({
-            resolves: 'open-retired', fillId: leg.openFillId,
+            resolves: ['open-retired'], fillId: leg.openFillId,
             occ: leg.occ, date: leg.openDate, time: leg.openTime, timestamp: leg.openTimestamp,
             price: leg.openPrice, quantity: leg.totalQuantity,
             pairedWith: pairsOfLeg.get(leg).slice(),
           });
         }
       }
-      if (qtyToClose === 0 && fill.quantity > 0 && fill.transactionId != null) {
+      if (qtyToClose === 0 && fill.quantity > 0 && fill.transactionId != null && pairedWith.every(x => x.queued)) {
         fullyPaired.push({
-          resolves: 'close-without-open', fillId: String(fill.transactionId),
+          resolves: CLOSE_KINDS, fillId: String(fill.transactionId),
           occ: fill.occ, date: fill.date, time: fill.time, timestamp: fill.timestamp,
           price: fill.price, quantity: fill.quantity, pairedWith,
         });
@@ -314,9 +423,12 @@ function processFills(fills, state) {
       // of this sale's fee still add up to the cent Schwab charged.
       if (qtyToClose > 0) {
         const fillId = fill.transactionId == null ? null : String(fill.transactionId);
+        // M-1: when the account is why nothing was eligible, it says so.
+        const acc = accountReason(openLegs, fill);
+        const kind = acc ? acc.kind : 'close-without-open';
         exceptions.push({
-          kind: 'close-without-open',
-          key: exceptionKey('close-without-open', fillId, closeShapeKey(fill)),
+          kind,
+          key: exceptionKey(kind, fillId, closeShapeKey(fill)),
           fillId,
           ...(fillId == null ? { identityUncertain: true } : {}),
           occ: fill.occ, ticker: fill.ticker,
@@ -325,10 +437,34 @@ function processFills(fills, state) {
           contractsUnmatched: qtyToClose,
           contractsInSale: fill.quantity,
           feeCents: closeFee.cents,
-          reason: whyUnpaired(openLegs, fill, qtyToClose < fill.quantity),
+          reason: acc ? acc.reason : whyUnpaired(openLegs, fill, qtyToClose < fill.quantity),
         });
       }
     }
+  }
+
+  // M-1: two DIFFERENT fill pairs under one id in this call. Neither is
+  // queued and neither overwrites the other: one incident holds both pairs
+  // (their contracts and fee cents included, so nothing goes missing), and
+  // their fills are not offered as evidence that anything was paired.
+  const pairOf = t => `${t.accountRef}|${t.fills.join('+')}`;
+  const byId = new Map();
+  for (const t of newPending) {
+    if (!byId.has(t.id)) byId.set(t.id, new Map());
+    byId.get(t.id).set(pairOf(t), t);
+  }
+  const collided = new Set();
+  for (const [id, pairs] of byId) {
+    if (pairs.size < 2) continue;
+    const members = [...pairs.values()];
+    exceptions.push(collisionIncident(id, members, 'matcher'));
+    for (const t of members) collided.add(pairOf(t));
+  }
+  if (collided.size) {
+    const gone = newPending.filter(t => collided.has(pairOf(t)));
+    const goneFills = new Set(gone.flatMap(t => t.fills));
+    newPending.splice(0, newPending.length, ...newPending.filter(t => !collided.has(pairOf(t))));
+    fullyPaired.splice(0, fullyPaired.length, ...fullyPaired.filter(f => !goneFills.has(f.fillId)));
   }
 
   // Drop fully-closed legs, and also purge dead ones (expired contracts,
@@ -373,4 +509,5 @@ function processFills(fills, state) {
     fullyPaired,
   };
 }
-module.exports = { processFills, expirationFromOcc, isLegDead };
+module.exports = { processFills, expirationFromOcc, isLegDead,
+  validFillId, canonicalPair, tradeIdFor, collisionKey, collisionIncident, CLOSE_KINDS };

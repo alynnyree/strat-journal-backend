@@ -198,6 +198,38 @@ Status on 30 Sept 2026:
     (measured; every other writer keeps it). So H-2 is never rolled back by
     a plain revert: a rollback keeps the reset line that preserves
     `exceptions`, and a backup export is taken first.
+- **M-1 (Phase 1; plan v4 approved by the auditor; implementation
+  authorized 9 Oct 2026: "I authorize M-1 implementation")**: a trade's id
+  comes from its broker fills.
+  - id = contract-openTime-closeTime-"p" + the first 32 hex of the
+    SHA-256 of "m1v1|" + len(acct) + ":" + acct + "|" + len(open) + ":" +
+    open + "|" + len(close) + ":" + close (matcher.js canonicalPair /
+    tradeIdFor). The random suffix is gone. Existing ids, including Step
+    E's "T:" ids, are never renamed.
+  - A fill id is valid only as decimal digits (Schwab's activityId) or
+    "U-" + 32 lowercase hex; anything else is MISSING (never trimmed). A
+    pairing with a missing id is not queued: "pair-unidentified", keyed by
+    the leg, always uncertain. A "U-" side gives idBasis
+    "uncertain-fill-id"; otherwise "fill-pair".
+  - getOptionFills stamps every fill with accountRef =
+    ledgerAccount.refOf(hashValue). A sale pairs only with a leg of the SAME
+    account, both known: otherwise "account-mismatch" / "account-unknown".
+    Nothing is inferred. Trades carry accountRef.
+  - Two different pairs under one id (forced in tests only): neither is
+    queued, one "id-collision" incident per key, with detections (every
+    detection, the first included) and detectedBy ("matcher", "queue").
+  - DELETE /api/trades/pending/:id?fills=open,close removes only that
+    pair; a different pair under the id is kept and answered 409. Without
+    "fills", the old behaviour.
+  - The rehearsals (testTrade.js, replayCheck.js) give their pretend fills
+    "U-" ids and accountRef "rehearsal"; they never reach his journal.
+  - Tests: tests/trade-ids.js; the old fixtures now use decimal ids and an
+    account (tests/lib/ledgerFixture.js fillOf stamps one).
+    tests/live-fill-account.js runs Schwab-shaped transactions through the
+    REAL getOptionFills and sync (the stamp is in getOptionFills, just
+    before each fill is collected -- extractOptionFills cannot know the
+    account, and brokerInspect reads it alone), and proves itself by
+    failing with the stamping line removed.
 - **H-4 owner decisions (9 Oct 2026), POLICY ONLY:** Q1 "Option A" -- a
   broker-confirmed worthless expiry becomes a trade closed at $0.00 on the
   verified expiry date, marked "expired", only with full broker evidence,

@@ -1,4 +1,9 @@
+const crypto = require('crypto');
 const { processFills } = require('./matcher');
+// M-1: a rehearsal's fills are not broker records. Each gets a "U-" id (the
+// form for a fill with no activityId, marked uncertain) and an account
+// reference that can never be a real one.
+const rehearsalId = s => 'U-' + crypto.createHash('sha256').update('rehearsal|' + s).digest('hex').slice(0, 32);
 const { getValidAccessToken } = require('./auth');
 
 // A REHEARSED TRADE, run through the real machinery.
@@ -215,14 +220,14 @@ function buildFills(session, strike, entryMs, exitMs, choices = {}) {
   const dateStr = `${session.year}-${session.month}-${session.day}`;
   return [
     {
-      transactionId: 'rehearsal-open', occ, ticker,
+      transactionId: rehearsalId(`open|${occ}|${entryMs}`), accountRef: 'rehearsal', occ, ticker,
       instruction: 'BUY_TO_OPEN', putCall,
       price: OPEN_PRICE, quantity: CONTRACTS, fees: FEE_PER_SIDE,
       netAmount: -(gross(OPEN_PRICE) + FEE_PER_SIDE),
       date: dateStr, time: at(entryMs), timestamp: entryMs,
     },
     {
-      transactionId: 'rehearsal-close', occ, ticker,
+      transactionId: rehearsalId(`close|${occ}|${exitMs}`), accountRef: 'rehearsal', occ, ticker,
       instruction: 'SELL_TO_CLOSE', putCall,
       price: CLOSE_PRICE, quantity: CONTRACTS, fees: FEE_PER_SIDE,
       netAmount: gross(CLOSE_PRICE) - FEE_PER_SIDE,

@@ -49,14 +49,14 @@ function buildTransactions(input) {
   });
 
   return [
+    // No activityId: these are not broker records, so schwabClient gives each
+    // its deterministic "U-" id, marked uncertain -- which is the truth (M-1).
     {
-      activityId: 'replay-open',
       tradeDate: new Date(entryTimestamp).toISOString(),
       netAmount: -(gross(entryPrice) + (entryFees || 0)),
       transferItems: [leg(entryPrice, 'OPENING', true)],
     },
     {
-      activityId: 'replay-close',
       tradeDate: new Date(exitTimestamp).toISOString(),
       netAmount: gross(exitPrice) - (exitFees || 0),
       transferItems: [leg(exitPrice, 'CLOSING', false)],
@@ -152,7 +152,9 @@ async function runReplayCheck(deps, input) {
   let fills = [];
   await runStep(steps, 'Read the fills as Schwab sends them', async () => {
     const txs = buildTransactions(input);
-    fills = txs.flatMap(t => extractOptionFills(t));
+    // M-1: pairing needs both fills in one account. A rehearsal is in none
+    // of his, so both carry a reference that can never be a real one.
+    fills = txs.flatMap(t => extractOptionFills(t)).map(f => ({ ...f, accountRef: 'rehearsal' }));
     if (fills.length !== 2) throw new Error(`Expected a buy and a sell, got ${fills.length}.`);
     return `${fills[0].instruction} then ${fills[1].instruction}, on ${fills[0].date}.`;
   });

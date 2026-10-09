@@ -107,9 +107,29 @@ router.get('/trades/pending/:id/replay', wrap(async (req, res) => {
 
 // Call once the trade has been tagged and saved into the app's own
 // journal (localStorage), so the backend stops surfacing it again.
+//
+// M-1: an app from this version names the fill pair it handled
+// (?fills=open,close). Only entries with that id AND that pair are removed.
+// One with the same id and a DIFFERENT pair is kept, and the answer is 409
+// naming it, so the app can record the collision. Without "fills" (an app
+// from before this change) it behaves exactly as before.
 router.delete('/trades/pending/:id', wrap(async (req, res) => {
-  await tradeStore.removePendingTrade(req.params.id);
-  res.json({ ok: true });
+  if (req.query.fills === undefined) {
+    await tradeStore.removePendingTrade(req.params.id);
+    return res.json({ ok: true });
+  }
+  const pair = String(req.query.fills).split(',');
+  if (pair.length !== 2 || pair.some(f => !f)) {
+    return res.status(400).json({ error: 'The trade to remove must name exactly two broker fills (open,close).', removed: 0 });
+  }
+  const out = await tradeStore.removePendingTradeIfPair(req.params.id, pair);
+  if (out.kept.length) {
+    return res.status(409).json({
+      error: 'Another trade with the same id but different broker fills is waiting; it was kept.',
+      removed: out.removed, queuedPairs: out.kept.slice(0, 10),
+    });
+  }
+  res.json({ ok: true, removed: out.removed });
 }));
 
 // One-time historical pull. daysBack defaults to ~90 days; Schwab's own
@@ -167,12 +187,16 @@ router.get('/trades/backfill/status', wrap(async (req, res) => {
 const EXCEPTIONS_SHOWN = 100;
 const EXCEPTION_FIELDS = ['kind', 'key', 'fillId', 'identityUncertain', 'occ', 'ticker', 'date', 'time',
   'timestamp', 'price', 'contractsUnmatched', 'contractsInSale', 'contractsRemaining', 'contractsOpened',
-  'feeCents', 'reason', 'status', 'firstSeenAt', 'firstSeenBy', 'resolvedAt', 'conflicted', 'observationsNotKept'];
+  'feeCents', 'reason', 'status', 'firstSeenAt', 'firstSeenBy', 'resolvedAt', 'conflicted', 'observationsNotKept',
+  // M-1 kinds
+  'id', 'lastSeenAt', 'detections', 'contracts', 'entryDate', 'exitDate'];
 const cut = v => (typeof v === 'string' && v.length > 200 ? v.slice(0, 200) + '...' : v);
 function exceptionForPhone(e) {
   const out = {};
   for (const f of EXCEPTION_FIELDS) if (e[f] !== undefined && (e[f] === null || typeof e[f] !== 'object')) out[f] = cut(e[f]);
   if (Array.isArray(e.observations)) out.observations = e.observations.length;
+  if (Array.isArray(e.detectedBy)) out.detectedBy = e.detectedBy.slice(0, 5).map(x => String(x).slice(0, 20)).join(',');
+  if (Array.isArray(e.pairs)) out.pairs = e.pairs.length;
   if (e.resolution && typeof e.resolution === 'object') out.resolvedBy = cut(String(e.resolution.by || ''));
   return out;
 }
@@ -186,8 +210,9 @@ router.get('/trades/exceptions', wrap(async (req, res) => {
     .sort((a, b) => (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0)
       || (String(a.key) < String(b.key) ? -1 : String(a.key) > String(b.key) ? 1 : 0));
   // A fixed set of labels, so stored values can never add keys to the answer.
-  const byKind = { 'close-without-open': 0, 'open-retired': 0, other: 0 };
-  for (const e of list) { const k = e.kind === 'close-without-open' || e.kind === 'open-retired' ? e.kind : 'other'; byKind[k]++; }
+  const byKind = { 'close-without-open': 0, 'open-retired': 0, 'account-mismatch': 0, 'account-unknown': 0,
+    'pair-unidentified': 0, 'id-collision': 0, other: 0 };
+  for (const e of list) { const k = Object.prototype.hasOwnProperty.call(byKind, e.kind) && e.kind !== 'other' ? e.kind : 'other'; byKind[k]++; }
   const legs = Array.isArray(state.openLegs) ? state.openLegs : [];
   res.json({
     exceptions: list.slice(0, EXCEPTIONS_SHOWN).map(exceptionForPhone),

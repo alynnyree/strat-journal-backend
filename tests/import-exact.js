@@ -68,7 +68,8 @@ function fillsFromExport(file){
       instruction: r.isBuy ? 'BUY_TO_OPEN' : 'SELL_TO_CLOSE',
       quantity: r.qty, price: r.price, fees: r.fees,
       date: r.date, time: new Date(ts).toISOString().slice(11,16), timestamp: ts,
-      transactionId: 'csv' + n, _amount: r.amount,
+      // M-1: a decimal id and one account, as the live sync delivers them.
+      transactionId: String(n), accountRef: 'acct-test', _amount: r.amount,
     };
   });
 }
@@ -129,7 +130,7 @@ if(!FILES.length){
     occ: 'SPY   260302C00700000', ticker: 'SPY', putCall: 'CALL', instruction,
     quantity: qty, price, fees, date: '2026-03-02',
     time: new Date(t(n)).toISOString().slice(11,16), timestamp: t(n),
-    transactionId: 'p' + n + instruction + qty,
+    transactionId: String(100 + n * 10 + qty), accountRef: 'acct-test',
   });
   // The two that used to lose and invent a cent.
   const cases = [[1.00, 3, [1,1,1]], [2.00, 3, [1,1,1]], [4.62, 7, [3,4]], [3.97, 6, [1,2,3]], [0.01, 5, [1,1,1,1,1]]];
@@ -150,10 +151,11 @@ if(!FILES.length){
   const t = n => Date.parse('2026-03-02T15:00:00Z') + n * 60000;
   const oldLeg = { occ: 'SPY   260302C00700000', ticker: 'SPY', dir: 'Long', openPrice: 1.00,
     openDate: '2026-03-02', openTime: '10:00', openTimestamp: t(0),
-    totalQuantity: 3, remaining: 3, openFees: 1.00 };   // no openFeeCents on it
+    totalQuantity: 3, remaining: 3, openFees: 1.00,     // no openFeeCents on it
+    openFillId: '7001', accountRef: 'acct-test' };      // (M-1: a fill id and an account, or no trade forms)
   const close = { occ: 'SPY   260302C00700000', ticker: 'SPY', putCall: 'CALL',
     instruction: 'SELL_TO_CLOSE', quantity: 3, price: 1.50, fees: 1.98,
-    date: '2026-03-02', time: '10:05', timestamp: t(5), transactionId: 'old1' };
+    date: '2026-03-02', time: '10:05', timestamp: t(5), transactionId: '7002', accountRef: 'acct-test' };
   const { newPending } = processFills([close], { openLegs: [oldLeg], pending: [], lastProcessedIds: [] });
   check('a position opened before this change still closes correctly',
     newPending.length === 1 && cents(newPending[0].fees) === cents(2.98));
@@ -166,7 +168,7 @@ if(!FILES.length){
     occ: 'SPY   260302C00700000', ticker: 'SPY', putCall: 'CALL', instruction,
     quantity: qty, price: instruction === 'BUY_TO_OPEN' ? 1.0 : 1.5, fees,
     date: '2026-03-02', time: new Date(t(n)).toISOString().slice(11,16),
-    timestamp: t(n), transactionId: 'u' + n,
+    timestamp: t(n), transactionId: String(500 + n), accountRef: 'acct-test',
   });
   const { newPending } = processFills([mk('BUY_TO_OPEN', 2, null, 0), mk('SELL_TO_CLOSE', 2, 1.32, 1)],
     { openLegs: [], pending: [], lastProcessedIds: [] });
@@ -189,7 +191,7 @@ if(!FILES.length){
     instruction, quantity, price, fees,
     date: '2026-06-09', time: '09:3' + n,
     timestamp: Date.parse('2026-06-09T13:3' + n + ':00Z'),
-    transactionId: 'fill-' + n,
+    transactionId: String(600 + n), accountRef: 'acct-test',
   });
   // His real 9 June: bought 1 then 2, sold 2 then 1.
   const fills = [mk('BUY_TO_OPEN',1,1.21,0.66,0), mk('BUY_TO_OPEN',2,1.11,1.32,1),

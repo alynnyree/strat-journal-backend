@@ -2,7 +2,7 @@ const cron = require('node-cron');
 const { getValidAccessToken } = require('./auth');
 const { getOptionFills } = require('./schwabClient');
 const alpaca = require('./alpacaClient');
-const { processFills } = require('./matcher');
+const { processFills, CLOSE_KINDS, collisionIncident } = require('./matcher');
 const tradeStore = require('./tradeStore');
 const { getTokens, setLastCheck } = require('./tokenStore');
 const { getUnderlyingPriceAt, getFtfcForTrade } = require('./ftfcCheck');
@@ -345,9 +345,18 @@ const tradeKey = t => `${(t.fills || []).join('+')}|${t.contracts}|${t.entryTime
 // record. A bad record is never resolved either; that path writes nothing.
 const OBS_CAP = 20;
 const isPlainObject = v => v != null && typeof v === 'object' && !Array.isArray(v);
-const sizeOf = e => (e.kind === 'close-without-open' ? e.contractsInSale : e.contractsOpened);
-const fillFacts = e => [e.fillId, e.occ, e.date, e.time, e.timestamp, e.price, sizeOf(e)];
-const verdictOf = e => [e.kind === 'close-without-open' ? e.contractsUnmatched : e.contractsRemaining, e.feeCents, e.reason];
+// M-1 adds four kinds: a sale's remainder can also be "account-mismatch" or
+// "account-unknown" (same fields as close-without-open); "pair-unidentified"
+// (a pairing with a missing fill id, keyed by its leg, always uncertain,
+// never resolved); and "id-collision" (one incident per key, see below).
+const isCloseKind = k => CLOSE_KINDS.includes(k);
+const sizeOf = e => (isCloseKind(e.kind) ? e.contractsInSale : e.contractsOpened);
+const fillFacts = e => (e.kind === 'pair-unidentified'
+  ? [e.legKey, e.closeFillId, e.occ, e.entryTimestamp, e.exitTimestamp, e.optEntry, e.optExit]
+  : [e.fillId, e.occ, e.date, e.time, e.timestamp, e.price, sizeOf(e)]);
+const verdictOf = e => (e.kind === 'pair-unidentified'
+  ? [e.contracts, e.entryFeeCents, e.exitFeeCents, e.reason]
+  : [isCloseKind(e.kind) ? e.contractsUnmatched : e.contractsRemaining, e.feeCents, e.reason]);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function withObservation(rec, kind, facts, at, conflict) {
   const obs = rec.observations || [];
@@ -370,10 +379,22 @@ function withExceptions(latest, found, fullyPaired, at, source) {
   for (const e of found || []) {
     reported.add(e.key);
     const rec = next[e.key];
-    if (rec === undefined) { put(e.key, { ...e, status: 'open', firstSeenAt: at, firstSeenBy: source }); continue; }
-    if (!isPlainObject(rec)) {
+    if (!isPlainObject(rec) && rec !== undefined) {
       throw new Error(`The stored record ${String(e.key).slice(0, 120)} is not in the expected form; nothing was saved, so the fill is not marked processed.`);
     }
+    // M-1 collision incident: ONE record per key. A later sighting -- a
+    // retry, a later run, another layer -- adds to its count and to the set
+    // of layers that saw it; its id and pairs never change.
+    if (e.kind === 'id-collision') {
+      if (rec === undefined) {
+        put(e.key, { ...e, status: 'open', firstSeenAt: at, firstSeenBy: source, lastSeenAt: at, detections: 1 });
+      } else {
+        put(e.key, { ...rec, lastSeenAt: at, detections: (Number(rec.detections) || 0) + 1,
+          detectedBy: [...new Set([...(rec.detectedBy || []), ...(e.detectedBy || [])])].sort() });
+      }
+      continue;
+    }
+    if (rec === undefined) { put(e.key, { ...e, status: 'open', firstSeenAt: at, firstSeenBy: source }); continue; }
     const sameFill = same(fillFacts(rec), fillFacts(e));
     const sameVerdict = same(verdictOf(rec), verdictOf(e));
     if (sameFill && sameVerdict && rec.status !== 'resolved') continue; // repeat delivery
@@ -384,21 +405,44 @@ function withExceptions(latest, found, fullyPaired, at, source) {
     put(e.key, withObservation(rec, kind, { ...facts, seenBy: source }, at, kind !== 'seen-again-with-a-different-verdict'));
   }
   for (const p of fullyPaired || []) {
-    const key = `${p.resolves}:${p.fillId}`;
-    if (reported.has(key)) continue;            // the same run says unpaired: never resolve
-    const rec = next[key];
-    if (!isPlainObject(rec) || rec.status !== 'open') continue; // already resolved: no-op
-    if (rec.identityUncertain || rec.conflicted) continue;
-    if (!same(fillFacts(rec), [p.fillId, p.occ, p.date, p.time, p.timestamp, p.price, p.quantity])) {
-      const { resolves, pairedWith, ...facts } = p;
-      put(key, withObservation(rec, 'fill-id-on-a-different-fill', { ...facts, seenBy: source }, at, true));
-      continue;
+    for (const kindToResolve of [].concat(p.resolves)) {
+      const key = `${kindToResolve}:${p.fillId}`;
+      if (reported.has(key)) continue;            // the same run says unpaired: never resolve
+      const rec = next[key];
+      if (!isPlainObject(rec) || rec.status !== 'open') continue; // already resolved: no-op
+      if (rec.identityUncertain || rec.conflicted) continue;
+      if (!same(fillFacts(rec), [p.fillId, p.occ, p.date, p.time, p.timestamp, p.price, p.quantity])) {
+        const { resolves, pairedWith, ...facts } = p;
+        put(key, withObservation(rec, 'fill-id-on-a-different-fill', { ...facts, seenBy: source }, at, true));
+        continue;
+      }
+      put(key, { ...rec, status: 'resolved', resolvedAt: at,
+        resolution: { evidence: 'the matcher paired every contract of this broker fill', by: source, pairedWith: p.pairedWith } });
     }
-    put(key, { ...rec, status: 'resolved', resolvedAt: at,
-      resolution: { evidence: 'the matcher paired every contract of this broker fill', by: source, pairedWith: p.pairedWith } });
   }
   return changed ? next : had;
 }
+// M-1: an arriving trade whose id is already QUEUED with a DIFFERENT fill
+// pair is not queued; the queued one is never overwritten, and one
+// "id-collision" incident (detected by the queue) holds both pairs. The same
+// id with the SAME pair is the same trade arriving again, queued as before.
+const queuedPair = t => `${t.accountRef}|${(t.fills || []).join('+')}`;
+function withoutQueueCollisions(pending, arriving) {
+  const byId = new Map();
+  for (const q of pending || []) if (q && q.id != null) {
+    if (!byId.has(q.id)) byId.set(q.id, []);
+    byId.get(q.id).push(q);
+  }
+  const keep = [], incidents = [], refusedFills = new Set();
+  for (const t of arriving || []) {
+    const other = (byId.get(t.id) || []).find(q => queuedPair(q) !== queuedPair(t));
+    if (other) { incidents.push(collisionIncident(t.id, [other, t], 'queue')); (t.fills || []).forEach(f => refusedFills.add(f)); }
+    else keep.push(t);
+  }
+  return { keep, incidents, refusedFills };
+}
+// A fill in a trade that was not queued is not evidence that it was paired.
+const evidenceAfter = (fullyPaired, q) => (fullyPaired || []).filter(p => !q.refusedFills.has(p.fillId));
 // ONE RULE for the list of fills already handled (H-3): kept whole, each id
 // once, in every path. It used to be cut to the last 500 by the sync and kept
 // whole by the backfill, so a backfill after the cut re-queued old history.
@@ -541,13 +585,15 @@ async function syncOnce() {
       if (!next.identityCutoverAt) next.identityCutoverAt = cutoverIso;
       if (take.length) {
         const m = processFills(take, { openLegs: clone(latest.openLegs || []), pending: [] });
-        landed = m.newPending.map(t => enriched.get(tradeKey(t)) || t);
+        // M-1: a trade whose id is already queued with another pair stays out.
+        const q = withoutQueueCollisions(latest.pending, m.newPending.map(t => enriched.get(tradeKey(t)) || t));
+        landed = q.keep;
         opened = m.newlyOpenedLegs;
         next.openLegs = m.updatedState.openLegs;
         next.pending = [...landed, ...(latest.pending || [])];
         next.lastProcessedIds = unionIds(latest.lastProcessedIds, take.map(f => f.transactionId));
         // H-2: in the same change as "processed" (see withExceptions).
-        const ex = withExceptions(latest, m.exceptions, m.fullyPaired, now.toISOString(), 'sync');
+        const ex = withExceptions(latest, [...m.exceptions, ...q.incidents], evidenceAfter(m.fullyPaired, q), now.toISOString(), 'sync');
         if (ex !== latest.exceptions) next.exceptions = ex;
       }
       if (syncNote) next.lastSync = { ...syncNote, ...problems };
@@ -713,10 +759,12 @@ async function backfillOnce(daysBack) {
       const ambiguous = [];
       const take = notYetProcessed(fills, latest, { cutoverMs: Date.parse(cutoverIso), ambiguous });
       const m = processFills(take, { openLegs: [], pending: [] });
-      newPending = m.newPending;
+      // M-1: a trade whose id is already queued with another pair stays out.
+      const q = withoutQueueCollisions(latest.pending, m.newPending);
+      newPending = q.keep;
       const have = new Set((latest.openLegs || []).map(legKey));
       // H-2: what this run could not pair, in the same change (withExceptions).
-      const ex = withExceptions(latest, m.exceptions, m.fullyPaired, new Date().toISOString(), 'backfill');
+      const ex = withExceptions(latest, [...m.exceptions, ...q.incidents], evidenceAfter(m.fullyPaired, q), new Date().toISOString(), 'backfill');
       return {
         ...latest,
         ...(ex !== latest.exceptions ? { exceptions: ex } : {}),
@@ -877,7 +925,7 @@ function startAutoSync(intervalCron = '*/5 * * * *') {
 // REAL ones. A rehearsal that calls a copy of the pipeline proves only
 // that the copy works.
 module.exports = { FTFC_RULE_VERSION, startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded,
-                   resetSyncState, jobRunning, withExceptions,
+                   resetSyncState, jobRunning, withExceptions, withoutQueueCollisions,
                    enrichWithUnderlyingPrices, priceWithProvenance,
                    enrichWithFtfc, enrichWithReplayData, enrichWithStopRule, enrichWithStrategy,
                    applyClassificationToTrade };
