@@ -1,5 +1,8 @@
 const axios = require('axios');
 const crypto = require('crypto');
+// The ledger's own account reference (audit M-1): every fill says which
+// account it came from, in the same form the broker ledger records.
+const { refOf } = require('./ledgerAccount');
 
 // ---- Fill identity (audit Step C: F1 + R1) -------------------------------
 // Schwab's activityId is the identity of a fill's record. A record without
@@ -213,6 +216,9 @@ async function getOptionFills(accessToken, startDate, endDate, report = null) {
     report.unusable = { count: 0, examples: [] };
   }
   const problems = [];
+  // M-1: the account every fill below came from. Pairing requires the
+  // purchase and the sale to carry the SAME reference; nothing is inferred.
+  const accountRef = refOf(accountNumber);
 
   const rangeEndMs = new Date(toSchwabTimestamp(endDate, true)).getTime();
   const rangeStartMs = new Date(toSchwabTimestamp(startDate, false)).getTime();
@@ -266,6 +272,7 @@ async function getOptionFills(accessToken, startDate, endDate, report = null) {
         const dedupeKey = `${fill.transactionId}-${fill.occ}-${fill.instruction}-${fill.timestamp}`;
         if (seen.has(dedupeKey)) continue;
         seen.add(dedupeKey);
+        fill.accountRef = accountRef;
         allFills.push(fill);
         addedHere++;
       }

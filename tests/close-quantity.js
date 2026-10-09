@@ -17,7 +17,8 @@ const OCC = 'SPY   261231C00600000';
 const T0 = Date.now() - 3 * 3600e3;
 function fill(id, kind, minute, qty){
   const ts = T0 + minute * 60000; const d = new Date(ts);
-  return { transactionId: id, occ: OCC, ticker: 'SPY', putCall: 'CALL',
+  // M-1: decimal broker ids and one account, as the live sync delivers them.
+  return { transactionId: id, accountRef: 'acct-test', occ: OCC, ticker: 'SPY', putCall: 'CALL',
     instruction: kind === 'open' ? 'BUY_TO_OPEN' : 'SELL_TO_CLOSE',
     price: 1, quantity: qty, fees: 0.66,
     date: d.toISOString().slice(0, 10), time: d.toISOString().slice(11, 16), timestamp: ts };
@@ -27,20 +28,20 @@ const view = ts => ts.map(t => `${t.fills.join('+')} x${t.contracts} of ${t.cont
 
 console.log('--- one purchase of 2, sold in two pieces of 1 ---');
 {
-  const ts = run([fill('o1', 'open', 0, 2), fill('c1', 'close', 1, 1), fill('c2', 'close', 2, 1)]);
+  const ts = run([fill('101', 'open', 0, 2), fill('201', 'close', 1, 1), fill('202', 'close', 2, 1)]);
   check(`two trades (${ts.length})`, ts.length === 2);
   check(`each sale's closeQuantity is 1 (${JSON.stringify(view(ts))})`, ts.every(t => t.closeQuantity === 1));
-  check('pairing unchanged: o1+c1 and o1+c2, 1 contract each, purchase of 2',
-    JSON.stringify(view(ts)) === JSON.stringify(['o1+c1 x1 of 2/1', 'o1+c2 x1 of 2/1']));
+  check('pairing unchanged: 101+201 and 101+202, 1 contract each, purchase of 2',
+    JSON.stringify(view(ts)) === JSON.stringify(['101+201 x1 of 2/1', '101+202 x1 of 2/1']));
 }
 
 console.log('\n--- two purchases of 1, closed by one sale of 2 ---');
 {
-  const ts = run([fill('a', 'open', 0, 1), fill('b', 'open', 1, 1), fill('s', 'close', 2, 2)]);
+  const ts = run([fill('301', 'open', 0, 1), fill('302', 'open', 1, 1), fill('401', 'close', 2, 2)]);
   check(`two trades (${ts.length})`, ts.length === 2);
   check(`both carry the sale's closeQuantity of 2 (${JSON.stringify(view(ts))})`, ts.every(t => t.closeQuantity === 2));
-  check('pairing unchanged: a+s and b+s, 1 contract each',
-    JSON.stringify(view(ts)) === JSON.stringify(['a+s x1 of 1/2', 'b+s x1 of 1/2']));
+  check('pairing unchanged: 301+401 and 302+401, 1 contract each',
+    JSON.stringify(view(ts)) === JSON.stringify(['301+401 x1 of 1/2', '302+401 x1 of 1/2']));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

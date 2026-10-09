@@ -71,4 +71,23 @@ async function removePendingTrade(id) {
   return updateState(state => ({ ...state, pending: (state.pending || []).filter(t => t.id !== id) }));
 }
 
-module.exports = { getState, saveState, updateState, addPendingTrade, removePendingTrade };
+// M-1: removes only the queued entries with this id AND this fill pair, in
+// one change. An entry with the same id and a different pair is KEPT and
+// reported back, so the caller can say so; nothing else is touched.
+async function removePendingTradeIfPair(id, pair) {
+  const want = JSON.stringify(pair);
+  let removed = 0, kept = [];
+  await updateState(state => {
+    removed = 0; kept = [];
+    const pending = (state.pending || []).filter(t => {
+      if (!t || t.id !== id) return true;
+      if (JSON.stringify(t.fills || []) === want) { removed++; return false; }
+      kept.push(t.fills || []);
+      return true;
+    });
+    return removed ? { ...state, pending } : null;
+  });
+  return { removed, kept };
+}
+
+module.exports = { getState, saveState, updateState, addPendingTrade, removePendingTrade, removePendingTradeIfPair };
