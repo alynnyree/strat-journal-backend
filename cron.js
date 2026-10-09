@@ -336,9 +336,13 @@ const tradeKey = t => `${(t.fills || []).join('+')}|${t.contracts}|${t.entryTime
 //     ones are kept, with a count of any more.
 //   - nothing else. The same key seen again with the same facts is a repeat
 //     delivery and changes nothing.
-// A record that is not an object is never overwritten or resolved. An
-// exceptions field that is not an object makes the whole change refuse, so
-// no fill is marked processed while its exception cannot be written.
+// FAIL CLOSED (auditor, second review): an exceptions field that is not an
+// object, or a record that is not an object at the very key a fill must be
+// recorded under, makes the whole change refuse -- nothing in it is saved, so
+// no fill is marked processed while its exception cannot be written, and the
+// bad value stays exactly as it is. The refusal reaches the sync's and the
+// backfill's existing error paths, and the read-only route counts the bad
+// record. A bad record is never resolved either; that path writes nothing.
 const OBS_CAP = 20;
 const isPlainObject = v => v != null && typeof v === 'object' && !Array.isArray(v);
 const sizeOf = e => (e.kind === 'close-without-open' ? e.contractsInSale : e.contractsOpened);
@@ -367,7 +371,9 @@ function withExceptions(latest, found, fullyPaired, at, source) {
     reported.add(e.key);
     const rec = next[e.key];
     if (rec === undefined) { put(e.key, { ...e, status: 'open', firstSeenAt: at, firstSeenBy: source }); continue; }
-    if (!isPlainObject(rec)) continue; // never overwritten
+    if (!isPlainObject(rec)) {
+      throw new Error(`The stored record ${String(e.key).slice(0, 120)} is not in the expected form; nothing was saved, so the fill is not marked processed.`);
+    }
     const sameFill = same(fillFacts(rec), fillFacts(e));
     const sameVerdict = same(verdictOf(rec), verdictOf(e));
     if (sameFill && sameVerdict && rec.status !== 'resolved') continue; // repeat delivery

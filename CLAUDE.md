@@ -185,9 +185,13 @@ Status on 30 Sept 2026:
     fills -- the live sync gives every option leg of one Schwab transaction
     the same id, R1 is not applied there) or after resolution is kept as an
     `observation` and sets `conflicted`; never applied, never dropped.
-  - An `exceptions` field of the wrong shape makes the change refuse, so
-    no fill is marked processed unrecorded; a single bad record is never
-    overwritten.
+  - An `exceptions` field of the wrong shape, or a record of the wrong
+    shape at the very key a fill must be recorded under, makes the WHOLE
+    change refuse (auditor, second review): nothing in it is saved, the
+    sync checkpoint does not move, the bad value is never overwritten, and
+    the route counts it. Only a repair outside the service clears it.
+  - The route's per-kind summary has three fixed labels
+    (close-without-open, open-retired, other).
   - The route sends at most 100 records, named fields only, strings cut at
     200 characters, counts over all records, and counts malformed ones.
   - ROLLBACK RULE: main's code before H-2 erases `exceptions` on a reset

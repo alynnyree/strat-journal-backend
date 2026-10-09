@@ -382,10 +382,61 @@ async function section(fn) { try { await fn(); } catch (e) { fail++; console.log
       const bad = readState();
       check('an exceptions field of the wrong shape: the change refuses -- nothing processed, the stored value untouched',
         bad.lastProcessedIds.length === 0 && JSON.stringify(bad.exceptions) === '["not","an","object"]', bad);
-      fresh({ openLegs: [], pending: [], lastProcessedIds: [], exceptions: { 'close-without-open:c20': 'garbage' } });
-      await sync([fill('c20', 'close', 5)]);
-      check('one stored record of the wrong shape is never overwritten; the fill is still processed',
-        readState().exceptions['close-without-open:c20'] === 'garbage' && readState().lastProcessedIds.includes('c20'));
+    });
+
+    console.log('\n--- T22 (auditor, second review). a bad record at the exact key: the whole change refuses ---');
+    await section(async () => {
+      // On file: one open purchase, one queued trade, one good record -- and a
+      // bad value at the key the new unpaired sale c20 must be recorded under.
+      const leg = { occ: FAR, ticker: 'SPY', dir: 'Long', openPrice: 1, openDate: '2026-06-09', openTime: '10:00',
+        openTimestamp: T0 - 60000, totalQuantity: 1, remaining: 1, openFees: 0.66, openFeeCents: 66, openFillId: 'L0' };
+      const start = { openLegs: [leg], pending: [{ id: 'q0', fills: ['a', 'b'] }], lastProcessedIds: ['earlier'],
+        exceptions: { 'close-without-open:c20': 'garbage', 'close-without-open:g1': { kind: 'close-without-open', key: 'close-without-open:g1', fillId: 'g1', status: 'open' } } };
+      fresh(start);
+      const before = JSON.stringify(readState());
+      // The same sync also brings a purchase, and a sale that would pair with the purchase on file.
+      const batch = [fill('o20', 'open', 1), fill('s20', 'close', 2), fill('c20', 'close', 5, { occ: 'SPY   261231P00500000' })];
+      await sync(batch);
+      const st = readState();
+      check('the bad record is exactly as it was', st.exceptions['close-without-open:c20'] === 'garbage');
+      check('c20 is NOT marked processed (nor anything else in that batch)', JSON.stringify(st.lastProcessedIds) === '["earlier"]', st.lastProcessedIds);
+      check('nothing from the attempted change is saved: open legs, queue, records, the whole record byte for byte',
+        JSON.stringify(st) === before, st);
+      check('the sync checkpoint did not move, so the same fills are asked for again', tokens.last_transaction_check === null, tokens);
+      // Repeated ticks keep refusing; they never overwrite.
+      await sync(batch);
+      check('a second attempt refuses the same way', JSON.stringify(readState()) === before);
+      // Addressed by hand, outside the service (an authorized repair moves the bad value aside); then a retry.
+      const repaired = JSON.parse(before);
+      repaired.exceptionsSetAside = { 'close-without-open:c20': repaired.exceptions['close-without-open:c20'] };
+      delete repaired.exceptions['close-without-open:c20'];
+      writeState(repaired);
+      await sync(batch);
+      const ok = readState();
+      const r = ok.exceptions['close-without-open:c20'];
+      check('after the repair the retry records c20 (open) and marks the whole batch processed',
+        r && r.status === 'open' && r.fillId === 'c20' && ['o20', 's20', 'c20'].every(id => ok.lastProcessedIds.includes(id)), ok);
+      check('the sale s20 paired with the purchase on file, the good record and the set-aside value untouched',
+        ok.pending.some(t => (t.fills || []).join('+') === 'L0+s20') && ok.exceptions['close-without-open:g1'].status === 'open'
+          && ok.exceptionsSetAside['close-without-open:c20'] === 'garbage');
+    });
+
+    console.log('\n--- T23 (auditor, second review). the per-kind summary has a fixed set of labels ---');
+    await section(async () => {
+      const api = require(path.join(BACKEND, 'api.js'));
+      const layer = api.stack.find(l => l.route && l.route.path === '/trades/exceptions');
+      const ask = () => new Promise((resolve, reject) => {
+        const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve({ status: this.statusCode, body: b }); } };
+        layer.route.stack[0].handle({ method: 'GET', query: {}, params: {} }, res, reject);
+      });
+      const ex = {};
+      for (let i = 0; i < 500; i++) ex[`k${i}`] = { kind: `made-up-kind-${i}`, key: `k${i}`, status: 'open' };
+      ex.a = { kind: 'close-without-open', key: 'a', status: 'open' };
+      ex.b = { kind: 'open-retired', key: 'b', status: 'resolved' };
+      fresh({ openLegs: [], pending: [], lastProcessedIds: [], exceptions: ex });
+      const a = await ask();
+      check('500 made-up kinds give three labels: 1 close-without-open, 1 open-retired, 500 other',
+        JSON.stringify(a.body.counts.byKind) === JSON.stringify({ 'close-without-open': 1, 'open-retired': 1, other: 500 }), a.body.counts.byKind);
     });
 
     console.log('\n--- T19 (item 3). fee allocation in whole cents, checked against hand-worked figures ---');

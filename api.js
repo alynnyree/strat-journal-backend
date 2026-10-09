@@ -185,8 +185,9 @@ router.get('/trades/exceptions', wrap(async (req, res) => {
   const list = good
     .sort((a, b) => (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0)
       || (String(a.key) < String(b.key) ? -1 : String(a.key) > String(b.key) ? 1 : 0));
-  const byKind = {};
-  for (const e of list) { const k = String(e.kind).slice(0, 40); byKind[k] = (byKind[k] || 0) + 1; }
+  // A fixed set of labels, so stored values can never add keys to the answer.
+  const byKind = { 'close-without-open': 0, 'open-retired': 0, other: 0 };
+  for (const e of list) { const k = e.kind === 'close-without-open' || e.kind === 'open-retired' ? e.kind : 'other'; byKind[k]++; }
   const legs = Array.isArray(state.openLegs) ? state.openLegs : [];
   res.json({
     exceptions: list.slice(0, EXCEPTIONS_SHOWN).map(exceptionForPhone),
