@@ -314,6 +314,34 @@ const legKey = l => (l.openFillId
   : `S:${l.occ}|${l.openTimestamp}|${l.openPrice}|${l.totalQuantity}`);
 // The same trade out of two runs of the matcher over the same fills.
 const tradeKey = t => `${(t.fills || []).join('+')}|${t.contracts}|${t.entryTimestamp}|${t.exitTimestamp}`;
+// THE EXCEPTION LEDGER (audit H-2; authorized 9 Oct 2026). What the matcher
+// could not pair is kept in `exceptions` on this same record, keyed by
+// kind + broker fill id, and written in the SAME change that marks those
+// fills processed -- so "processed" and "recorded" are saved together or not
+// at all, through the one queue every writer of this record uses (Step B).
+// A record is added only when its key is absent: a retry, a backfill or a
+// re-run after a reset adds nothing. Nothing is ever deleted or overwritten;
+// a record whose fill is later paired by fill id becomes "resolved".
+function withExceptions(latest, found, pairedTrades, at) {
+  const had = latest.exceptions || {};
+  const next = { ...had };
+  let changed = false;
+  for (const e of found || []) {
+    if (next[e.key]) continue;
+    next[e.key] = { ...e, status: 'open', firstSeenAt: at };
+    changed = true;
+  }
+  for (const t of pairedTrades || []) {
+    const [open, close] = t.fills || [];
+    for (const key of [open && `open-retired:${open}`, close && `close-without-open:${close}`]) {
+      const rec = key && next[key];
+      if (!rec || rec.status !== 'open') continue;
+      next[key] = { ...rec, status: 'resolved', resolvedAt: at, resolvedBy: t.fills };
+      changed = true;
+    }
+  }
+  return changed ? next : had;
+}
 // ONE RULE for the list of fills already handled (H-3): kept whole, each id
 // once, in every path. It used to be cut to the last 500 by the sync and kept
 // whole by the backfill, so a backfill after the cut re-queued old history.
@@ -461,6 +489,9 @@ async function syncOnce() {
         next.openLegs = m.updatedState.openLegs;
         next.pending = [...landed, ...(latest.pending || [])];
         next.lastProcessedIds = unionIds(latest.lastProcessedIds, take.map(f => f.transactionId));
+        // H-2: in the same change as "processed" (see withExceptions).
+        const ex = withExceptions(latest, m.exceptions, m.newPending, now.toISOString());
+        if (ex !== latest.exceptions) next.exceptions = ex;
       }
       if (syncNote) next.lastSync = { ...syncNote, ...problems };
       else if (hasProblems || hadProblems) {
@@ -508,7 +539,10 @@ async function syncOnce() {
 // half-way through.
 async function resetSyncState() {
   const out = await runExclusive('reset',
-    () => tradeStore.updateState(() => ({ openLegs: [], pending: [], lastProcessedIds: [] })),
+    // The exception ledger (H-2) survives a reset: it records broker fills,
+    // not the queue, and nothing may delete it.
+    () => tradeStore.updateState(latest => ({ openLegs: [], pending: [], lastProcessedIds: [],
+      ...(latest && latest.exceptions ? { exceptions: latest.exceptions } : {}) })),
     { wait: true });
   return out.ran;
 }
@@ -624,8 +658,11 @@ async function backfillOnce(daysBack) {
       const m = processFills(take, { openLegs: [], pending: [] });
       newPending = m.newPending;
       const have = new Set((latest.openLegs || []).map(legKey));
+      // H-2: what this run could not pair, in the same change (withExceptions).
+      const ex = withExceptions(latest, m.exceptions, m.newPending, new Date().toISOString());
       return {
         ...latest,
+        ...(ex !== latest.exceptions ? { exceptions: ex } : {}),
         identityCutoverAt: cutoverIso,
         openLegs: [...(latest.openLegs || []), ...m.updatedState.openLegs.filter(l => !have.has(legKey(l)))],
         pending: [...newPending, ...(latest.pending || [])],
@@ -783,7 +820,7 @@ function startAutoSync(intervalCron = '*/5 * * * *') {
 // REAL ones. A rehearsal that calls a copy of the pipeline proves only
 // that the copy works.
 module.exports = { FTFC_RULE_VERSION, startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded,
-                   resetSyncState, jobRunning,
+                   resetSyncState, jobRunning, withExceptions,
                    enrichWithUnderlyingPrices, priceWithProvenance,
                    enrichWithFtfc, enrichWithReplayData, enrichWithStopRule, enrichWithStrategy,
                    applyClassificationToTrade };

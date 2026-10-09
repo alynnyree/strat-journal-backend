@@ -153,6 +153,29 @@ router.get('/trades/backfill/status', wrap(async (req, res) => {
   }
 }));
 
+// The exception ledger (audit H-2): every broker fill the matcher could not
+// pair, read-only. Behind the app key like every route here. Shown on the
+// phone as one line behind Details, never on his screen.
+// `openLegs` is the count of purchases the service is holding, and how many
+// carry no account reference -- read before M-1 is deployed (M-1 plan v4).
+router.get('/trades/exceptions', wrap(async (req, res) => {
+  const state = await tradeStore.getState();
+  const list = Object.values(state.exceptions || {})
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const byKind = {};
+  for (const e of list) byKind[e.kind] = (byKind[e.kind] || 0) + 1;
+  const legs = state.openLegs || [];
+  res.json({
+    exceptions: list,
+    counts: {
+      open: list.filter(e => e.status === 'open').length,
+      resolved: list.filter(e => e.status === 'resolved').length,
+      byKind,
+    },
+    openLegs: { held: legs.length, withoutAccountRef: legs.filter(l => !l.accountRef).length },
+  });
+}));
+
 // Manual trigger for an immediate check, same logic the cron job runs
 // on its own every few minutes.
 router.post('/trades/sync-now', wrap(async (req, res) => {

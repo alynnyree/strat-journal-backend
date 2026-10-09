@@ -130,6 +130,19 @@ const PUBLIC = {
   check('every private route refuses a caller with NO key', openNoKey.length === 0, openNoKey);
   check('every private route refuses a WRONG key (header and address)', openWrongKey.length === 0, openWrongKey);
   check('the reset route is among those checked', routes.some(r => r.path === '/api/trades/reset'));
+  // Audit H-2: the exception ledger is private like every other route here.
+  check('the H-2 exceptions route is among those checked (and so refuses without the key)', routes.some(r => r.method === 'GET' && r.path === '/api/trades/exceptions'));
+  {
+    const before = db.get('trades:state');
+    db.set('trades:state', { type: 'string', value: { openLegs: [{ occ: 'X', remaining: 1 }], pending: [], lastProcessedIds: [],
+      exceptions: { 'close-without-open:9': { kind: 'close-without-open', key: 'close-without-open:9', fillId: '9', status: 'open', timestamp: 1 } } } });
+    const r = await call('GET', '/api/trades/exceptions', { headers: { Authorization: 'Bearer right-key' } });
+    const body = await r.json().catch(() => null);
+    check('with the key, the exceptions route lists the records, the counts and the open legs held',
+      r.status === 200 && body && body.exceptions.length === 1 && body.counts.open === 1 && body.counts.resolved === 0
+        && body.counts.byKind['close-without-open'] === 1 && body.openLegs.held === 1 && body.openLegs.withoutAccountRef === 1, [r.status, body]);
+    if (before) db.set('trades:state', before); else db.delete('trades:state');
+  }
 
   // A right key in the address does not rescue a wrong one in the header.
   const mixed = await call('GET', '/api/trades/pending?key=right-key', { headers: { Authorization: 'Bearer wrong-key' } });
