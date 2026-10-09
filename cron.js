@@ -314,6 +314,91 @@ const legKey = l => (l.openFillId
   : `S:${l.occ}|${l.openTimestamp}|${l.openPrice}|${l.totalQuantity}`);
 // The same trade out of two runs of the matcher over the same fills.
 const tradeKey = t => `${(t.fills || []).join('+')}|${t.contracts}|${t.entryTimestamp}|${t.exitTimestamp}`;
+// THE EXCEPTION LEDGER (audit H-2; authorized 9 Oct 2026; corrected after
+// the auditor's implementation review the same day). What the matcher could
+// not pair is kept in `exceptions` on this same record, keyed by kind +
+// broker fill id, and written in the SAME change that marks those fills
+// processed -- so "processed" and "recorded" are saved together or not at
+// all, through the one queue every writer of this record uses (Step B).
+//
+// The facts a record was first written with never change. Only three things
+// are ever added to it, and nothing is deleted:
+//   - status 'open' -> 'resolved', with resolvedAt and `resolution` (the
+//     evidence), and only when the matcher reports the SAME broker fill --
+//     same id AND same contract, date, time, price and size -- as paired in
+//     every contract (`fullyPaired`). A record whose id is uncertain, or whose
+//     id has been seen on a different fill, is never resolved automatically,
+//     and neither is one the same run reports as unpaired.
+//   - `observations`: the same key seen again with DIFFERENT facts (an id on
+//     a different fill, or a different verdict), or reported unpaired again
+//     after it was resolved. Recorded, never applied; `conflicted` is set
+//     when the evidence contradicts the record. At most OBS_CAP distinct
+//     ones are kept, with a count of any more.
+//   - nothing else. The same key seen again with the same facts is a repeat
+//     delivery and changes nothing.
+// FAIL CLOSED (auditor, second review): an exceptions field that is not an
+// object, or a record that is not an object at the very key a fill must be
+// recorded under, makes the whole change refuse -- nothing in it is saved, so
+// no fill is marked processed while its exception cannot be written, and the
+// bad value stays exactly as it is. The refusal reaches the sync's and the
+// backfill's existing error paths, and the read-only route counts the bad
+// record. A bad record is never resolved either; that path writes nothing.
+const OBS_CAP = 20;
+const isPlainObject = v => v != null && typeof v === 'object' && !Array.isArray(v);
+const sizeOf = e => (e.kind === 'close-without-open' ? e.contractsInSale : e.contractsOpened);
+const fillFacts = e => [e.fillId, e.occ, e.date, e.time, e.timestamp, e.price, sizeOf(e)];
+const verdictOf = e => [e.kind === 'close-without-open' ? e.contractsUnmatched : e.contractsRemaining, e.feeCents, e.reason];
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function withObservation(rec, kind, facts, at, conflict) {
+  const obs = rec.observations || [];
+  const sig = JSON.stringify([kind, facts]);
+  if (obs.some(o => JSON.stringify([o.kind, o.facts]) === sig)) return null; // seen before
+  const out = { ...rec, ...(conflict ? { conflicted: true } : {}) };
+  if (obs.length >= OBS_CAP) out.observationsNotKept = (rec.observationsNotKept || 0) + 1;
+  else out.observations = [...obs, { kind, at, facts }];
+  return out;
+}
+function withExceptions(latest, found, fullyPaired, at, source) {
+  const had = latest.exceptions == null ? {} : latest.exceptions;
+  if (!isPlainObject(had)) {
+    throw new Error('The record of unpaired broker fills is not in the expected form; nothing was saved, so no fill is marked processed.');
+  }
+  const next = { ...had };
+  let changed = false;
+  const put = (key, rec) => { if (rec) { next[key] = rec; changed = true; } };
+  const reported = new Set();
+  for (const e of found || []) {
+    reported.add(e.key);
+    const rec = next[e.key];
+    if (rec === undefined) { put(e.key, { ...e, status: 'open', firstSeenAt: at, firstSeenBy: source }); continue; }
+    if (!isPlainObject(rec)) {
+      throw new Error(`The stored record ${String(e.key).slice(0, 120)} is not in the expected form; nothing was saved, so the fill is not marked processed.`);
+    }
+    const sameFill = same(fillFacts(rec), fillFacts(e));
+    const sameVerdict = same(verdictOf(rec), verdictOf(e));
+    if (sameFill && sameVerdict && rec.status !== 'resolved') continue; // repeat delivery
+    const kind = !sameFill ? 'fill-id-on-a-different-fill'
+      : rec.status === 'resolved' ? 'reported-unpaired-after-resolution'
+      : 'seen-again-with-a-different-verdict';
+    const { key, kind: k, ...facts } = e;
+    put(e.key, withObservation(rec, kind, { ...facts, seenBy: source }, at, kind !== 'seen-again-with-a-different-verdict'));
+  }
+  for (const p of fullyPaired || []) {
+    const key = `${p.resolves}:${p.fillId}`;
+    if (reported.has(key)) continue;            // the same run says unpaired: never resolve
+    const rec = next[key];
+    if (!isPlainObject(rec) || rec.status !== 'open') continue; // already resolved: no-op
+    if (rec.identityUncertain || rec.conflicted) continue;
+    if (!same(fillFacts(rec), [p.fillId, p.occ, p.date, p.time, p.timestamp, p.price, p.quantity])) {
+      const { resolves, pairedWith, ...facts } = p;
+      put(key, withObservation(rec, 'fill-id-on-a-different-fill', { ...facts, seenBy: source }, at, true));
+      continue;
+    }
+    put(key, { ...rec, status: 'resolved', resolvedAt: at,
+      resolution: { evidence: 'the matcher paired every contract of this broker fill', by: source, pairedWith: p.pairedWith } });
+  }
+  return changed ? next : had;
+}
 // ONE RULE for the list of fills already handled (H-3): kept whole, each id
 // once, in every path. It used to be cut to the last 500 by the sync and kept
 // whole by the backfill, so a backfill after the cut re-queued old history.
@@ -461,6 +546,9 @@ async function syncOnce() {
         next.openLegs = m.updatedState.openLegs;
         next.pending = [...landed, ...(latest.pending || [])];
         next.lastProcessedIds = unionIds(latest.lastProcessedIds, take.map(f => f.transactionId));
+        // H-2: in the same change as "processed" (see withExceptions).
+        const ex = withExceptions(latest, m.exceptions, m.fullyPaired, now.toISOString(), 'sync');
+        if (ex !== latest.exceptions) next.exceptions = ex;
       }
       if (syncNote) next.lastSync = { ...syncNote, ...problems };
       else if (hasProblems || hadProblems) {
@@ -508,7 +596,10 @@ async function syncOnce() {
 // half-way through.
 async function resetSyncState() {
   const out = await runExclusive('reset',
-    () => tradeStore.updateState(() => ({ openLegs: [], pending: [], lastProcessedIds: [] })),
+    // The exception ledger (H-2) survives a reset: it records broker fills,
+    // not the queue, and nothing may delete it.
+    () => tradeStore.updateState(latest => ({ openLegs: [], pending: [], lastProcessedIds: [],
+      ...(latest && latest.exceptions ? { exceptions: latest.exceptions } : {}) })),
     { wait: true });
   return out.ran;
 }
@@ -624,8 +715,11 @@ async function backfillOnce(daysBack) {
       const m = processFills(take, { openLegs: [], pending: [] });
       newPending = m.newPending;
       const have = new Set((latest.openLegs || []).map(legKey));
+      // H-2: what this run could not pair, in the same change (withExceptions).
+      const ex = withExceptions(latest, m.exceptions, m.fullyPaired, new Date().toISOString(), 'backfill');
       return {
         ...latest,
+        ...(ex !== latest.exceptions ? { exceptions: ex } : {}),
         identityCutoverAt: cutoverIso,
         openLegs: [...(latest.openLegs || []), ...m.updatedState.openLegs.filter(l => !have.has(legKey(l)))],
         pending: [...newPending, ...(latest.pending || [])],
@@ -783,7 +877,7 @@ function startAutoSync(intervalCron = '*/5 * * * *') {
 // REAL ones. A rehearsal that calls a copy of the pipeline proves only
 // that the copy works.
 module.exports = { FTFC_RULE_VERSION, startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded,
-                   resetSyncState, jobRunning,
+                   resetSyncState, jobRunning, withExceptions,
                    enrichWithUnderlyingPrices, priceWithProvenance,
                    enrichWithFtfc, enrichWithReplayData, enrichWithStopRule, enrichWithStrategy,
                    applyClassificationToTrade };

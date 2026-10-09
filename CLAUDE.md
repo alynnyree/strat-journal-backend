@@ -162,6 +162,48 @@ Status on 30 Sept 2026:
     - The dry run and the APPLY on his phone are separate gates: the log
       goes to the auditor, and the apply needs the owner's words naming
       "Step E apply".
+- **H-2 (Phase 1; revised plan reviewed by the auditor; implementation
+  authorized 9 Oct 2026: "I authorize H-2 implementation")**: the live
+  matcher no longer drops a sale it cannot pair, or a purchase past expiry
+  / older than 45 days, without a record. `processFills` returns
+  `exceptions` (close-without-open, open-retired) and pairing is unchanged
+  (5,000 random streams identical to the old matcher). They are saved in
+  `trades:state.exceptions`, keyed by kind + broker fill id, in the SAME
+  updateState change that marks the fills processed; never duplicated,
+  never deleted; a reset keeps them. A retired purchase is never called
+  "expired worthless". Read-only `GET /api/trades/exceptions` (app key),
+  one line behind Details in the app (tests/unpaired-fills.js).
+  **Corrected after the auditor's implementation review (9 Oct 2026):**
+  - A record is resolved ONLY by the matcher's own `fullyPaired` evidence:
+    the same broker fill id AND the same contract, date, time, price and
+    size, with EVERY contract paired. Part paired is not paired (the first
+    version resolved a partly paired sale by its own trade, in the same
+    change). Never resolved: identityUncertain records, conflicted records,
+    or a key the same run reports unpaired.
+  - Original facts never change. Resolution adds only status, resolvedAt
+    and `resolution`. The same key with different facts (one id on two
+    fills -- the live sync gives every option leg of one Schwab transaction
+    the same id, R1 is not applied there) or after resolution is kept as an
+    `observation` and sets `conflicted`; never applied, never dropped.
+  - An `exceptions` field of the wrong shape, or a record of the wrong
+    shape at the very key a fill must be recorded under, makes the WHOLE
+    change refuse (auditor, second review): nothing in it is saved, the
+    sync checkpoint does not move, the bad value is never overwritten, and
+    the route counts it. Only a repair outside the service clears it.
+  - The route's per-kind summary has three fixed labels
+    (close-without-open, open-retired, other).
+  - The route sends at most 100 records, named fields only, strings cut at
+    200 characters, counts over all records, and counts malformed ones.
+  - ROLLBACK RULE: main's code before H-2 erases `exceptions` on a reset
+    (measured; every other writer keeps it). So H-2 is never rolled back by
+    a plain revert: a rollback keeps the reset line that preserves
+    `exceptions`, and a backup export is taken first.
+- **H-4 owner decisions (9 Oct 2026), POLICY ONLY:** Q1 "Option A" -- a
+  broker-confirmed worthless expiry becomes a trade closed at $0.00 on the
+  verified expiry date, marked "expired", only with full broker evidence,
+  otherwise an exception. Q2: "I approve the Schwab activity rule" (V-1 to
+  V-7). The live fetch stays `types: 'TRADE'` until a separate H-4
+  implementation plan is reviewed and authorized.
 - The 7 known failures stay as baseline until the phase that owns them
   (auditor, C2). No new known failure without the owner's authorization.
 

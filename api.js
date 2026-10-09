@@ -153,6 +153,57 @@ router.get('/trades/backfill/status', wrap(async (req, res) => {
   }
 }));
 
+// The exception ledger (audit H-2): every broker fill the matcher could not
+// pair, read-only. Behind the app key like every route here. Shown on the
+// phone as one line behind Details, never on his screen.
+// `openLegs` is the count of purchases the service is holding, and how many
+// carry no account reference -- read before M-1 is deployed (M-1 plan v4).
+//
+// BOUNDED (auditor item 6): it takes no input, sends at most EXCEPTIONS_SHOWN
+// records (newest first) with the counts taken over all of them, and sends
+// only the named fields of each, strings cut to a fixed length -- whatever
+// is stored, the answer cannot grow without limit or carry anything else.
+// A stored value of the wrong shape is counted as `malformed`, never thrown.
+const EXCEPTIONS_SHOWN = 100;
+const EXCEPTION_FIELDS = ['kind', 'key', 'fillId', 'identityUncertain', 'occ', 'ticker', 'date', 'time',
+  'timestamp', 'price', 'contractsUnmatched', 'contractsInSale', 'contractsRemaining', 'contractsOpened',
+  'feeCents', 'reason', 'status', 'firstSeenAt', 'firstSeenBy', 'resolvedAt', 'conflicted', 'observationsNotKept'];
+const cut = v => (typeof v === 'string' && v.length > 200 ? v.slice(0, 200) + '...' : v);
+function exceptionForPhone(e) {
+  const out = {};
+  for (const f of EXCEPTION_FIELDS) if (e[f] !== undefined && (e[f] === null || typeof e[f] !== 'object')) out[f] = cut(e[f]);
+  if (Array.isArray(e.observations)) out.observations = e.observations.length;
+  if (e.resolution && typeof e.resolution === 'object') out.resolvedBy = cut(String(e.resolution.by || ''));
+  return out;
+}
+router.get('/trades/exceptions', wrap(async (req, res) => {
+  const state = await tradeStore.getState();
+  const stored = state.exceptions;
+  const containerOk = stored == null || (typeof stored === 'object' && !Array.isArray(stored));
+  const all = containerOk ? Object.values(stored || {}) : [];
+  const good = all.filter(e => e && typeof e === 'object' && !Array.isArray(e));
+  const list = good
+    .sort((a, b) => (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0)
+      || (String(a.key) < String(b.key) ? -1 : String(a.key) > String(b.key) ? 1 : 0));
+  // A fixed set of labels, so stored values can never add keys to the answer.
+  const byKind = { 'close-without-open': 0, 'open-retired': 0, other: 0 };
+  for (const e of list) { const k = e.kind === 'close-without-open' || e.kind === 'open-retired' ? e.kind : 'other'; byKind[k]++; }
+  const legs = Array.isArray(state.openLegs) ? state.openLegs : [];
+  res.json({
+    exceptions: list.slice(0, EXCEPTIONS_SHOWN).map(exceptionForPhone),
+    counts: {
+      total: list.length,
+      shown: Math.min(list.length, EXCEPTIONS_SHOWN),
+      open: list.filter(e => e.status === 'open').length,
+      resolved: list.filter(e => e.status === 'resolved').length,
+      conflicted: list.filter(e => e.conflicted === true).length,
+      malformed: containerOk ? all.length - good.length : 'the whole record',
+      byKind,
+    },
+    openLegs: { held: legs.length, withoutAccountRef: legs.filter(l => !(l && l.accountRef)).length },
+  });
+}));
+
 // Manual trigger for an immediate check, same logic the cron job runs
 // on its own every few minutes.
 router.post('/trades/sync-now', wrap(async (req, res) => {
