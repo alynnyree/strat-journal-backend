@@ -222,6 +222,9 @@ function del(id, fills) {
       fresh({ openLegs: [], pending: [t], lastProcessedIds: [] });
       const r3 = await del(t.id, '951,952');
       check('the same pair: removed, 200', r3.status === 200 && r3.body.removed === 1 && readState().pending.length === 0, r3);
+      fresh({ openLegs: [], pending: [{ ...t, fills: [951, 952] }], lastProcessedIds: [] });
+      const rn = await del(t.id, '951,952');
+      check('a queued pair stored as numbers is the same pair sent as text: removed, no false 409', rn.status === 200 && rn.body.removed === 1, rn);
       const r4 = await del(t.id, 'only-one');
       check('a "fills" that is not two ids: 400, nothing touched', r4.status === 400);
       fresh({ openLegs: [], pending: [t, other], lastProcessedIds: [] });

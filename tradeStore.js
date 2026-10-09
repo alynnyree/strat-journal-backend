@@ -75,13 +75,16 @@ async function removePendingTrade(id) {
 // one change. An entry with the same id and a different pair is KEPT and
 // reported back, so the caller can say so; nothing else is touched.
 async function removePendingTradeIfPair(id, pair) {
-  const want = JSON.stringify(pair);
+  // Compared as text: a reference stored as a number and the same digits sent
+  // as text are the same reference (the matcher stores text; this only
+  // guards an entry written some other way).
+  const want = JSON.stringify(pair.map(String));
   let removed = 0, kept = [];
   await updateState(state => {
     removed = 0; kept = [];
     const pending = (state.pending || []).filter(t => {
       if (!t || t.id !== id) return true;
-      if (JSON.stringify(t.fills || []) === want) { removed++; return false; }
+      if (JSON.stringify((t.fills || []).map(String)) === want) { removed++; return false; }
       kept.push(t.fills || []);
       return true;
     });
