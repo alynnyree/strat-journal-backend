@@ -225,6 +225,11 @@ Status on 30 Sept 2026:
     "U-" ids and accountRef "rehearsal"; they never reach his journal.
   - Tests: tests/trade-ids.js; the old fixtures now use decimal ids and an
     account (tests/lib/ledgerFixture.js fillOf stamps one).
+    tests/live-fill-account.js runs Schwab-shaped transactions through the
+    REAL getOptionFills and sync (the stamp is in getOptionFills, just
+    before each fill is collected -- extractOptionFills cannot know the
+    account, and brokerInspect reads it alone), and proves itself by
+    failing with the stamping line removed.
 - **H-4 owner decisions (9 Oct 2026), POLICY ONLY:** Q1 "Option A" -- a
   broker-confirmed worthless expiry becomes a trade closed at $0.00 on the
   verified expiry date, marked "expired", only with full broker evidence,
