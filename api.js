@@ -158,21 +158,48 @@ router.get('/trades/backfill/status', wrap(async (req, res) => {
 // phone as one line behind Details, never on his screen.
 // `openLegs` is the count of purchases the service is holding, and how many
 // carry no account reference -- read before M-1 is deployed (M-1 plan v4).
+//
+// BOUNDED (auditor item 6): it takes no input, sends at most EXCEPTIONS_SHOWN
+// records (newest first) with the counts taken over all of them, and sends
+// only the named fields of each, strings cut to a fixed length -- whatever
+// is stored, the answer cannot grow without limit or carry anything else.
+// A stored value of the wrong shape is counted as `malformed`, never thrown.
+const EXCEPTIONS_SHOWN = 100;
+const EXCEPTION_FIELDS = ['kind', 'key', 'fillId', 'identityUncertain', 'occ', 'ticker', 'date', 'time',
+  'timestamp', 'price', 'contractsUnmatched', 'contractsInSale', 'contractsRemaining', 'contractsOpened',
+  'feeCents', 'reason', 'status', 'firstSeenAt', 'firstSeenBy', 'resolvedAt', 'conflicted', 'observationsNotKept'];
+const cut = v => (typeof v === 'string' && v.length > 200 ? v.slice(0, 200) + '...' : v);
+function exceptionForPhone(e) {
+  const out = {};
+  for (const f of EXCEPTION_FIELDS) if (e[f] !== undefined && (e[f] === null || typeof e[f] !== 'object')) out[f] = cut(e[f]);
+  if (Array.isArray(e.observations)) out.observations = e.observations.length;
+  if (e.resolution && typeof e.resolution === 'object') out.resolvedBy = cut(String(e.resolution.by || ''));
+  return out;
+}
 router.get('/trades/exceptions', wrap(async (req, res) => {
   const state = await tradeStore.getState();
-  const list = Object.values(state.exceptions || {})
-    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const stored = state.exceptions;
+  const containerOk = stored == null || (typeof stored === 'object' && !Array.isArray(stored));
+  const all = containerOk ? Object.values(stored || {}) : [];
+  const good = all.filter(e => e && typeof e === 'object' && !Array.isArray(e));
+  const list = good
+    .sort((a, b) => (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0)
+      || (String(a.key) < String(b.key) ? -1 : String(a.key) > String(b.key) ? 1 : 0));
   const byKind = {};
-  for (const e of list) byKind[e.kind] = (byKind[e.kind] || 0) + 1;
-  const legs = state.openLegs || [];
+  for (const e of list) { const k = String(e.kind).slice(0, 40); byKind[k] = (byKind[k] || 0) + 1; }
+  const legs = Array.isArray(state.openLegs) ? state.openLegs : [];
   res.json({
-    exceptions: list,
+    exceptions: list.slice(0, EXCEPTIONS_SHOWN).map(exceptionForPhone),
     counts: {
+      total: list.length,
+      shown: Math.min(list.length, EXCEPTIONS_SHOWN),
       open: list.filter(e => e.status === 'open').length,
       resolved: list.filter(e => e.status === 'resolved').length,
+      conflicted: list.filter(e => e.conflicted === true).length,
+      malformed: containerOk ? all.length - good.length : 'the whole record',
       byKind,
     },
-    openLegs: { held: legs.length, withoutAccountRef: legs.filter(l => !l.accountRef).length },
+    openLegs: { held: legs.length, withoutAccountRef: legs.filter(l => !(l && l.accountRef)).length },
   });
 }));
 

@@ -193,7 +193,8 @@ async function section(fn) { try { await fn(); } catch (e) { fail++; console.log
       schwab.answers.push({ fills: [fill('o7', 'open', 2), fill('c7', 'close', 10)] });   // history, purchase included
       await cron.runBackfill(30);
       const r = exOf(readState())['close-without-open:c7'];
-      check('kept, status resolved, naming the pair that resolved it', r && r.status === 'resolved' && r.resolvedBy.join('+') === 'o7+c7' && r.resolvedAt, r);
+      check('kept, status resolved, with the evidence: every contract of c7 paired, with o7', r && r.status === 'resolved' && r.resolvedAt
+        && r.resolution && r.resolution.by === 'backfill' && JSON.stringify(r.resolution.pairedWith) === JSON.stringify([{ fillId: 'o7', contracts: 1 }]), r);
       check('the trade itself is queued normally', readState().pending.some(t => (t.fills || []).join('+') === 'o7+c7'));
     });
 
@@ -247,7 +248,9 @@ async function section(fn) { try { await fn(); } catch (e) { fail++; console.log
       check('keyed by its shape and marked identityUncertain', e && e.key.startsWith('close-without-open:S:') && e.identityUncertain === true && e.fillId === null, e);
       const leg = { occ: 'SPY   260605C00700000', ticker: 'SPY', dir: 'Long', openPrice: 0.5, openDate: '2026-06-05', openTime: '11:00',
         openTimestamp: Date.UTC(2026, 5, 5, 15), totalQuantity: 1, remaining: 1, openFees: 0.66 };   // saved before fill references
+      const before = JSON.stringify(leg);
       const m2 = processFills([fill('z2', 'open', 0, { occ: FAR, at: Date.UTC(2026, 5, 10, 14) })], { openLegs: [leg], pending: [] });
+      check('the caller\'s legacy leg is not written to while it is retired', JSON.stringify(leg) === before, leg);
       const r = m2.exceptions[0];
       check('a legacy leg with no id: retired under its shape key, uncertain, its legacy fee converted', r && r.key.startsWith('open-retired:S:') && r.identityUncertain === true && r.feeCents === 66, r);
       check('and no trade is formed from either', m.newPending.length === 0 && m2.newPending.length === 0);
@@ -266,6 +269,194 @@ async function section(fn) { try { await fn(); } catch (e) { fail++; console.log
       const st = readState();
       check('openLegs, pending and lastProcessedIds keep their shapes', Array.isArray(st.openLegs) && Array.isArray(st.pending) && Array.isArray(st.lastProcessedIds));
       check('exceptions is one extra field, an object of records', st.exceptions && typeof st.exceptions === 'object' && !Array.isArray(st.exceptions));
+    });
+
+    // ======================================================================
+    // AUDITOR REVIEW OF THE IMPLEMENTATION (9 Oct 2026), items 1-6.
+    // ======================================================================
+    const sync = async fills => { schwab.answers.push({ fills }); await cron.runSyncCheck(); };
+    const backfill = async fills => { schwab.answers.push({ fills }); await cron.runBackfill(30); };
+    const ORIGINAL = ['kind', 'key', 'fillId', 'occ', 'ticker', 'date', 'time', 'timestamp', 'price',
+      'contractsUnmatched', 'contractsInSale', 'contractsRemaining', 'contractsOpened', 'feeCents', 'reason', 'firstSeenAt', 'firstSeenBy'];
+    const factsOf = r => JSON.stringify(ORIGINAL.map(f => [f, r[f]]));
+
+    console.log('\n--- T12 (item 1). part paired is not paired: a partly paired sale or purchase stays OPEN ---');
+    await section(async () => {
+      fresh({ openLegs: [], pending: [], lastProcessedIds: [] });
+      await sync([fill('o12', 'open', 0, { qty: 2 }), fill('c12', 'close', 5, { qty: 3, price: 1.3, fees: 1.00 })]);
+      const r = exOf(readState())['close-without-open:c12'];
+      check('a sale of 3 with 2 paired: its 1-contract record is OPEN in the same change, not resolved by its own 2-contract trade', r && r.status === 'open' && r.contractsUnmatched === 1, r);
+      // A purchase of 3, one sold, then the rest left to expire inside the same run.
+      fresh({ openLegs: [], pending: [], lastProcessedIds: [] });
+      const PAST = 'SPY   260605C00700000';
+      await sync([fill('o13', 'open', 0, { occ: PAST, qty: 3, at: Date.UTC(2026, 5, 5, 14) }),
+        fill('c13', 'close', 0, { occ: PAST, qty: 1, at: Date.UTC(2026, 5, 5, 15) }),
+        fill('x13', 'open', 0, { at: Date.UTC(2026, 5, 9, 14) })]);
+      const o = exOf(readState())['open-retired:o13'];
+      check('a purchase of 3 with 1 sold and 2 retired: OPEN, 2 remaining, not resolved by the 1-contract trade', o && o.status === 'open' && o.contractsRemaining === 2, o);
+    });
+
+    console.log('\n--- T13 (item 1). a trade with one fill id cannot resolve a record of the other side ---');
+    await section(async () => {
+      // A purchase saved before fill references: its trade cites only the sale.
+      const legacy = { occ: FAR, ticker: 'SPY', dir: 'Long', openPrice: 1, openDate: '2026-06-09', openTime: '10:00',
+        openTimestamp: T0 - 60000, totalQuantity: 1, remaining: 1, openFees: 0.66 };
+      fresh({ openLegs: [legacy], pending: [], lastProcessedIds: [], exceptions: {
+        'open-retired:c14': { kind: 'open-retired', key: 'open-retired:c14', fillId: 'c14', occ: FAR, status: 'open', contractsRemaining: 1 } } });
+      await sync([fill('c14', 'close', 5)]);
+      const st = readState();
+      check('the trade is formed and cites only the sale', st.pending.length === 1 && st.pending[0].fills.join('+') === 'c14', st.pending);
+      check('the record keyed "open-retired:c14" is untouched (a sale id is never read as a purchase id)', exOf(st)['open-retired:c14'].status === 'open' && !exOf(st)['open-retired:c14'].resolution, exOf(st)['open-retired:c14']);
+    });
+
+    console.log('\n--- T14 (item 1). an uncertain identity is never a match ---');
+    await section(async () => {
+      const rec = { kind: 'close-without-open', key: 'close-without-open:q1', fillId: 'q1', identityUncertain: true, occ: FAR,
+        date: '2026-06-09', time: '10:00', timestamp: 5, price: 1, contractsInSale: 1, contractsUnmatched: 1, feeCents: 66, reason: 'r', status: 'open' };
+      const out = cron.withExceptions({ exceptions: { [rec.key]: rec } }, [],
+        [{ resolves: 'close-without-open', fillId: 'q1', occ: FAR, date: '2026-06-09', time: '10:00', timestamp: 5, price: 1, quantity: 1, pairedWith: [] }], 'now', 'sync');
+      check('a record marked identityUncertain stays open even when id and every fact match', out[rec.key].status === 'open', out[rec.key]);
+      const m = processFills([fill(null, 'open', 0), fill(null, 'close', 5)], { openLegs: [], pending: [] });
+      check('fills with no id are never offered as evidence', m.newPending.length === 1 && m.fullyPaired.length === 0, m.fullyPaired);
+    });
+
+    console.log('\n--- T15 (items 1, 5). one fill id on two different fills: both kept, flagged, never resolved ---');
+    await section(async () => {
+      fresh({ openLegs: [], pending: [], lastProcessedIds: [] });
+      const other = 'SPY   261231P00500000';
+      await sync([fill('m15', 'close', 5, { price: 1.1 }), fill('m15', 'close', 5, { occ: other, price: 2.2, qty: 2 })]);
+      const r = exOf(readState())['close-without-open:m15'];
+      check('one record keeps the first fill exactly', r && r.occ === FAR && r.price === 1.1 && r.status === 'open', r);
+      const o = r && (r.observations || [])[0];
+      check('the second fill is recorded beside it, not dropped: contract, price, size', o && o.kind === 'fill-id-on-a-different-fill' && o.facts.occ === other && o.facts.price === 2.2 && o.facts.contractsInSale === 2, r);
+      check('and the record is marked conflicted', r && r.conflicted === true);
+      await backfill([fill('p15', 'open', 0), fill('m15', 'close', 5, { price: 1.1 })]);
+      check('a later full pairing of that id does NOT resolve a conflicted record', exOf(readState())['close-without-open:m15'].status === 'open');
+    });
+
+    console.log('\n--- T16 (item 1). evidence whose facts differ from the record never resolves it ---');
+    await section(async () => {
+      fresh({ openLegs: [], pending: [], lastProcessedIds: [] });
+      await sync([fill('c16', 'close', 5, { price: 1.1 })]);
+      await cron.resetSyncState();
+      await backfill([fill('o16', 'open', 0), fill('c16', 'close', 5, { price: 9.9 })]);   // same id, a different price
+      const r = exOf(readState())['close-without-open:c16'];
+      check('still open, the differing fill noted, the record flagged', r.status === 'open' && r.conflicted === true
+        && r.observations.some(o => o.kind === 'fill-id-on-a-different-fill' && o.facts.price === 9.9), r);
+    });
+
+    console.log('\n--- T17 (item 2). resolution adds only its own fields; repeats change nothing; contradictions are noted, not applied ---');
+    await section(async () => {
+      fresh({ openLegs: [], pending: [], lastProcessedIds: [] });
+      await sync([fill('c17', 'close', 5, { price: 1.2, fees: 0.67 })]);
+      const before = exOf(readState())['close-without-open:c17'];
+      await cron.resetSyncState();
+      await backfill([fill('o17', 'open', 0), fill('c17', 'close', 5, { price: 1.2, fees: 0.67 })]);
+      const after = exOf(readState())['close-without-open:c17'];
+      check('every original fact is identical after resolution', factsOf(after) === factsOf(before), [before, after]);
+      const added = Object.keys(after).filter(k => !(k in before)).sort().join(',');
+      check(`only these were added: ${added}`, added === 'resolution,resolvedAt' && after.status === 'resolved' && before.status === 'open');
+      const snap = JSON.stringify(readState().exceptions);
+      await cron.resetSyncState();
+      await backfill([fill('o17', 'open', 0), fill('c17', 'close', 5, { price: 1.2, fees: 0.67 })]);
+      check('a second full pairing of the same fill changes nothing (idempotent)', JSON.stringify(readState().exceptions) === snap);
+      for (let i = 0; i < 3; i++) { await cron.resetSyncState(); await backfill([fill('c17', 'close', 5, { price: 1.2, fees: 0.67 })]); }
+      const late = exOf(readState())['close-without-open:c17'];
+      check('reported unpaired again after resolution, three times: still resolved, facts unchanged, ONE observation, flagged',
+        late.status === 'resolved' && factsOf(late) === factsOf(before) && late.conflicted === true
+          && late.observations.length === 1 && late.observations[0].kind === 'reported-unpaired-after-resolution', late);
+    });
+
+    console.log('\n--- T18 (item 2). the record and "processed" are one write: if it fails, neither changes ---');
+    await section(async () => {
+      fresh({ openLegs: [], pending: [], lastProcessedIds: ['earlier'] });
+      const realSet = fakeRedis.set;
+      fakeRedis.set = async () => { throw new Error('storage refused'); };
+      try { await sync([fill('c18', 'close', 5)]); } finally { fakeRedis.set = realSet; }
+      const st = readState();
+      check('nothing marked processed and nothing recorded', JSON.stringify(st.lastProcessedIds) === '["earlier"]' && !st.exceptions, st);
+      await sync([fill('c18', 'close', 5)]);
+      check('the next sync records it and marks it processed together', exOf(readState())['close-without-open:c18'] && readState().lastProcessedIds.includes('c18'));
+      fresh({ openLegs: [], pending: [], lastProcessedIds: [], exceptions: ['not', 'an', 'object'] });
+      await sync([fill('c19', 'close', 5)]);
+      const bad = readState();
+      check('an exceptions field of the wrong shape: the change refuses -- nothing processed, the stored value untouched',
+        bad.lastProcessedIds.length === 0 && JSON.stringify(bad.exceptions) === '["not","an","object"]', bad);
+      fresh({ openLegs: [], pending: [], lastProcessedIds: [], exceptions: { 'close-without-open:c20': 'garbage' } });
+      await sync([fill('c20', 'close', 5)]);
+      check('one stored record of the wrong shape is never overwritten; the fill is still processed',
+        readState().exceptions['close-without-open:c20'] === 'garbage' && readState().lastProcessedIds.includes('c20'));
+    });
+
+    console.log('\n--- T19 (item 3). fee allocation in whole cents, checked against hand-worked figures ---');
+    await section(async () => {
+      // Purchase fee 133 cents on 3 contracts, sold one at a time:
+      //   round(133 x 1/3) = 44, leaving 89; round(89 x 1/2) = 45 (x.5 rounds up), leaving 44; the last takes 44.
+      let m = processFills([fill('a', 'open', 0, { qty: 3, fees: 1.33 }), fill('b', 'close', 1, { fees: 0.66 }),
+        fill('c', 'close', 2, { fees: 0.66 }), fill('d', 'close', 3, { fees: 0.66 })], { openLegs: [], pending: [] });
+      check('purchase fee 133 over three single sales: 44 + 45 + 44', m.newPending.map(t => cents(t.entryFees)).join('+') === '44+45+44');
+      // Sale fee 101 cents on 3 contracts, against three purchases of 1 (oldest first):
+      //   round(101 x 1/3) = 34, leaving 67; round(67 x 1/2) = 34, leaving 33; the last takes 33.
+      m = processFills([fill('e', 'open', 0), fill('f', 'open', 1), fill('g', 'open', 2), fill('h', 'close', 5, { qty: 3, fees: 1.01 })], { openLegs: [], pending: [] });
+      check('sale fee 101 over three purchases: 34 + 34 + 33, oldest purchase first', m.newPending.map(t => t.fills[0] + cents(t.exitFees)).join(' ') === 'e34 f34 g33');
+      // Same purchase moment: the lower fill id goes first (compared as a number), whatever the arrival order.
+      m = processFills([fill('20', 'open', 0), fill('3', 'open', 0), fill('k', 'close', 5, { qty: 2, fees: 1.01 })], { openLegs: [], pending: [] });
+      check('a tie on the purchase moment goes to fill id 3 before 20, and the cents follow it (51 then 50)', m.newPending.map(t => t.fills[0] + ':' + cents(t.exitFees)).join(' ') === '3:51 20:50');
+      // Sale of 3 against 2 open, fee 100: 2/3 of 100 = 66.67 -> 67 to the trade, 33 to the record.
+      m = processFills([fill('o', 'open', 0, { qty: 2 }), fill('s', 'close', 5, { qty: 3, fees: 1.00 })], { openLegs: [], pending: [] });
+      check('a partly unpaired sale: 67 to the trade, 33 to the record', cents(m.newPending[0].exitFees) === 67 && m.exceptions[0].feeCents === 33);
+      m = processFills([fill('o', 'open', 0, { qty: 2 }), fill('s', 'close', 5, { qty: 3, fees: null })], { openLegs: [], pending: [] });
+      check('an unknown sale fee stays unknown: the trade\'s fee and after-fee figure, and the record\'s fee, are null (never 0)',
+        m.newPending[0].exitFees === null && m.newPending[0].fees === null && m.newPending[0].pnlNet === null && m.exceptions[0].feeCents === null, [m.newPending[0], m.exceptions[0]]);
+      const PAST = 'SPY   260605C00700000';
+      m = processFills([fill('u', 'open', 0, { occ: PAST, fees: null, at: Date.UTC(2026, 5, 5, 14) }), fill('n', 'open', 0, { at: Date.UTC(2026, 5, 9, 14) })], { openLegs: [], pending: [] });
+      check('an unknown purchase fee, retired: null on the record, not 0', m.exceptions[0] && m.exceptions[0].feeCents === null, m.exceptions[0]);
+    });
+
+    console.log('\n--- T20 (item 4). every writer of the record keeps the exception ledger ---');
+    await section(async () => {
+      fresh({ openLegs: [], pending: [], lastProcessedIds: [] });
+      await sync([fill('c21', 'close', 5)]);
+      const want = JSON.stringify(readState().exceptions);
+      const steps = [
+        ['a sync with nothing new', () => sync([])],
+        ['a sync that pairs an ordinary trade', () => sync([fill('o22', 'open', 6), fill('c22', 'close', 7)])],
+        ['the phone taking a trade', () => tradeStore.removePendingTrade(readState().pending[0].id)],
+        ['a trade added to the queue', () => tradeStore.addPendingTrade({ id: 'x', fills: ['y', 'z'] })],
+        ['a backfill with nothing new in it', () => backfill([])],
+        ['a reset', () => cron.resetSyncState()],
+      ];
+      for (const [label, step] of steps) {
+        await step();
+        check(`after ${label}: the ledger is byte-for-byte the same`, JSON.stringify(readState().exceptions) === want, readState().exceptions);
+      }
+    });
+
+    console.log('\n--- T21 (item 6). the read-only answer is bounded and sends only named fields ---');
+    await section(async () => {
+      process.env.APP_SECRET = process.env.APP_SECRET || 'test-only-not-a-real-key';
+      const api = require(path.join(BACKEND, 'api.js'));
+      const layer = api.stack.find(l => l.route && l.route.path === '/trades/exceptions');
+      const ask = () => new Promise((resolve, reject) => {
+        const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve({ status: this.statusCode, body: b }); } };
+        layer.route.stack[0].handle({ method: 'GET', query: {}, params: {} }, res, reject);
+      });
+      const many = {};
+      for (let i = 0; i < 250; i++) many[`close-without-open:n${i}`] = { kind: 'close-without-open', key: `close-without-open:n${i}`, fillId: `n${i}`,
+        timestamp: i, status: 'open', reason: 'x'.repeat(5000), raw: { account: 'should never be sent' } };
+      many['close-without-open:bad'] = 'garbage';
+      fresh({ openLegs: [], pending: [], lastProcessedIds: [], exceptions: many });
+      const a = await ask();
+      const size = JSON.stringify(a.body).length;
+      check(`250 records stored: 100 sent, newest first, counts over all 250 (${size} characters)`, a.body.exceptions.length === 100
+        && a.body.exceptions[0].fillId === 'n249' && a.body.counts.total === 250 && a.body.counts.open === 250 && a.body.counts.shown === 100, a.body.counts);
+      check('a 5,000-character reason is cut to 200 + "..."', a.body.exceptions[0].reason.length === 203);
+      check('a field not on the list (a raw payload) is never sent', !JSON.stringify(a.body).includes('should never be sent'));
+      check('a stored value of the wrong shape is counted, not thrown', a.body.counts.malformed === 1);
+      fresh({ openLegs: 'nonsense', pending: [], lastProcessedIds: [], exceptions: 'nonsense' });
+      const b = await ask();
+      check('a whole record of the wrong shape: answered, nothing listed, said so', b.status === 200 && b.body.exceptions.length === 0
+        && b.body.counts.malformed === 'the whole record' && b.body.openLegs.held === 0, b.body);
     });
   } catch (e) {
     fail++; console.log('FAIL: crashed', e && e.stack);

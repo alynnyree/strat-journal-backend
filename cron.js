@@ -314,31 +314,82 @@ const legKey = l => (l.openFillId
   : `S:${l.occ}|${l.openTimestamp}|${l.openPrice}|${l.totalQuantity}`);
 // The same trade out of two runs of the matcher over the same fills.
 const tradeKey = t => `${(t.fills || []).join('+')}|${t.contracts}|${t.entryTimestamp}|${t.exitTimestamp}`;
-// THE EXCEPTION LEDGER (audit H-2; authorized 9 Oct 2026). What the matcher
-// could not pair is kept in `exceptions` on this same record, keyed by
-// kind + broker fill id, and written in the SAME change that marks those
-// fills processed -- so "processed" and "recorded" are saved together or not
-// at all, through the one queue every writer of this record uses (Step B).
-// A record is added only when its key is absent: a retry, a backfill or a
-// re-run after a reset adds nothing. Nothing is ever deleted or overwritten;
-// a record whose fill is later paired by fill id becomes "resolved".
-function withExceptions(latest, found, pairedTrades, at) {
-  const had = latest.exceptions || {};
+// THE EXCEPTION LEDGER (audit H-2; authorized 9 Oct 2026; corrected after
+// the auditor's implementation review the same day). What the matcher could
+// not pair is kept in `exceptions` on this same record, keyed by kind +
+// broker fill id, and written in the SAME change that marks those fills
+// processed -- so "processed" and "recorded" are saved together or not at
+// all, through the one queue every writer of this record uses (Step B).
+//
+// The facts a record was first written with never change. Only three things
+// are ever added to it, and nothing is deleted:
+//   - status 'open' -> 'resolved', with resolvedAt and `resolution` (the
+//     evidence), and only when the matcher reports the SAME broker fill --
+//     same id AND same contract, date, time, price and size -- as paired in
+//     every contract (`fullyPaired`). A record whose id is uncertain, or whose
+//     id has been seen on a different fill, is never resolved automatically,
+//     and neither is one the same run reports as unpaired.
+//   - `observations`: the same key seen again with DIFFERENT facts (an id on
+//     a different fill, or a different verdict), or reported unpaired again
+//     after it was resolved. Recorded, never applied; `conflicted` is set
+//     when the evidence contradicts the record. At most OBS_CAP distinct
+//     ones are kept, with a count of any more.
+//   - nothing else. The same key seen again with the same facts is a repeat
+//     delivery and changes nothing.
+// A record that is not an object is never overwritten or resolved. An
+// exceptions field that is not an object makes the whole change refuse, so
+// no fill is marked processed while its exception cannot be written.
+const OBS_CAP = 20;
+const isPlainObject = v => v != null && typeof v === 'object' && !Array.isArray(v);
+const sizeOf = e => (e.kind === 'close-without-open' ? e.contractsInSale : e.contractsOpened);
+const fillFacts = e => [e.fillId, e.occ, e.date, e.time, e.timestamp, e.price, sizeOf(e)];
+const verdictOf = e => [e.kind === 'close-without-open' ? e.contractsUnmatched : e.contractsRemaining, e.feeCents, e.reason];
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function withObservation(rec, kind, facts, at, conflict) {
+  const obs = rec.observations || [];
+  const sig = JSON.stringify([kind, facts]);
+  if (obs.some(o => JSON.stringify([o.kind, o.facts]) === sig)) return null; // seen before
+  const out = { ...rec, ...(conflict ? { conflicted: true } : {}) };
+  if (obs.length >= OBS_CAP) out.observationsNotKept = (rec.observationsNotKept || 0) + 1;
+  else out.observations = [...obs, { kind, at, facts }];
+  return out;
+}
+function withExceptions(latest, found, fullyPaired, at, source) {
+  const had = latest.exceptions == null ? {} : latest.exceptions;
+  if (!isPlainObject(had)) {
+    throw new Error('The record of unpaired broker fills is not in the expected form; nothing was saved, so no fill is marked processed.');
+  }
   const next = { ...had };
   let changed = false;
+  const put = (key, rec) => { if (rec) { next[key] = rec; changed = true; } };
+  const reported = new Set();
   for (const e of found || []) {
-    if (next[e.key]) continue;
-    next[e.key] = { ...e, status: 'open', firstSeenAt: at };
-    changed = true;
+    reported.add(e.key);
+    const rec = next[e.key];
+    if (rec === undefined) { put(e.key, { ...e, status: 'open', firstSeenAt: at, firstSeenBy: source }); continue; }
+    if (!isPlainObject(rec)) continue; // never overwritten
+    const sameFill = same(fillFacts(rec), fillFacts(e));
+    const sameVerdict = same(verdictOf(rec), verdictOf(e));
+    if (sameFill && sameVerdict && rec.status !== 'resolved') continue; // repeat delivery
+    const kind = !sameFill ? 'fill-id-on-a-different-fill'
+      : rec.status === 'resolved' ? 'reported-unpaired-after-resolution'
+      : 'seen-again-with-a-different-verdict';
+    const { key, kind: k, ...facts } = e;
+    put(e.key, withObservation(rec, kind, { ...facts, seenBy: source }, at, kind !== 'seen-again-with-a-different-verdict'));
   }
-  for (const t of pairedTrades || []) {
-    const [open, close] = t.fills || [];
-    for (const key of [open && `open-retired:${open}`, close && `close-without-open:${close}`]) {
-      const rec = key && next[key];
-      if (!rec || rec.status !== 'open') continue;
-      next[key] = { ...rec, status: 'resolved', resolvedAt: at, resolvedBy: t.fills };
-      changed = true;
+  for (const p of fullyPaired || []) {
+    const key = `${p.resolves}:${p.fillId}`;
+    if (reported.has(key)) continue;            // the same run says unpaired: never resolve
+    const rec = next[key];
+    if (!isPlainObject(rec) || rec.status !== 'open') continue; // already resolved: no-op
+    if (rec.identityUncertain || rec.conflicted) continue;
+    if (!same(fillFacts(rec), [p.fillId, p.occ, p.date, p.time, p.timestamp, p.price, p.quantity])) {
+      const { resolves, pairedWith, ...facts } = p;
+      put(key, withObservation(rec, 'fill-id-on-a-different-fill', { ...facts, seenBy: source }, at, true));
+      continue;
     }
+    put(key, { ...rec, status: 'resolved', resolvedAt: at,
+      resolution: { evidence: 'the matcher paired every contract of this broker fill', by: source, pairedWith: p.pairedWith } });
   }
   return changed ? next : had;
 }
@@ -490,7 +541,7 @@ async function syncOnce() {
         next.pending = [...landed, ...(latest.pending || [])];
         next.lastProcessedIds = unionIds(latest.lastProcessedIds, take.map(f => f.transactionId));
         // H-2: in the same change as "processed" (see withExceptions).
-        const ex = withExceptions(latest, m.exceptions, m.newPending, now.toISOString());
+        const ex = withExceptions(latest, m.exceptions, m.fullyPaired, now.toISOString(), 'sync');
         if (ex !== latest.exceptions) next.exceptions = ex;
       }
       if (syncNote) next.lastSync = { ...syncNote, ...problems };
@@ -659,7 +710,7 @@ async function backfillOnce(daysBack) {
       newPending = m.newPending;
       const have = new Set((latest.openLegs || []).map(legKey));
       // H-2: what this run could not pair, in the same change (withExceptions).
-      const ex = withExceptions(latest, m.exceptions, m.newPending, new Date().toISOString());
+      const ex = withExceptions(latest, m.exceptions, m.fullyPaired, new Date().toISOString(), 'backfill');
       return {
         ...latest,
         ...(ex !== latest.exceptions ? { exceptions: ex } : {}),

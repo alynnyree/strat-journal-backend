@@ -109,7 +109,14 @@ function pickLegForClose(openLegs, fill) {
 // seen again (a retry, a backfill, a re-run after a reset) names the same
 // record. A leg saved before fill references existed has no id: it is keyed by
 // what it is made of and marked identityUncertain -- that key only stops the
-// record being written twice; it never pairs or merges anything.
+// record being written twice; it never pairs, merges or resolves anything.
+//
+// `fullyPaired` is the matcher's own evidence that a fill WAS paired after
+// all (H-2 correction, auditor item 1): a sale every contract of which was
+// paired in this call, and a purchase whose last contract was paired in this
+// call. Only a fill with a broker id is listed, with its broker facts, so a
+// record can be matched to it by id AND facts. A fill part of which is left
+// unpaired is never listed -- part paired is not paired.
 const legShapeKey = l => `S:${l.occ}|${l.openTimestamp}|${l.openPrice}|${l.totalQuantity}`;
 const closeShapeKey = f => `S:${f.occ}|${f.timestamp}|${f.price}|${f.quantity}`;
 function exceptionKey(kind, fillId, shapeKey) {
@@ -132,6 +139,8 @@ function processFills(fills, state) {
   const openLegs = [...state.openLegs];
   const newPending = [];
   const exceptions = [];
+  const fullyPaired = [];
+  const pairsOfLeg = new Map(); // leg -> what this call paired it with
   const newlyOpenedLegs = []; // legs opened THIS call only — for a one-time "trade opened" notification, not a repeat on every leg still sitting open from before
   let latestTimestamp = 0;
 
@@ -167,6 +176,7 @@ function processFills(fills, state) {
     }
     if (isClose(fill.instruction)) {
       let qtyToClose = fill.quantity;
+      const pairedWith = []; // what this sale was paired with, in this call
       // What is left of THIS closing fill's fee, in whole cents, as it is
       // spread across however many open legs it closes.
       const closeFee = { cents: fill.fees == null ? null : Math.round(fill.fees * 100) };
@@ -279,6 +289,25 @@ function processFills(fills, state) {
         });
         leg.remaining = remainingAfterThis;
         qtyToClose -= qtyMatched;
+        const closeId = fill.transactionId == null ? null : String(fill.transactionId);
+        pairedWith.push({ fillId: leg.openFillId || null, contracts: qtyMatched });
+        if (!pairsOfLeg.has(leg)) pairsOfLeg.set(leg, []);
+        pairsOfLeg.get(leg).push({ fillId: closeId, contracts: qtyMatched });
+        if (remainingAfterThis === 0 && leg.openFillId) {
+          fullyPaired.push({
+            resolves: 'open-retired', fillId: leg.openFillId,
+            occ: leg.occ, date: leg.openDate, time: leg.openTime, timestamp: leg.openTimestamp,
+            price: leg.openPrice, quantity: leg.totalQuantity,
+            pairedWith: pairsOfLeg.get(leg).slice(),
+          });
+        }
+      }
+      if (qtyToClose === 0 && fill.quantity > 0 && fill.transactionId != null) {
+        fullyPaired.push({
+          resolves: 'close-without-open', fillId: String(fill.transactionId),
+          occ: fill.occ, date: fill.date, time: fill.time, timestamp: fill.timestamp,
+          price: fill.price, quantity: fill.quantity, pairedWith,
+        });
       }
       // Whatever is left of the sale had nothing to pair with. It used to
       // vanish here. It is recorded with the rest of its fee, so the pieces
@@ -310,7 +339,10 @@ function processFills(fills, state) {
   const asOf = latestTimestamp || Date.now();
   for (const l of openLegs) {
     if (!(l.remaining > 0) || !isLegDead(l, asOf)) continue;
-    if (l.openFeeCents === undefined) l.openFeeCents = l.openFees == null ? null : Math.round(l.openFees * 100);
+    // A leg saved before whole cents existed carries only the dollar figure.
+    // Read here without writing back onto the leg (it belongs to the caller).
+    const feeCents = l.openFeeCents !== undefined ? l.openFeeCents
+      : (l.openFees == null ? null : Math.round(l.openFees * 100));
     const exp = expirationFromOcc(l.occ);
     exceptions.push({
       kind: 'open-retired',
@@ -322,7 +354,7 @@ function processFills(fills, state) {
       price: l.openPrice,
       contractsRemaining: l.remaining,
       contractsOpened: l.totalQuantity,
-      feeCents: l.openFeeCents,
+      feeCents,
       reason: exp != null && asOf > exp
         ? 'past expiry (no sale on file)'
         : 'older than 45 days (no sale on file)',
@@ -338,6 +370,7 @@ function processFills(fills, state) {
     newPending,
     newlyOpenedLegs,
     exceptions,
+    fullyPaired,
   };
 }
 module.exports = { processFills, expirationFromOcc, isLegDead };

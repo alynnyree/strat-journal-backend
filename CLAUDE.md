@@ -170,10 +170,30 @@ Status on 30 Sept 2026:
   (5,000 random streams identical to the old matcher). They are saved in
   `trades:state.exceptions`, keyed by kind + broker fill id, in the SAME
   updateState change that marks the fills processed; never duplicated,
-  never deleted; a later pairing of the same fill id marks one "resolved";
-  a reset keeps them. A retired purchase is never called "expired
-  worthless". Read-only `GET /api/trades/exceptions` (app key), one line
-  behind Details in the app (tests/unpaired-fills.js, 30 checks).
+  never deleted; a reset keeps them. A retired purchase is never called
+  "expired worthless". Read-only `GET /api/trades/exceptions` (app key),
+  one line behind Details in the app (tests/unpaired-fills.js).
+  **Corrected after the auditor's implementation review (9 Oct 2026):**
+  - A record is resolved ONLY by the matcher's own `fullyPaired` evidence:
+    the same broker fill id AND the same contract, date, time, price and
+    size, with EVERY contract paired. Part paired is not paired (the first
+    version resolved a partly paired sale by its own trade, in the same
+    change). Never resolved: identityUncertain records, conflicted records,
+    or a key the same run reports unpaired.
+  - Original facts never change. Resolution adds only status, resolvedAt
+    and `resolution`. The same key with different facts (one id on two
+    fills -- the live sync gives every option leg of one Schwab transaction
+    the same id, R1 is not applied there) or after resolution is kept as an
+    `observation` and sets `conflicted`; never applied, never dropped.
+  - An `exceptions` field of the wrong shape makes the change refuse, so
+    no fill is marked processed unrecorded; a single bad record is never
+    overwritten.
+  - The route sends at most 100 records, named fields only, strings cut at
+    200 characters, counts over all records, and counts malformed ones.
+  - ROLLBACK RULE: main's code before H-2 erases `exceptions` on a reset
+    (measured; every other writer keeps it). So H-2 is never rolled back by
+    a plain revert: a rollback keeps the reset line that preserves
+    `exceptions`, and a backup export is taken first.
 - **H-4 owner decisions (9 Oct 2026), POLICY ONLY:** Q1 "Option A" -- a
   broker-confirmed worthless expiry becomes a trade closed at $0.00 on the
   verified expiry date, marked "expired", only with full broker evidence,
