@@ -153,5 +153,25 @@ console.log('\n--- and the answers are the RIGHT ones, not merely consistent ---
   }
 }
 
+console.log('\n--- a fill with SECONDS reads the same bar as its whole minute ---');
+{
+  // Every check above used an entry exactly on the minute, which is why a
+  // real fault survived: a fill at 10:31:30 had its bars start 30 seconds
+  // late, so the first candle of each bar was skipped and the open read
+  // one minute late (found 11 Oct 2026 by the goal-sheet check). Real
+  // fills almost always carry seconds.
+  const day = from(9, 30, 390);
+  for (const [h, m, s] of [[10, 42, 30], [10, 42, 59], [10, 30, 1], [10, 31, 30], [9, 30, 45]]) {
+    const at = Date.UTC(2026, 5, 24, h + 4, m, s);
+    const atMin = h * 60 + m;
+    for (const period of [1, 3, 5, 15, 30, 60, 120, 240]) {
+      const want = shouldOpenAt(atMin, period);
+      const got = intradayBarOpen(sessionCandles(day, at), at, period);
+      const label = period < 60 ? period + 'm' : (period / 60) + 'H';
+      check(`${asClock(atMin)}:${String(s).padStart(2, '0')} ${label} bar starts ${asClock(want)} (got ${asClock(got)})`, got === want);
+    }
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

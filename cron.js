@@ -57,7 +57,12 @@ function scheduleStillOpenCheck(leg) {
 //     built the larger timeframes by grouping candles by position.
 // 2 = the price at entry against the open of the bar forming then, with
 //     intraday bars anchored to the session and quarters to the calendar.
-const FTFC_RULE_VERSION = 2;
+// 3 = the same, with each intraday bar counted from the start of the
+//     fill's MINUTE (11 Oct 2026). Under 2 a fill's seconds shifted every
+//     intraday bar's open one minute late, and just after a bar boundary
+//     left 3m-1H blank. Owner's words: "Fix the FTFC Time Bug ...
+//     re-run the updated FTFC function over the existing trades".
+const FTFC_RULE_VERSION = 3;
 
 async function enrichWithFtfc(token, trades) {
   for (const trade of trades) {

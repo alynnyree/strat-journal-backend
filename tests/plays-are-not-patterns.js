@@ -114,10 +114,18 @@ const trade = {
     /DEFINED BY LOCATION, NOT BY THE COMBO/.test(bf));
   check('it says a broadening formation can form on ANY timeframe',
     /can form and be recognised on ANY timeframe/i.test(bf));
-  check('it states his actual method: spot it on a LARGER timeframe',
-    /recognise the formation on a LARGER timeframe/i.test(bf) && /30-minute or 1-hour/.test(bf));
-  check('and trade it on a LOWER one',
-    /trade it on a LOWER one/i.test(bf) && /1-minute or 5-minute/.test(bf));
+  // His rule as of 11 Oct 2026: ANY higher-timeframe formation with a
+  // scalp on ANY smaller timeframe -- no fixed minutes.
+  check('it states his actual method: the formation on a HIGHER timeframe chart',
+    /formation is drawn on a HIGHER timeframe chart/i.test(bf));
+  check('and the scalp executed on a SMALLER timeframe chart',
+    /executed on a SMALLER timeframe chart/i.test(bf));
+  check('ANY pairing qualifies, with his own examples (4-hour/15-minute, 1-hour/5-minute)',
+    /ANY such pairing qualifies/i.test(bf) && /4-hour formation scalped on the 15-minute/.test(bf) && /1-hour formation scalped on the 5-minute/.test(bf));
+  check('no timeframe is fixed: only "larger than the execution timeframe"',
+    /No timeframe is fixed/i.test(bf) && /LARGER than the one the trade is executed on/.test(bf));
+  check('the old fixed minutes are gone from the definition',
+    !/30-minute or 1-hour/.test(bf) && !/1-minute or 5-minute/.test(bf));
   check('it says any of the nine can trigger it',
     /ANY of the nine combos can trigger it/i.test(bf));
   check('and tells the model not to reject it over the combo shape',
