@@ -177,8 +177,16 @@ function intradayBarOpen(sameDay, atMs, minutes) {
   if (minsIntoDay < SESSION_OPEN_MIN) return null;      // before the session opened
   const sinceOpen = minsIntoDay - SESSION_OPEN_MIN;
   const barStartMin = SESSION_OPEN_MIN + Math.floor(sinceOpen / minutes) * minutes;
-  // Back to a real instant on that same day.
-  const barStartMs = atMs - (minsIntoDay - barStartMin) * 60000;
+  // Back to a real instant on that same day, counted from the START of the
+  // fill's minute. minsIntoDay drops the seconds, so subtracting whole
+  // minutes from the exact fill instant kept them: a fill at 10:31:30 put
+  // the 10:30 bar's start at 10:30:30, the 10:30 candle was skipped and
+  // the bar's open was read one minute late. Real fills almost always carry
+  // seconds, so every intraday bar was affected; just after a bar boundary
+  // the late open equalled the entry price and the timeframe read blank
+  // (measured 11 Oct 2026: a 10:31:30 entry lost 3m, 5m, 15m, 30m and 1H).
+  const atMinuteMs = atMs - (atMs % 60000);
+  const barStartMs = atMinuteMs - (minsIntoDay - barStartMin) * 60000;
   const first = sameDay.find(c => c.datetime >= barStartMs);
   return first ? first.open : null;
 }
