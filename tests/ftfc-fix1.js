@@ -475,6 +475,21 @@ const measure = (exact = null) => ftfc.getFtfcForTrade('tok', 'SPY', ENTRY, exac
         const inside = (s.slice(a, b).match(/trade\.ftfc\w*\s*=[^=]/g) || []).length; return inside === cronFtfcWrites; })());
   }
 
+  console.log('\n--- D. the shared vectors (the same file is in the app) still match this code ---');
+  {
+    const VEC = JSON.parse(fs.readFileSync(path.join(__dirname, 'vectors', 'ftfc-fix1-vectors.json'), 'utf8'));
+    check(`the vectors are for this rule version (${VEC.version})`, VEC.version === V);
+    const bad = VEC.readings.filter(x => R.readingProblems(x.reading, x.entryMs).length);
+    check(`all ${VEC.readings.length} shared readings pass the service's checks`, bad.length === 0, bad.map(x => x.name));
+    const off = VEC.verdicts.filter(v => { const a = ftfc.computeFtfcConfirmation(v.grid);
+      return a.runLength !== v.runLength || a.confirmed !== v.confirmed || (a.direction ?? null) !== (v.direction ?? null) || JSON.stringify(a.timeframesInRun) !== JSON.stringify(v.timeframesInRun); });
+    check(`the service's verdict equals the shared one on all ${VEC.verdicts.length} vectors`, off.length === 0, off.length);
+    behave = {};
+    const again = (await measure({ price: priceAt(ENTRY), atMs: ENTRY })).reading;
+    const fixed = VEC.readings.find(x => x.name === 'complete, exact print').reading;
+    check('the reading code still produces the shared complete reading exactly', JSON.stringify(again) === JSON.stringify(fixed));
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

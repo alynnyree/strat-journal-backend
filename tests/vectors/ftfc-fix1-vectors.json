@@ -1,0 +1,6753 @@
+{
+ "_why": "FTFC Fix 1 shared vectors. Generated ONCE by the service's real reading code (ftfcCheck.getFtfcForTrade with market stand-ins) and its real verdict rule (computeFtfcConfirmation). The SAME file is in both projects; each side checks it against its own code, so the two cannot drift apart unnoticed.",
+ "version": 3,
+ "readings": [
+  {
+   "name": "complete, exact print",
+   "entryMs": 1791556290000,
+   "reading": {
+    "version": 3,
+    "status": {
+     "6M": "bull",
+     "3M": "bull",
+     "1M": "bull",
+     "1W": "bull",
+     "1D": "bull",
+     "4H": "bull",
+     "2H": "bull",
+     "1H": "bull",
+     "30m": "bull",
+     "15m": "bull",
+     "5m": "bull",
+     "3m": "bull",
+     "1m": "bull"
+    },
+    "missing": {},
+    "complete": true,
+    "priceAtEntry": 545.81515,
+    "priceSource": "exact-print",
+    "priceTime": 1791556290000,
+    "run": 13,
+    "confirmed": true,
+    "direction": "bull",
+    "timeframesInRun": [
+     "6M",
+     "3M",
+     "1M",
+     "1W",
+     "1D",
+     "4H",
+     "2H",
+     "1H",
+     "30m",
+     "15m",
+     "5m",
+     "3m",
+     "1m"
+    ],
+    "grid": {
+     "6M": "bull",
+     "3M": "bull",
+     "1M": "bull",
+     "1W": "bull",
+     "1D": "bull",
+     "4H": "bull",
+     "2H": "bull",
+     "1H": "bull",
+     "30m": "bull",
+     "15m": "bull",
+     "5m": "bull",
+     "3m": "bull",
+     "1m": "bull"
+    },
+    "diagnostics": {
+     "minute": "Schwab answered",
+     "daily": "Schwab answered",
+     "weekly": "Schwab answered",
+     "monthly": "Schwab answered"
+    }
+   }
+  },
+  {
+   "name": "complete, prior-minute close",
+   "entryMs": 1791556290000,
+   "reading": {
+    "version": 3,
+    "status": {
+     "6M": "bull",
+     "3M": "bull",
+     "1M": "bull",
+     "1W": "bull",
+     "1D": "bull",
+     "4H": "bull",
+     "2H": "bull",
+     "1H": "bull",
+     "30m": "bull",
+     "15m": "bull",
+     "5m": "bull",
+     "3m": "bull",
+     "1m": "level"
+    },
+    "missing": {},
+    "complete": true,
+    "priceAtEntry": 545.8151,
+    "priceSource": "prior-minute-close",
+    "priceTime": 1791556200000,
+    "run": 12,
+    "confirmed": true,
+    "direction": "bull",
+    "timeframesInRun": [
+     "6M",
+     "3M",
+     "1M",
+     "1W",
+     "1D",
+     "4H",
+     "2H",
+     "1H",
+     "30m",
+     "15m",
+     "5m",
+     "3m"
+    ],
+    "grid": {
+     "6M": "bull",
+     "3M": "bull",
+     "1M": "bull",
+     "1W": "bull",
+     "1D": "bull",
+     "4H": "bull",
+     "2H": "bull",
+     "1H": "bull",
+     "30m": "bull",
+     "15m": "bull",
+     "5m": "bull",
+     "3m": "bull"
+    },
+    "diagnostics": {
+     "minute": "Schwab answered",
+     "daily": "Schwab answered",
+     "weekly": "Schwab answered",
+     "monthly": "Schwab answered"
+    }
+   }
+  },
+  {
+   "name": "incomplete: minute series 15 minutes short (Alpaca free plan)",
+   "entryMs": 1791556290000,
+   "reading": {
+    "version": 3,
+    "status": {
+     "6M": "bull",
+     "3M": "bull",
+     "1M": "bull",
+     "1W": "bull",
+     "1D": "bull",
+     "4H": "bull",
+     "2H": "bull",
+     "1H": "missing",
+     "30m": "missing",
+     "15m": "missing",
+     "5m": "missing",
+     "3m": "missing",
+     "1m": "missing"
+    },
+    "missing": {
+     "1H": "data did not contain this bar",
+     "30m": "data did not contain this bar",
+     "15m": "data did not contain this bar",
+     "5m": "data did not contain this bar",
+     "3m": "data did not contain this bar",
+     "1m": "data did not contain this bar"
+    },
+    "complete": false,
+    "priceAtEntry": 545.81515,
+    "priceSource": "exact-print",
+    "priceTime": 1791556290000,
+    "run": null,
+    "confirmed": null,
+    "direction": null,
+    "timeframesInRun": [],
+    "grid": {
+     "6M": "bull",
+     "3M": "bull",
+     "1M": "bull",
+     "1W": "bull",
+     "1D": "bull",
+     "4H": "bull",
+     "2H": "bull"
+    },
+    "diagnostics": {
+     "minute": "Schwab answered",
+     "daily": "Schwab answered",
+     "weekly": "Schwab answered",
+     "monthly": "Schwab answered"
+    }
+   }
+  },
+  {
+   "name": "incomplete: daily refused, weekly empty, monthly unreachable",
+   "entryMs": 1791556290000,
+   "reading": {
+    "version": 3,
+    "status": {
+     "6M": "missing",
+     "3M": "missing",
+     "1M": "missing",
+     "1W": "missing",
+     "1D": "missing",
+     "4H": "bull",
+     "2H": "bull",
+     "1H": "bull",
+     "30m": "bull",
+     "15m": "bull",
+     "5m": "bull",
+     "3m": "bull",
+     "1m": "bull"
+    },
+    "missing": {
+     "6M": "could not reach Schwab",
+     "3M": "could not reach Schwab",
+     "1M": "could not reach Schwab",
+     "1W": "Schwab answered with nothing",
+     "1D": "Schwab refused (status 429)"
+    },
+    "complete": false,
+    "priceAtEntry": 545.81515,
+    "priceSource": "exact-print",
+    "priceTime": 1791556290000,
+    "run": null,
+    "confirmed": null,
+    "direction": null,
+    "timeframesInRun": [],
+    "grid": {
+     "4H": "bull",
+     "2H": "bull",
+     "1H": "bull",
+     "30m": "bull",
+     "15m": "bull",
+     "5m": "bull",
+     "3m": "bull",
+     "1m": "bull"
+    },
+    "diagnostics": {
+     "minute": "Schwab answered",
+     "daily": "Schwab refused (status 429)",
+     "weekly": "Schwab answered with nothing",
+     "monthly": "could not reach Schwab"
+    }
+   }
+  },
+  {
+   "name": "incomplete: no price at entry",
+   "entryMs": 1791556290000,
+   "reading": {
+    "version": 3,
+    "status": {
+     "6M": "missing",
+     "3M": "missing",
+     "1M": "missing",
+     "1W": "missing",
+     "1D": "missing",
+     "4H": "missing",
+     "2H": "missing",
+     "1H": "missing",
+     "30m": "missing",
+     "15m": "missing",
+     "5m": "missing",
+     "3m": "missing",
+     "1m": "missing"
+    },
+    "missing": {
+     "6M": "no price at entry",
+     "3M": "no price at entry",
+     "1M": "no price at entry",
+     "1W": "no price at entry",
+     "1D": "no price at entry",
+     "4H": "no price at entry",
+     "2H": "no price at entry",
+     "1H": "no price at entry",
+     "30m": "no price at entry",
+     "15m": "no price at entry",
+     "5m": "no price at entry",
+     "3m": "no price at entry",
+     "1m": "no price at entry"
+    },
+    "complete": false,
+    "priceAtEntry": null,
+    "priceSource": null,
+    "priceTime": null,
+    "run": null,
+    "confirmed": null,
+    "direction": null,
+    "timeframesInRun": [],
+    "grid": {},
+    "diagnostics": {
+     "minute": "Schwab answered with nothing",
+     "daily": "Schwab answered",
+     "weekly": "Schwab answered",
+     "monthly": "Schwab answered"
+    }
+   }
+  },
+  {
+   "name": "incomplete: entry before the session opened",
+   "entryMs": 1791552000000,
+   "reading": {
+    "version": 3,
+    "status": {
+     "6M": "bear",
+     "3M": "bear",
+     "1M": "bear",
+     "1W": "bear",
+     "1D": "bear",
+     "4H": "missing",
+     "2H": "missing",
+     "1H": "missing",
+     "30m": "missing",
+     "15m": "missing",
+     "5m": "missing",
+     "3m": "missing",
+     "1m": "missing"
+    },
+    "missing": {
+     "4H": "entry before the session opened",
+     "2H": "entry before the session opened",
+     "1H": "entry before the session opened",
+     "30m": "entry before the session opened",
+     "15m": "entry before the session opened",
+     "5m": "entry before the session opened",
+     "3m": "entry before the session opened",
+     "1m": "entry before the session opened"
+    },
+    "complete": false,
+    "priceAtEntry": 500,
+    "priceSource": "exact-print",
+    "priceTime": 1791552000000,
+    "run": null,
+    "confirmed": null,
+    "direction": null,
+    "timeframesInRun": [],
+    "grid": {
+     "6M": "bear",
+     "3M": "bear",
+     "1M": "bear",
+     "1W": "bear",
+     "1D": "bear"
+    },
+    "diagnostics": {
+     "minute": "Schwab answered",
+     "daily": "Schwab answered",
+     "weekly": "Schwab answered",
+     "monthly": "Schwab answered"
+    }
+   }
+  },
+  {
+   "name": "complete, mixed directions 1",
+   "entryMs": 1791556290000,
+   "reading": {
+    "version": 3,
+    "status": {
+     "6M": "bull",
+     "3M": "bull",
+     "1M": "bear",
+     "1W": "bear",
+     "1D": "bear",
+     "4H": "bear",
+     "2H": "bull",
+     "1H": "level",
+     "30m": "bull",
+     "15m": "bull",
+     "5m": "bull",
+     "3m": "bull",
+     "1m": "bear"
+    },
+    "missing": {},
+    "complete": true,
+    "priceAtEntry": 545.81515,
+    "priceSource": "exact-print",
+    "priceTime": 1791556290000,
+    "run": 4,
+    "confirmed": true,
+    "direction": "bear",
+    "timeframesInRun": [
+     "1M",
+     "1W",
+     "1D",
+     "4H"
+    ],
+    "grid": {
+     "6M": "bull",
+     "3M": "bull",
+     "1M": "bear",
+     "1W": "bear",
+     "1D": "bear",
+     "4H": "bear",
+     "2H": "bull",
+     "30m": "bull",
+     "15m": "bull",
+     "5m": "bull",
+     "3m": "bull",
+     "1m": "bear"
+    },
+    "diagnostics": {
+     "minute": "Schwab answered",
+     "daily": "Schwab answered",
+     "weekly": "Schwab answered",
+     "monthly": "Schwab answered"
+    }
+   }
+  },
+  {
+   "name": "complete, mixed directions 2",
+   "entryMs": 1791556290000,
+   "reading": {
+    "version": 3,
+    "status": {
+     "6M": "bear",
+     "3M": "bear",
+     "1M": "bear",
+     "1W": "bear",
+     "1D": "level",
+     "4H": "bull",
+     "2H": "bull",
+     "1H": "bull",
+     "30m": "bull",
+     "15m": "bear",
+     "5m": "bear",
+     "3m": "bear",
+     "1m": "bear"
+    },
+    "missing": {},
+    "complete": true,
+    "priceAtEntry": 545.81515,
+    "priceSource": "exact-print",
+    "priceTime": 1791556290000,
+    "run": 4,
+    "confirmed": true,
+    "direction": "bear",
+    "timeframesInRun": [
+     "6M",
+     "3M",
+     "1M",
+     "1W"
+    ],
+    "grid": {
+     "6M": "bear",
+     "3M": "bear",
+     "1M": "bear",
+     "1W": "bear",
+     "4H": "bull",
+     "2H": "bull",
+     "1H": "bull",
+     "30m": "bull",
+     "15m": "bear",
+     "5m": "bear",
+     "3m": "bear",
+     "1m": "bear"
+    },
+    "diagnostics": {
+     "minute": "Schwab answered",
+     "daily": "Schwab answered",
+     "weekly": "Schwab answered",
+     "monthly": "Schwab answered"
+    }
+   }
+  },
+  {
+   "name": "complete, mixed directions 3",
+   "entryMs": 1791556290000,
+   "reading": {
+    "version": 3,
+    "status": {
+     "6M": "bull",
+     "3M": "bear",
+     "1M": "bull",
+     "1W": "bear",
+     "1D": "bull",
+     "4H": "bear",
+     "2H": "bull",
+     "1H": "bear",
+     "30m": "bull",
+     "15m": "bear",
+     "5m": "bull",
+     "3m": "bear",
+     "1m": "bull"
+    },
+    "missing": {},
+    "complete": true,
+    "priceAtEntry": 545.81515,
+    "priceSource": "exact-print",
+    "priceTime": 1791556290000,
+    "run": 1,
+    "confirmed": false,
+    "direction": null,
+    "timeframesInRun": [],
+    "grid": {
+     "6M": "bull",
+     "3M": "bear",
+     "1M": "bull",
+     "1W": "bear",
+     "1D": "bull",
+     "4H": "bear",
+     "2H": "bull",
+     "1H": "bear",
+     "30m": "bull",
+     "15m": "bear",
+     "5m": "bull",
+     "3m": "bear",
+     "1m": "bull"
+    },
+    "diagnostics": {
+     "minute": "Schwab answered",
+     "daily": "Schwab answered",
+     "weekly": "Schwab answered",
+     "monthly": "Schwab answered"
+    }
+   }
+  }
+ ],
+ "verdicts": [
+  {
+   "grid": {
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1W",
+    "1D",
+    "4H",
+    "2H",
+    "1H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "5m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "5m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "3M",
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear"
+   },
+   "runLength": 6,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 6,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "30m",
+    "15m",
+    "5m",
+    "3m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "2H",
+    "1H",
+    "30m",
+    "15m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "30m",
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "3M",
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "5m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W",
+    "1D"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "30m",
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "2H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1W": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 7,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "2H",
+    "1H",
+    "30m",
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "3M",
+    "1M",
+    "1W",
+    "1D"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "15m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "5m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "3M",
+    "1M",
+    "1W",
+    "1D"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "2H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 6,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "1H",
+    "30m",
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "2H": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "30m",
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1H",
+    "30m",
+    "15m",
+    "5m",
+    "3m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bull",
+    "15m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "3m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1D",
+    "4H",
+    "2H",
+    "1H"
+   ]
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "2H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "30m": "bear",
+    "5m": "bull",
+    "3m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "1D",
+    "4H",
+    "2H",
+    "1H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "2H",
+    "1H",
+    "30m",
+    "15m",
+    "5m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "2H",
+    "1H",
+    "30m",
+    "15m",
+    "5m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 9,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1W",
+    "1D",
+    "4H",
+    "2H",
+    "1H",
+    "30m",
+    "15m",
+    "5m",
+    "3m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "15m": "bull",
+    "5m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1W": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1H",
+    "30m",
+    "15m",
+    "5m",
+    "3m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "1D",
+    "4H",
+    "2H",
+    "1H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "1H",
+    "30m",
+    "15m",
+    "5m"
+   ]
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "30m",
+    "15m",
+    "5m",
+    "3m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "30m",
+    "15m",
+    "5m",
+    "3m"
+   ]
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m",
+    "15m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "30m",
+    "15m",
+    "5m",
+    "3m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "1H": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "5m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1M": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "1M": "bull",
+    "1W": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 6,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1H",
+    "30m",
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 6,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1W",
+    "1D",
+    "4H",
+    "2H",
+    "1H",
+    "30m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1W": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "30m",
+    "15m",
+    "5m",
+    "3m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1W": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1H",
+    "30m",
+    "15m",
+    "5m"
+   ]
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1M": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1W",
+    "1D",
+    "4H",
+    "2H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "1H": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "1D",
+    "4H",
+    "2H",
+    "1H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1D": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "15m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "1H": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 6,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 7,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "2H",
+    "1H",
+    "30m",
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1W": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m",
+    "15m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1H",
+    "30m",
+    "15m",
+    "5m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "1D",
+    "4H",
+    "2H",
+    "1H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "1H": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 1,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "15m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "1H",
+    "30m",
+    "15m",
+    "5m",
+    "3m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "2H",
+    "1H",
+    "30m",
+    "15m",
+    "5m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 6,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1W",
+    "1D",
+    "4H",
+    "2H",
+    "1H",
+    "30m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "3M",
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "1H": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "5m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 6,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "15m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 6,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1M",
+    "1W",
+    "1D",
+    "4H",
+    "2H",
+    "1H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "3M",
+    "1M",
+    "1W",
+    "1D"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "3M",
+    "1M",
+    "1W",
+    "1D"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1W": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "1H",
+    "30m",
+    "15m",
+    "5m"
+   ]
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "15m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "3m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1W": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "30m": "bull",
+    "5m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "4H": "bull",
+    "1H": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "2H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W",
+    "1D"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "5m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "3M",
+    "1M",
+    "1W",
+    "1D"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "4H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 7,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "1D",
+    "4H",
+    "2H",
+    "1H",
+    "30m",
+    "15m",
+    "5m"
+   ]
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m",
+    "15m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W",
+    "1D"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 8,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m",
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "30m": "bear",
+    "5m": "bear",
+    "3m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "6M",
+    "3M",
+    "1M",
+    "1W"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1W": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "4H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "30m",
+    "15m",
+    "5m",
+    "3m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "3M",
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "5m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1M": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bear",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m"
+   ]
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1M",
+    "1W",
+    "1D",
+    "4H",
+    "2H"
+   ]
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "2H",
+    "1H",
+    "30m",
+    "15m",
+    "5m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bear",
+    "1D": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "3m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "15m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 8,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m",
+    "15m",
+    "5m",
+    "3m",
+    "1m"
+   ]
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "4H",
+    "2H",
+    "1H",
+    "30m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "3M",
+    "1M",
+    "1W",
+    "1D",
+    "4H"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 4,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "2H",
+    "1H",
+    "30m",
+    "15m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "1H": "bear",
+    "15m": "bull",
+    "3m": "bull"
+   },
+   "runLength": 1,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bull",
+    "1M": "bear",
+    "1W": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "15m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "5m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bear",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "3m": "bull"
+   },
+   "runLength": 5,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1D",
+    "4H",
+    "2H",
+    "1H",
+    "30m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bear",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bear",
+    "1W": "bear",
+    "4H": "bear",
+    "2H": "bear",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bear",
+    "5m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "2H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bull",
+    "4H": "bull",
+    "1H": "bear",
+    "30m": "bull",
+    "15m": "bear",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bear",
+    "3M": "bull",
+    "1M": "bull",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bear",
+    "1m": "bear"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1W": "bear",
+    "1D": "bear",
+    "4H": "bull",
+    "2H": "bear",
+    "1H": "bear",
+    "30m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 3,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1W": "bull",
+    "1D": "bull",
+    "4H": "bull",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bull",
+    "15m": "bull",
+    "5m": "bull",
+    "3m": "bull",
+    "1m": "bear"
+   },
+   "runLength": 9,
+   "confirmed": true,
+   "direction": "bull",
+   "timeframesInRun": [
+    "1W",
+    "1D",
+    "4H",
+    "2H",
+    "1H",
+    "30m",
+    "15m",
+    "5m",
+    "3m"
+   ]
+  },
+  {
+   "grid": {
+    "6M": "bull",
+    "3M": "bear",
+    "1M": "bull",
+    "1D": "bull",
+    "4H": "bear",
+    "2H": "bull",
+    "1H": "bull",
+    "30m": "bear",
+    "15m": "bull",
+    "3m": "bull",
+    "1m": "bull"
+   },
+   "runLength": 2,
+   "confirmed": false,
+   "direction": null,
+   "timeframesInRun": []
+  }
+ ]
+}
