@@ -12,6 +12,7 @@ const { classifyStrategy } = require('./aiClient');
 const { notifyTradeClosed, notifyTradeOpened, notifyTradeStillOpen } = require('./pushcut');
 const { queueBrowserEvent } = require('./browserEvents');
 const { checkSignInAndNotify } = require('./signInWatch');
+const ftfcRetry = require('./ftfcRetry');
 
 const SHORT_TRADE_SAFETY_NET_MS = 15 * 60 * 1000; // matches pushcut.js's SHORT_TRADE_MS
 
@@ -72,8 +73,12 @@ async function enrichWithFtfc(token, trades) {
         // is available here. Handed over ONLY when it is a real print at
         // the fill second (Alpaca); a reconstructed one is the close of
         // the candle containing the entry, which is hindsight.
-        const exactEntryPrice = trade.undEntryExact === true ? trade.undEntry : null;
-        const result = await getFtfcForTrade(token, trade.ticker, trade.entryTimestamp, exactEntryPrice);
+        // FTFC Fix 1: the print counts only with its own time (inside the
+        // entry second). A price without one is not evidence of the price at
+        // entry, so the reading falls to the minute that ended at the entry
+        // minute's start, or to no price at all -- never to a later close.
+        const exactPrint = trade.undEntryExact === true ? (printTimes.get(trade) || null) : null;
+        const result = await getFtfcForTrade(token, trade.ticker, trade.entryTimestamp, exactPrint, { version: FTFC_RULE_VERSION });
         trade.ftfc = result.timeframes;
         trade.ftfcRun = result.runLength;
         trade.ftfcConfirmed = result.confirmed;
@@ -88,6 +93,10 @@ async function enrichWithFtfc(token, trades) {
         // way a timeframe is read changes.
         trade.ftfcVersion = FTFC_RULE_VERSION;
         trade.ftfcPriceAtEntry = result.priceAtEntry ?? null;
+        // The whole Fix-1 reading, carried to the waiting queue inside an
+        // envelope. Kept off the enumerable fields so it is never stored as
+        // a loose copy beside the envelope.
+        Object.defineProperty(trade, 'ftfcReading', { value: result.reading, enumerable: false, configurable: true, writable: true });
       }
     } catch (err) {
       console.log(`FTFC enrichment failed for ${trade.ticker}:`, err.message);
@@ -136,6 +145,10 @@ async function priceWithProvenance(token, ticker, timestampMs) {
     : { price, source: 'schwab-candle', exact: false, feed: null, upgradable: false, alpacaChecked: alpacaOn };
 }
 
+// FTFC Fix 1: the exact print's own time, kept beside the trade object for
+// the timeframe step that follows, never written into the trade itself.
+const printTimes = new WeakMap();
+
 async function enrichWithUnderlyingPrices(token, trades) {
   for (const trade of trades) {
     try {
@@ -149,6 +162,7 @@ async function enrichWithUnderlyingPrices(token, trades) {
         // asking again once, later, for the all-venues price.
         trade.undEntryUpgradable = hit ? !!hit.upgradable : false;
         trade.undPricedWithAlpaca = hit ? !!hit.alpacaChecked : false;
+        if (hit && hit.exact === true && Number.isFinite(hit.printAt)) printTimes.set(trade, { price: hit.price, atMs: hit.printAt });
       }
       if (trade.exitTimestamp) {
         const hit = await priceWithProvenance(token, trade.ticker, trade.exitTimestamp);
@@ -593,6 +607,25 @@ async function syncOnce() {
         // M-1: a trade whose id is already queued with another pair stays out.
         const q = withoutQueueCollisions(latest.pending, m.newPending.map(t => enriched.get(tradeKey(t)) || t));
         landed = q.keep;
+        // FTFC Fix 1 (spec B2): every new trade carries its cycle's first
+        // envelope -- attempt 0, the reading taken while it was enriched, or
+        // an interrupted attempt 0 if the trial never measured it -- and an
+        // incomplete one gets its retry record IN THIS SAME WRITE, so a trade
+        // can never be queued unknown without the retries that will finish it.
+        {
+          const cycles = { ...(latest.ftfcRetry || {}) };
+          const nowMs = Date.now();
+          for (const t of landed) {
+            if (!Array.isArray(t.fills) || t.fills.length !== 2) continue;
+            const open = String(t.fills[0]), close = String(t.fills[1]);
+            const { envelope, record } = ftfcRetry.startCycle({ version: FTFC_RULE_VERSION, open, close,
+              ticker: t.ticker, entryTimestamp: t.entryTimestamp, reading: t.ftfcReading || null, now: nowMs });
+            const key = ftfcRetry.cycleKey(FTFC_RULE_VERSION, open, close);
+            if (record && !cycles[key]) cycles[key] = record;     // set-if-absent
+            Object.assign(t, { ftfcProtocol: 1, ftfcOrigin: 'live', ftfcEnvelope: envelope });
+          }
+          next.ftfcRetry = cycles;
+        }
         opened = m.newlyOpenedLegs;
         next.openLegs = m.updatedState.openLegs;
         next.pending = [...landed, ...(latest.pending || [])];
@@ -650,7 +683,11 @@ async function resetSyncState() {
     // The exception ledger (H-2) survives a reset: it records broker fills,
     // not the queue, and nothing may delete it.
     () => tradeStore.updateState(latest => ({ openLegs: [], pending: [], lastProcessedIds: [],
-      ...(latest && latest.exceptions ? { exceptions: latest.exceptions } : {}) })),
+      ...(latest && latest.exceptions ? { exceptions: latest.exceptions } : {}),
+      // FTFC Fix 1: live retry cycles and their waiting updates are about
+      // trades already in his journal, not about the queue being emptied.
+      ...(latest && latest.ftfcRetry ? { ftfcRetry: latest.ftfcRetry } : {}),
+      ...(latest && latest.ftfcUpdates ? { ftfcUpdates: latest.ftfcUpdates } : {}) })),
     { wait: true });
   return out.ran;
 }
@@ -767,6 +804,10 @@ async function backfillOnce(daysBack) {
       // M-1: a trade whose id is already queued with another pair stays out.
       const q = withoutQueueCollisions(latest.pending, m.newPending);
       newPending = q.keep;
+      // FTFC Fix 1 (spec B3): a history import's items say where they came
+      // from. Until each is measured it carries NO envelope, and the phone
+      // treats an unmeasured item as carrying no timeframes at all.
+      for (const t of newPending) Object.assign(t, { ftfcProtocol: 1, ftfcOrigin: 'history' });
       const have = new Set((latest.openLegs || []).map(legKey));
       // H-2: what this run could not pair, in the same change (withExceptions).
       const ex = withExceptions(latest, [...m.exceptions, ...q.incidents], evidenceAfter(m.fullyPaired, q), new Date().toISOString(), 'backfill');
@@ -800,6 +841,14 @@ async function backfillOnce(daysBack) {
         const batch = newPending.slice(i, i + ENRICH_BATCH);
         await enrichWithUnderlyingPrices(token, batch);
         await enrichWithFtfc(token, batch);
+        // FTFC Fix 1 (spec B3): one measurement, sent as kind "single" --
+        // never a retry cycle. A reading that fails the service's own
+        // checks is not sent at all.
+        for (const t of batch) {
+          if (!t.ftfcReading || !Array.isArray(t.fills) || t.fills.length !== 2) continue;
+          if (ftfcRetry.readingProblems(t.ftfcReading, t.entryTimestamp).length) continue;
+          t.ftfcEnvelope = ftfcRetry.singleEnvelope(FTFC_RULE_VERSION, String(t.fills[0]), String(t.fills[1]), t.ftfcReading);
+        }
         await enrichWithReplayData(token, batch);
         await enrichWithStrategy(batch);
         await enrichWithStopRule(token, batch);
@@ -888,6 +937,20 @@ async function resumeBackfillIfNeeded() {
 // to escape: an unhandled failure ends the entire server, which is what
 // Render's "Exited with status 1" alert means. Each half is wrapped
 // separately so a failure in one still lets the other run.
+// One retry attempt's measurement: the stock price first (for the exact
+// print and its time), then the thirteen timeframes. Throws on a lapsed
+// sign-in, which the retry worker records as the attempt's reason.
+async function measureFtfcForRetry(rec) {
+  const token = await getValidAccessToken();
+  const hit = await priceWithProvenance(token, rec.ticker, rec.entryTimestamp);
+  const exactPrint = hit && hit.exact === true && Number.isFinite(hit.printAt) ? { price: hit.price, atMs: hit.printAt } : null;
+  const result = await getFtfcForTrade(token, rec.ticker, rec.entryTimestamp, exactPrint, { version: FTFC_RULE_VERSION });
+  return result.reading;
+}
+async function runFtfcRetryTick() {
+  return ftfcRetry.runFtfcRetries({ store: tradeStore, measure: measureFtfcForRetry, version: FTFC_RULE_VERSION });
+}
+
 async function runScheduledTick() {
   try {
     await runSyncCheck();
@@ -907,6 +970,13 @@ async function runScheduledTick() {
     await require('./classifyQueue').drain();
   } catch (err) {
     console.log('Setup reading tick failed:', (err && err.message) || err);
+  }
+  // FTFC Fix 1 (spec B4): retries of incomplete timeframe readings. Its own
+  // attempt and its own catch, like every step here.
+  try {
+    await runFtfcRetryTick();
+  } catch (err) {
+    console.log('FTFC retry tick failed:', (err && err.message) || err);
   }
   // Its own attempt and its own catch: a warning about the sign-in
   // running out must not be skipped because collecting trades failed --
@@ -933,4 +1003,4 @@ module.exports = { FTFC_RULE_VERSION, startAutoSync, runScheduledTick, runSyncCh
                    resetSyncState, jobRunning, withExceptions, withoutQueueCollisions,
                    enrichWithUnderlyingPrices, priceWithProvenance,
                    enrichWithFtfc, enrichWithReplayData, enrichWithStopRule, enrichWithStrategy,
-                   applyClassificationToTrade };
+                   applyClassificationToTrade, runFtfcRetryTick, measureFtfcForRetry };

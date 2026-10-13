@@ -60,7 +60,7 @@ function session(dayIso, openPrice, step, count = 390){
     weekly  = [{datetime:Date.parse('2026-07-20T04:00:00Z'), open:100, close:97}];
     monthly = [{datetime:Date.parse('2026-07-01T04:00:00Z'), open:99, close:96}];
     const entry = Date.parse('2026-07-23T16:32:00Z');  // 12:32 New York
-    const r = await getFtfcForTrade('tok','SPY',entry, 101.8);
+    const r = await getFtfcForTrade('tok','SPY',entry, {price:101.8, atMs:entry});
     check(`the day was UP at entry, so it reads bull (got ${r.timeframes['1D']})`, r.timeframes['1D']==='bull');
     check(`the week likewise (got ${r.timeframes['1W']})`, r.timeframes['1W']==='bull');
     check(`the month likewise (got ${r.timeframes['1M']})`, r.timeframes['1M']==='bull');
@@ -75,7 +75,7 @@ function session(dayIso, openPrice, step, count = 390){
     weekly = [{datetime:Date.parse('2026-07-20T04:00:00Z'), open:100, close:106}];
     monthly = [{datetime:Date.parse('2026-07-01T04:00:00Z'), open:100, close:107}];
     const entry = Date.parse('2026-07-23T16:32:00Z');
-    const r = await getFtfcForTrade('tok','SPY',entry, 98.2);
+    const r = await getFtfcForTrade('tok','SPY',entry, {price:98.2, atMs:entry});
     check(`a day that was DOWN at entry reads bear even though it closed up (got ${r.timeframes['1D']})`,
       r.timeframes['1D']==='bear');
     check('the week too', r.timeframes['1W']==='bear');
@@ -97,7 +97,7 @@ function session(dayIso, openPrice, step, count = 390){
     monthly = [{datetime:Date.parse('2026-07-01T04:00:00Z'), open:190, close:108}];
     const entry = Date.parse('2026-07-24T16:32:00Z');   // Friday 12:32
     // 182 minutes after the 9:30 open at 0.02 a minute: 100 + 182*0.02.
-    const r = await getFtfcForTrade('tok','SPY',entry, 103.64);
+    const r = await getFtfcForTrade('tok','SPY',entry, {price:103.64, atMs:entry});
     check(`Friday's 4-hour bar is read from Friday, not from Thursday (got ${r.timeframes['4H']})`,
       r.timeframes['4H']==='bull');
     check('and the 2-hour bar likewise', r.timeframes['2H']==='bull');
@@ -121,7 +121,7 @@ function session(dayIso, openPrice, step, count = 390){
     weekly = [{datetime:Date.parse('2026-07-20T04:00:00Z'), open:100, close:96}];
     monthly = [{datetime:Date.parse('2026-07-01T04:00:00Z'), open:100, close:96}];
     const entry = Date.parse('2026-07-23T15:35:00Z');          // 11:35 New York
-    const r = await getFtfcForTrade('tok','SPY',entry, 94.1);
+    const r = await getFtfcForTrade('tok','SPY',entry, {price:94.1, atMs:entry});
     check(`the freshly-opened 2-hour bar reads bull (got ${r.timeframes['2H']})`, r.timeframes['2H']==='bull');
     check(`while the day, still below its open, reads bear (got ${r.timeframes['1D']})`, r.timeframes['1D']==='bear');
     check('so they are genuinely measured apart, not copied from each other',
@@ -140,7 +140,7 @@ function session(dayIso, openPrice, step, count = 390){
       {datetime:Date.parse('2026-07-01T04:00:00Z'), open:120, close:101}, // quarter/half opens at 120
     ];
     const entry = Date.parse('2026-07-23T16:32:00Z');
-    const r = await getFtfcForTrade('tok','SPY',entry, 101.8);
+    const r = await getFtfcForTrade('tok','SPY',entry, {price:101.8, atMs:entry});
     check(`the quarter is measured from July's open, not three months back (got ${r.timeframes['3M']})`,
       r.timeframes['3M']==='bear');
     check(`and the half-year likewise (got ${r.timeframes['6M']})`, r.timeframes['6M']==='bear');
@@ -154,7 +154,7 @@ function session(dayIso, openPrice, step, count = 390){
     weekly = [{datetime:Date.parse('2026-07-20T04:00:00Z'), open:100, close:120}];
     monthly = [{datetime:Date.parse('2026-07-01T04:00:00Z'), open:100, close:120}];
     const entry = Date.parse('2026-07-23T16:32:00Z');
-    const r = await getFtfcForTrade('tok','SPY',entry, 101.8);
+    const r = await getFtfcForTrade('tok','SPY',entry, {price:101.8, atMs:entry});
     check(`a bar sitting exactly at its open is left blank, not guessed (got ${r.timeframes['1D']})`,
       r.timeframes['1D'] === undefined);
     check('and that blank breaks the run rather than being counted either way',
@@ -177,7 +177,7 @@ function session(dayIso, openPrice, step, count = 390){
     daily = [{datetime:Date.parse('2026-07-23T04:00:00Z'), open:100, close:98}];
     weekly = []; monthly = [];
     const entry = Date.parse('2026-07-23T16:32:00Z');
-    const r = await getFtfcForTrade('tok','SPY',entry, 101.8);
+    const r = await getFtfcForTrade('tok','SPY',entry, {price:101.8, atMs:entry});
     check(`the price everything was judged against is handed back (${r.priceAtEntry})`, r.priceAtEntry === 101.8);
     const r2 = await getFtfcForTrade('tok','SPY',entry, null);
     check(`without an exact price it falls back to the last FINISHED minute (${r2.priceAtEntry})`,
