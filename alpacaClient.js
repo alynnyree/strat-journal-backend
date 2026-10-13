@@ -272,7 +272,11 @@ async function lastTradePriceAt(symbol, timestampMs, { windowMinutes = 10 } = {}
     const upTo = trades.filter(t => Date.parse(t.t) <= timestampMs);
     const chosen = (upTo.length ? upTo : trades)[Math.max(0, (upTo.length ? upTo : trades).length - 1)];
     const price = Number(chosen?.p);
-    return Number.isFinite(price) ? { price, feed: used.feed || null } : null;
+    // The print's own time travels with it (FTFC Fix 1): a price is
+    // evidence for "the price at entry" only if it printed inside the
+    // entry second, and that cannot be checked without its time.
+    const at = Date.parse(chosen?.t);
+    return Number.isFinite(price) ? { price, feed: used.feed || null, at: Number.isFinite(at) ? at : null } : null;
   } catch (err) {
     console.log(`Alpaca trade lookup failed for ${symbol}:`, err.response?.status || err.message);
     return null;
@@ -321,7 +325,7 @@ const ALPACA_TIMEFRAME = {
 // more than anything real, while being roughly 20MB rather than 274MB.
 const MAX_BARS = 150000;
 
-async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false }) {
+async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false, report = null }) {
   await ensureKeysLoaded();
   if (!isConfigured()) return null;
   const timeframe = daily ? '1Day' : ALPACA_TIMEFRAME[minutes];
@@ -368,6 +372,9 @@ async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false })
     } while (pageToken);
   } catch (err) {
     console.log(`Alpaca bars failed for ${symbol} (${timeframe}):`, err.response?.status || err.message);
+    // FTFC Fix 1: a caller that asks is told WHICH failure it was -- a
+    // refusal carries its status, a dropped connection carries none.
+    if (report && typeof report === 'object') report.status = err.response?.status || null;
     return null;   // null means "could not", which is different from "none"
   }
   if (truncated) {
@@ -392,7 +399,7 @@ async function underlyingPriceAt(symbol, timestampMs) {
   const printed = await lastTradePriceAt(symbol, timestampMs);
   if (printed != null) {
     return { price: printed.price, source: 'alpaca-trade', exact: true,
-             feed: printed.feed, upgradable: upgradable(printed.feed) };
+             feed: printed.feed, upgradable: upgradable(printed.feed), printAt: printed.at };
   }
   const minute = await minuteCloseAt(symbol, timestampMs);
   if (minute != null) {

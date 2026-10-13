@@ -85,6 +85,35 @@ router.get('/trades/pending', wrap(async (req, res) => {
   res.json({ pending: out, waiting: all.length });
 }));
 
+// FTFC Fix 1 (spec B5): the waiting timeframe updates -- at most one per
+// cycle (rule version, opening fill, closing fill), each carrying every
+// attempt of its cycle so far. Behind the app key like every route here.
+router.get('/ftfc/updates', wrap(async (req, res) => {
+  const state = await tradeStore.getState();
+  const updates = state.ftfcUpdates || [];
+  res.json({ updates, waiting: updates.length });
+}));
+
+// Removes ONE waiting update, and only on an exact match of version, fill
+// pair AND sequence. A phone that collected seq 1 just before the service
+// replaced it with seq 2 names seq 1, so seq 2 stays and is collected next.
+router.delete('/ftfc/updates', wrap(async (req, res) => {
+  const version = Number(req.query.version);
+  const seq = Number(req.query.seq);
+  const pair = String(req.query.fills || '').split(',');
+  if (!Number.isInteger(version) || !Number.isInteger(seq) || pair.length !== 2 || pair.some(f => !f)) {
+    return res.status(400).json({ error: 'Name the update exactly: version, fills=open,close and seq.', removed: 0 });
+  }
+  let removed = 0;
+  await tradeStore.updateState(state => {
+    const list = state.ftfcUpdates || [];
+    const keep = list.filter(u => !(u.version === version && String(u.open) === pair[0] && String(u.close) === pair[1] && u.highestSeq === seq));
+    removed = list.length - keep.length;
+    return removed ? { ...state, ftfcUpdates: keep } : null;
+  });
+  res.json({ ok: true, removed });
+}));
+
 // The chart bars for ONE waiting trade, asked for only when the phone has
 // decided to keep them. Answers with a reason rather than an empty hand:
 // "there are none for this trade" and "that trade is gone from the queue"

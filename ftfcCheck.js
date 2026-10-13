@@ -207,38 +207,12 @@ function monthGroupOpen(monthly, atMs, groupMonths) {
   return inGroup.length ? inGroup[0].open : null;
 }
 
-// Bullish if the price at entry was above the forming bar's open, bearish
-// if below. Exactly level is left blank rather than guessed, same as
-// before.
-function directionFrom(barOpen, priceAtEntry) {
-  if (barOpen == null || priceAtEntry == null) return undefined;
-  if (priceAtEntry > barOpen) return 'bull';
-  if (priceAtEntry < barOpen) return 'bear';
-  return undefined;
-}
 
-// The price at the moment of entry — the one number every timeframe is
-// judged against.
-//
-// Best is a price the caller has already established as the actual trade
-// that printed at that second (Alpaca), because that sits INSIDE the
-// entry minute and is still something that had happened by then. It is
-// only accepted when the caller says it is exact; a reconstructed one
-// could be the close of the candle containing the entry, which is the
-// very hindsight this whole change exists to remove.
-//
-// Otherwise: the close of the most recent one-minute candle that had
-// FINISHED by the entry. That is real and safe, but at minute resolution
-// it lands on the entry minute's own open — so the 1-minute reading comes
-// back blank rather than pretending to know. Blank breaks a run, which is
-// the conservative way to be wrong.
-function priceAtEntryFrom(oneMin, atMs, exactPrice, daily) {
-  if (exactPrice != null && Number.isFinite(exactPrice)) return exactPrice;
-  const finished = (oneMin || []).filter(c => c.datetime + 60000 <= atMs);
-  if (finished.length) return finished[finished.length - 1].close;
-  const finishedDay = (daily || []).filter(c => c.datetime < atMs);
-  return finishedDay.length ? finishedDay[finishedDay.length - 1].close : null;
-}
+// The price at entry is now chosen by priceEvidence (FTFC Fix 1, below).
+// The old helper here fell back to the entry day's own DAILY candle when
+// there was no exact print and no finished minute -- a candle whose close
+// is the day's close or the latest price, i.e. a price from after the
+// entry. It was removed rather than left unused, so nothing can call it.
 
 // The core rule: bullish if trading above that candle's own open, bearish
 // if below. Flat (open === close) is left blank rather than guessed either way.
@@ -336,84 +310,172 @@ function computeFtfcConfirmation(perTimeframe) {
   };
 }
 
-// Figures out bull/bear for every timeframe we can, for one ticker at one
-// trade's entry time. A timeframe is left undefined (blank) if Schwab has
-// no data that far back to check — most common for 1-minute-based
-// timeframes on older trades, since Schwab doesn't retain minute data forever.
-// exactPriceAtEntry: only pass a price KNOWN to be a real print at or
-// before the fill (Alpaca). Anything reconstructed must be left null.
-async function getFtfcForTrade(accessToken, ticker, entryTimestampMs, exactPriceAtEntry = null) {
-  const result = {};
-  let oneMin = [], daily = [], weekly = [], monthly = [];
+// ---------------------------------------------------------------------
+// FTFC Fix 1 (13 Oct 2026; owner's authorisation: "I authorize FTFC Fix 1
+// implementation"). Plan v1-v14, consolidated spec section A.
+//
+// What was wrong before:
+//   * Every daily/weekly/monthly request ended in `.catch(() => [])`, so a
+//     Schwab refusal, an empty answer and a dropped connection all became
+//     "nothing", and the reason was thrown away.
+//   * A blank timeframe meant three different things -- the price exactly
+//     at the bar's open (a real answer), data that never arrived, data that
+//     did not contain the bar -- and nothing could tell them apart.
+//   * With no exact print and no finished minute, the price at entry fell
+//     back to the entry day's own daily candle -- whose close is the day's
+//     close, or the latest price: a number from AFTER the entry (hindsight).
+//
+// Now each of the 13 timeframes has exactly one status -- bull, bear, level
+// or missing -- and every missing one carries ONE reason, chosen by a fixed
+// precedence. A reading is COMPLETE only when nothing is missing, and only
+// a complete reading has a verdict. The price at entry is either the exact
+// print inside the entry second or the close of the minute that ended when
+// the entry minute began; anything else is no price at all.
+// ---------------------------------------------------------------------
 
-  // ONE minute-series, covering TWO days.
-  //
-  // This used to fetch four separate series (1, 5, 15 and 30 minute) each
-  // covering TEN days. Measured on a real rebuild of his journal that put
-  // the server at 589MB inside the first twenty-five trades, on an
-  // allowance of a fraction of that -- which is what Render's "exceeded
-  // its memory limit" alerts were.
-  //
-  // None of it was needed. Every intraday bar is now anchored to the
-  // start of that day's session, so the open of a 5, 15, 30, 60, 120 or
-  // 240-minute bar is just the open of the first ONE-minute candle inside
-  // it. One series answers all eight intraday timeframes, and two days is
-  // enough to be sure the entry day's session start is in there even for
-  // an early entry. About twenty times less data for the same answer.
-  try {
-    oneMin = await fetchCandles(accessToken, ticker, {
-      periodType: 'day', period: 2, frequencyType: 'minute', frequency: 1, endDate: entryTimestampMs,
-    }).catch(() => []);
-  } catch (err) {
-    console.log('FTFC minute-data fetch failed (trade may be too old for Schwab\'s minute-data retention):', err.message);
-  }
+const INTRADAY_MINUTES = { '4H': 240, '2H': 120, '1H': 60, '30m': 30, '15m': 15, '5m': 5, '3m': 3, '1m': 1 };
+const REASON_NO_PRICE = 'no price at entry';
+const REASON_BEFORE_SESSION = 'entry before the session opened';
+const REASON_NO_BAR = 'data did not contain this bar';
 
-  try {
-    daily = await fetchCandles(accessToken, ticker, {
-      periodType: 'year', period: 2, frequencyType: 'daily', frequency: 1, endDate: entryTimestampMs,
-    }).catch(() => []);
-    weekly = await fetchCandles(accessToken, ticker, {
-      periodType: 'year', period: 5, frequencyType: 'weekly', frequency: 1, endDate: entryTimestampMs,
-    }).catch(() => []);
-    monthly = await fetchCandles(accessToken, ticker, {
-      periodType: 'year', period: 20, frequencyType: 'monthly', frequency: 1, endDate: entryTimestampMs,
-    }).catch(() => []);
-  } catch (err) {
-    console.log('FTFC daily/weekly/monthly fetch failed:', err.message);
-  }
-
-  // The one price every timeframe is judged against — the last price he
-  // could actually have seen when he entered.
-  const price = priceAtEntryFrom(oneMin, entryTimestampMs, exactPriceAtEntry, daily);
-
-  // Intraday bars, each anchored to the start of that day's session so a
-  // bar never runs across a night and never starts mid-afternoon. Built
-  // from the finest data available for that length.
-  const sameDay = sessionCandles(oneMin, entryTimestampMs);
-  const openOf = (mins) => intradayBarOpen(sameDay, entryTimestampMs, mins);
-  result['1m']  = directionFrom(openOf(1), price);
-  result['3m']  = directionFrom(openOf(3), price);
-  result['5m']  = directionFrom(openOf(5), price);
-  result['15m'] = directionFrom(openOf(15), price);
-  result['30m'] = directionFrom(openOf(30), price);
-  result['1H']  = directionFrom(openOf(60), price);
-  result['2H']  = directionFrom(openOf(120), price);
-  result['4H']  = directionFrom(openOf(240), price);
-
-  // Day, week and month come with their own correct boundaries from the
-  // data provider, so the bar containing the entry is taken straight from
-  // the series and only its OPEN is used.
-  const openOfContaining = (series) => {
-    const c = candleContaining(series, entryTimestampMs);
-    return c ? c.open : null;
-  };
-  result['1D'] = directionFrom(openOfContaining(daily), price);
-  result['1W'] = directionFrom(openOfContaining(weekly), price);
-  result['1M'] = directionFrom(openOfContaining(monthly), price);
-  result['3M'] = directionFrom(monthGroupOpen(monthly, entryTimestampMs, 3), price);
-  result['6M'] = directionFrom(monthGroupOpen(monthly, entryTimestampMs, 6), price);
-
-  return { timeframes: result, priceAtEntry: price, ...computeFtfcConfirmation(result) };
+// "<Provider> refused (status N)" / "<Provider> answered with nothing" /
+// "could not reach <Provider>": three faults with three different fixes,
+// never one answer.
+function describeFailure(o) {
+  if (!o) return 'no answer was recorded';
+  if (o.kind === 'refused') return `${o.provider} refused (status ${o.status})`;
+  if (o.kind === 'empty') return `${o.provider} answered with nothing`;
+  return `could not reach ${o.provider}`;
+}
+function classifyError(provider, err) {
+  const status = err && err.response && err.response.status;
+  return status ? { provider, kind: 'refused', status } : { provider, kind: 'unreachable' };
 }
 
-module.exports = { getFtfcForTrade, getUnderlyingPriceAt, fetchCandles, TIMEFRAMES };
+async function schwabSeries(accessToken, symbol, params) {
+  try {
+    const data = await schwabMarketGet('/pricehistory', accessToken, { symbol, ...params, needExtendedHoursData: false });
+    const candles = (data && data.candles) || [];
+    return { candles, outcome: { provider: 'Schwab', kind: candles.length ? 'ok' : 'empty' }, tried: [] };
+  } catch (err) {
+    return { candles: [], outcome: classifyError('Schwab', err), tried: [] };
+  }
+}
+
+// The minute series, Alpaca first (as fetchCandles does), Schwab after, with
+// what each one said. The outcome that names a missing timeframe's reason is
+// the LAST provider asked; every earlier answer is kept for Details.
+async function minuteSeries(accessToken, symbol, endMs, days) {
+  const tried = [];
+  let ready = false;
+  try { ready = await alpaca.isReady(); } catch (e) { ready = false; }
+  if (ready) {
+    const report = {};
+    const bars = await alpaca.fetchBars(symbol, { minutes: 1, startMs: endMs - days * 86400000, endMs, report });
+    if (bars && bars.length) return { candles: bars, outcome: { provider: 'Alpaca', kind: 'ok' }, tried };
+    tried.push(bars == null
+      ? (report.status ? { provider: 'Alpaca', kind: 'refused', status: report.status } : { provider: 'Alpaca', kind: 'unreachable' })
+      : { provider: 'Alpaca', kind: 'empty' });
+  }
+  const s = await schwabSeries(accessToken, symbol, { periodType: 'day', period: days, frequencyType: 'minute', frequency: 1, endDate: endMs });
+  return { candles: s.candles, outcome: s.outcome, tried };
+}
+
+// The price at entry, with the evidence for it (spec A2). exactPrint, when
+// given, is { price, atMs } -- the actual Alpaca print and its own time. A
+// bare number carries no time and is not evidence.
+function priceEvidence(oneMin, entryMs, exactPrint) {
+  const secondStart = entryMs - (entryMs % 1000);
+  if (exactPrint && typeof exactPrint === 'object'
+      && Number.isFinite(exactPrint.price) && exactPrint.price > 0
+      && Number.isFinite(exactPrint.atMs) && exactPrint.atMs >= secondStart && exactPrint.atMs <= entryMs) {
+    return { price: exactPrint.price, source: 'exact-print', time: exactPrint.atMs };
+  }
+  const priorStart = entryMs - (entryMs % 60000) - 60000;
+  const bar = (oneMin || []).find(c => c && c.datetime === priorStart);
+  if (bar && Number.isFinite(bar.close) && bar.close > 0) {
+    return { price: bar.close, source: 'prior-minute-close', time: priorStart };
+  }
+  return { price: null, source: null, time: null };
+}
+
+function statusFrom(barOpen, price) {
+  if (barOpen == null || price == null) return null;
+  if (price > barOpen) return 'bull';
+  if (price < barOpen) return 'bear';
+  return 'level';
+}
+
+function seriesLine(s) {
+  const parts = (s.tried || []).map(describeFailure);
+  parts.push(s.outcome.kind === 'ok' ? `${s.outcome.provider} answered` : describeFailure(s.outcome));
+  return parts.join('; ');
+}
+
+// Figures out every timeframe for one ticker at one trade's entry time.
+// Returns the fields every existing caller reads (timeframes, priceAtEntry,
+// runLength, confirmed, direction, timeframesInRun -- unchanged in meaning
+// for those callers) PLUS `reading`, the whole Fix-1 reading.
+// exactPrint: { price, atMs } from Alpaca when known; anything else is not
+// evidence. opts.version: the rule version to stamp on the reading.
+async function getFtfcForTrade(accessToken, ticker, entryTimestampMs, exactPrint = null, opts = {}) {
+  const entryMs = entryTimestampMs;
+  // ONE minute series, covering TWO days (see the memory note in git
+  // history: four ten-day series put the server at 589MB). Every intraday
+  // bar is anchored to the session open, so one 1-minute series answers all
+  // eight intraday timeframes.
+  const minute = await minuteSeries(accessToken, ticker, entryMs, 2);
+  const daily = await schwabSeries(accessToken, ticker, { periodType: 'year', period: 2, frequencyType: 'daily', frequency: 1, endDate: entryMs });
+  const weekly = await schwabSeries(accessToken, ticker, { periodType: 'year', period: 5, frequencyType: 'weekly', frequency: 1, endDate: entryMs });
+  const monthly = await schwabSeries(accessToken, ticker, { periodType: 'year', period: 20, frequencyType: 'monthly', frequency: 1, endDate: entryMs });
+
+  const ev = priceEvidence(minute.candles, entryMs, exactPrint);
+  const price = ev.price;
+  const sameDay = sessionCandles(minute.candles, entryMs);
+  const beforeSession = easternMinutesOfDay(entryMs) < SESSION_OPEN_MIN;
+
+  const openFor = {};
+  for (const [tf, mins] of Object.entries(INTRADAY_MINUTES)) openFor[tf] = intradayBarOpen(sameDay, entryMs, mins);
+  const openOfContaining = (series) => { const c = candleContaining(series, entryMs); return c ? c.open : null; };
+  openFor['1D'] = openOfContaining(daily.candles);
+  openFor['1W'] = openOfContaining(weekly.candles);
+  openFor['1M'] = openOfContaining(monthly.candles);
+  openFor['3M'] = monthGroupOpen(monthly.candles, entryMs, 3);
+  openFor['6M'] = monthGroupOpen(monthly.candles, entryMs, 6);
+  const seriesFor = (tf) => (tf in INTRADAY_MINUTES ? minute : tf === '1D' ? daily : tf === '1W' ? weekly : monthly);
+
+  const status = {}, missing = {}, grid = {};
+  for (const tf of TIMEFRAMES) {
+    const st = statusFrom(openFor[tf], price);
+    if (st) {
+      status[tf] = st;
+      if (st === 'bull' || st === 'bear') grid[tf] = st;
+      continue;
+    }
+    status[tf] = 'missing';
+    // ONE reason, by fixed precedence (spec A3).
+    if (price == null) missing[tf] = REASON_NO_PRICE;
+    else if ((tf in INTRADAY_MINUTES) && beforeSession) missing[tf] = REASON_BEFORE_SESSION;
+    else if (seriesFor(tf).outcome.kind !== 'ok') missing[tf] = describeFailure(seriesFor(tf).outcome);
+    else missing[tf] = REASON_NO_BAR;
+  }
+  const complete = TIMEFRAMES.every(tf => status[tf] !== 'missing');
+  const verdict = computeFtfcConfirmation(grid);
+  const reading = {
+    version: Number.isInteger(opts.version) ? opts.version : null,
+    status, missing, complete,
+    priceAtEntry: ev.price, priceSource: ev.source, priceTime: ev.time,
+    run: complete ? verdict.runLength : null,
+    confirmed: complete ? verdict.confirmed : null,
+    direction: complete ? verdict.direction : null,
+    timeframesInRun: complete ? verdict.timeframesInRun : [],
+    grid,
+    diagnostics: {
+      minute: seriesLine(minute), daily: seriesLine(daily), weekly: seriesLine(weekly), monthly: seriesLine(monthly),
+    },
+  };
+  return { timeframes: grid, priceAtEntry: price, ...verdict, reading };
+}
+
+module.exports = { getFtfcForTrade, getUnderlyingPriceAt, fetchCandles, TIMEFRAMES, computeFtfcConfirmation, priceEvidence, describeFailure,
+  REASON_NO_PRICE, REASON_BEFORE_SESSION, REASON_NO_BAR };
