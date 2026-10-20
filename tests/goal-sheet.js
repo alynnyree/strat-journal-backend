@@ -31,6 +31,8 @@ const fakeRedis = {
   lpush: async () => 1, lrange: async () => [], lrem: async () => 0, ltrim: async () => 'OK', rpop: async () => null,
   mget: async (...ks) => ks.map(k => (k in store ? JSON.parse(store[k]) : null)),
 };
+// Deploy 1 (queue plan 5.8.2): "trades:state" is saved by one script now; the stand-in answers it.
+fakeRedis.eval = require('./lib/gen1SaveStandIn').gen1SaveVia(fakeRedis);
 class Redis { constructor() { return fakeRedis; } }
 Redis.fromEnv = () => fakeRedis;
 const readState = () => (store['trades:state'] ? JSON.parse(store['trades:state']) : null);
