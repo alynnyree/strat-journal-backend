@@ -15,6 +15,7 @@ const { installCrashGuards, getCrashes, uptimeSeconds, startedAt, memoryMb, watc
 const { lastPhoneAlert } = require('./pushcut');
 const { wrap, errorHandler } = require('./asyncRoute');
 const { keyOk, queryKeyUse } = require('./appKey');
+const { writerStatus } = require('./tradeStore');
 
 // Installed before anything is started, so a failure while starting up is
 // caught too. Without this, one unwrapped failure anywhere in a background
@@ -102,6 +103,12 @@ app.get('/health', wrap(async (req, res) => {
     // correction from one still running the old code -- and the phone
     // would keep asking for a re-measure that can never satisfy it.
     ftfcRuleVersion: FTFC_RULE_VERSION,
+    // Queue plan 5.8.2, BUILD IDENTITY: which writer generation THIS process
+    // saves as, whether its last save was refused by the fence, and which
+    // commit Render deployed. Without these, "is the old server still
+    // saving?" during a deploy could only be guessed at.
+    writer: writerStatus(),
+    build: process.env.RENDER_GIT_COMMIT || null,
     memoryMb: mem.nowMb,
     peakMemoryMb: mem.peakMb,
     recentFailures: crashes,

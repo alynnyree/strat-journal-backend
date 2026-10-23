@@ -166,6 +166,10 @@ const PUBLIC = {
   const hk = await (await call('GET', '/health', { headers: { Authorization: 'Bearer right-key' } })).json();
   check('/health with the key gives the full picture', 'uptimeSeconds' in hk && 'recentFailures' in hk && 'keyInAddress' in hk, Object.keys(hk));
   check('/health reports who still uses the address key', hk.keyInAddress && hk.keyInAddress['iPhone Shortcut'], hk.keyInAddress);
+  // Queue plan 5.8.2, BUILD IDENTITY (Deploy 1): the writer generation, whether
+  // its saves are fenced, and the deployed build -- behind the key only.
+  check('/health with the key reports writer generation 1, its fenced state and the build',
+    hk.writer && hk.writer.generation === 1 && 'fenced' in hk.writer && 'build' in hk, { writer: hk.writer, build: hk.build });
 
   // ---- 4. Which pages may read answers -----------------------------------
   const acao = async origin => (await call('GET', '/health', { headers: { Origin: origin } })).headers.get('access-control-allow-origin');

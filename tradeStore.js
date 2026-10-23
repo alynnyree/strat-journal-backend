@@ -16,8 +16,70 @@ async function read() {
   return data || { ...DEFAULT_STATE };
 }
 
+// THE WRITER FENCE, GENERATION 1 (Queue Exact-Removal plan v14.1 revision 2,
+// 5.8.2, "Deploy 1"; owner, 20 Oct 2026: "I authorize Q-D: implementation of
+// Queue Exact-Removal plan v14.1 revision 2, stage 1 only (Deploy 1's code)").
+//
+// The next server version (generation 2) changes the shape of this record.
+// A deploy can briefly run the old and the new server side by side, and an
+// old server that saves with a plain SET would write the old shape straight
+// over the new one. So before the new shape exists, the save itself learns
+// to step aside: the new server raises a number kept in its own key, the
+// FENCE, and this save refuses once that number is above 1.
+//
+// The check and the save are ONE script, run inside the database, so
+// nothing can land between "the fence is low" and "save". Reading the fence
+// first and saving in a second command would leave exactly that gap.
+// Nothing else about the save changes: the same whole record, the same text
+// (the client sends an object to SET as JSON.stringify of it, and so does
+// this), after the same one-at-a-time queue, for the same callers. This
+// server never creates, raises, lowers or deletes the fence.
+//
+// The braces put the fence in the same storage slot as "trades:state", so
+// one script may touch both on any Redis layout.
+const FENCE_KEY = '{trades:state}:fence';
+const WRITER_GENERATION = 1;
+// (F1) a fence that is present but not a whole number, or a whole number
+// above 1, refuses; (F2) otherwise the one SET, and its reply.
+// The fence is compared AS DIGITS, never through tonumber(): on Upstash,
+// tonumber() of a number too large for 64 bits gives nil, and comparing nil
+// stopped the script with an error instead of refusing (Gate 1 Step 1,
+// 23 Oct 2026). Leading zeros are removed, so "" is 0 and "1" is 1; any
+// other digit string (2, 3, 99999999999999999999, ...) refuses.
+const GEN1_SAVE_SCRIPT = [
+  "local fence = redis.call('GET', KEYS[2])",
+  "if fence then",
+  "  if not string.match(fence, '^%d+$') then return 'FENCED' end",
+  "  local d = (string.gsub(fence, '^0+', ''))",
+  "  if d ~= '' and d ~= '1' then return 'FENCED' end",
+  "end",
+  "redis.call('SET', KEYS[1], ARGV[1])",
+  "return 'SAVED'",
+].join('\n');
+
+// What /health reports about this server's saves (behind the app key, never
+// on his screen). "fenced" is what the LAST save attempt was told; null
+// until this process has saved at all.
+const writer = { generation: WRITER_GENERATION, fenced: null, lastSaveAt: null, lastRefusedAt: null };
+function writerStatus() { return { ...writer }; }
+
 async function write(data) {
-  await redis.set(KEY, data);
+  const reply = await redis.eval(GEN1_SAVE_SCRIPT, [KEY, FENCE_KEY], [JSON.stringify(data)]);
+  if (reply === 'SAVED') {
+    writer.fenced = false; writer.lastSaveAt = new Date().toISOString();
+    return;
+  }
+  if (reply === 'FENCED') {
+    writer.fenced = true; writer.lastRefusedAt = new Date().toISOString();
+    const err = new Error('fenced: this server is generation 1 and a newer generation has taken over saving, so nothing was saved');
+    err.code = 'FENCED';
+    throw err;
+  }
+  // Anything else is not a save this code can vouch for. Said as it is,
+  // never treated as success.
+  const err = new Error('save not confirmed: the save script answered ' + JSON.stringify(reply));
+  err.code = 'SAVE_UNCONFIRMED';
+  throw err;
 }
 
 async function getState() {
@@ -93,4 +155,5 @@ async function removePendingTradeIfPair(id, pair) {
   return { removed, kept };
 }
 
-module.exports = { getState, saveState, updateState, addPendingTrade, removePendingTrade, removePendingTradeIfPair };
+module.exports = { getState, saveState, updateState, addPendingTrade, removePendingTrade, removePendingTradeIfPair,
+                   writerStatus, KEY, FENCE_KEY, WRITER_GENERATION, GEN1_SAVE_SCRIPT };
