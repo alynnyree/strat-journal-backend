@@ -237,7 +237,7 @@ const verb = c => String(c[0]).toLowerCase();
         const attempt = async () => { try { await tradeStore.updateState(() => ({ saved: 'new' })); return 'SAVED'; } catch (x) { return x.code || x.message; } };
 
         // B1 (Q-T24 (a)): saves land with no fence, or a fence of 0 or 1.
-        for (const f of [undefined, '0', '1', '01']) {
+        for (const f of [undefined, '0', '000', '1', '01', '001']) {
           await seed(f);
           const r = await attempt();
           const text = await direct.call('GET', KEYS[0]);
@@ -248,7 +248,9 @@ const verb = c => String(c[0]).toLowerCase();
             f === undefined ? (await direct.call('EXISTS', KEYS[1])) === 0 : fenceAfter === f, fenceAfter);
         }
         // B2 (Q-T24 (a)): a fence above 1 refuses, and nothing is written.
-        for (const f of ['2', '3', '10', '99999999999999999999999']) {
+        // 20 digits and 2^64 are beyond a 64-bit integer: on Upstash, tonumber()
+        // of them gave nil and the old script stopped with an error (Gate 1 Step 1).
+        for (const f of ['2', '02', '3', '10', '99999999999999999999', '18446744073709551616', '99999999999999999999999']) {
           await seed(f);
           const r = await attempt();
           check(`B2. fence ${JSON.stringify(f)}: refused "fenced", the record byte-identical, the fence unchanged`,

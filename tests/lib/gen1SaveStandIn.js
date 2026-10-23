@@ -28,7 +28,8 @@ function gen1SaveVia(fake) {
     const fence = await fake.get(keys[1]);
     if (fence != null) {
       if (!/^\d+$/.test(String(fence))) return 'FENCED';
-      if (Number(fence) > 1) return 'FENCED';
+      const d = String(fence).replace(/^0+/, '');          // as the script: digits, no tonumber
+      if (d !== '' && d !== '1') return 'FENCED';
     }
     await fake.set(keys[0], JSON.parse(args[0]));
     return 'SAVED';

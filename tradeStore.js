@@ -41,11 +41,17 @@ const FENCE_KEY = '{trades:state}:fence';
 const WRITER_GENERATION = 1;
 // (F1) a fence that is present but not a whole number, or a whole number
 // above 1, refuses; (F2) otherwise the one SET, and its reply.
+// The fence is compared AS DIGITS, never through tonumber(): on Upstash,
+// tonumber() of a number too large for 64 bits gives nil, and comparing nil
+// stopped the script with an error instead of refusing (Gate 1 Step 1,
+// 23 Oct 2026). Leading zeros are removed, so "" is 0 and "1" is 1; any
+// other digit string (2, 3, 99999999999999999999, ...) refuses.
 const GEN1_SAVE_SCRIPT = [
   "local fence = redis.call('GET', KEYS[2])",
   "if fence then",
   "  if not string.match(fence, '^%d+$') then return 'FENCED' end",
-  "  if tonumber(fence) > 1 then return 'FENCED' end",
+  "  local d = (string.gsub(fence, '^0+', ''))",
+  "  if d ~= '' and d ~= '1' then return 'FENCED' end",
   "end",
   "redis.call('SET', KEYS[1], ARGV[1])",
   "return 'SAVED'",
