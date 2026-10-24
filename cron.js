@@ -752,6 +752,11 @@ const ENRICH_BATCH = 25;
 // from the start of its enrichment. A timer threshold, not a limit on the
 // calls underneath: nothing is cancelled, a late answer is simply not used.
 const ITEM_WAIT = { ms: 90 * 1000 };
+// Each trade's ONE decision, with its measured wait, is handed to this
+// observer when one is set (the checks set it, to report every wait as plan
+// test Q-T1 asks and to count decisions in Q-T6; nothing in the service does).
+const P2_EVENTS = { observe: null };
+const noteDecision = ev => { try { if (P2_EVENTS.observe) P2_EVENTS.observe(ev); } catch (e) { /* reporting only */ } };
 async function enrichSteps(token, list) {
   await enrichWithUnderlyingPrices(token, list);
   await enrichWithFtfc(token, list);
@@ -769,14 +774,14 @@ function enrichOne(token, staged) {
   const started = Date.now();
   return new Promise(resolve => {
     let decided = false;
+    const decide = out => { decided = true; noteDecision({ qid: staged.qid, decision: out.decision, waitedMs: out.waitedMs }); resolve(out); };
     const timer = setTimeout(() => {
       if (decided) return;
-      decided = true;
-      resolve({ decision: 'timed-out', waitedMs: Date.now() - started });
+      decide({ decision: 'timed-out', waitedMs: Date.now() - started });
     }, ITEM_WAIT.ms);
     enrichSteps(token, [copy]).then(
-      () => { if (decided) return; decided = true; clearTimeout(timer); resolve({ decision: 'result', trade: copy, waitedMs: Date.now() - started }); },
-      err => { if (decided) return; decided = true; clearTimeout(timer); resolve({ decision: 'failed', trade: copy, why: (err && err.message) || String(err), waitedMs: Date.now() - started }); });
+      () => { if (decided) return; clearTimeout(timer); decide({ decision: 'result', trade: copy, waitedMs: Date.now() - started }); },
+      err => { if (decided) return; clearTimeout(timer); decide({ decision: 'failed', trade: copy, why: (err && err.message) || String(err), waitedMs: Date.now() - started }); });
   });
 }
 
@@ -1071,7 +1076,7 @@ function startAutoSync(intervalCron = '*/5 * * * *') {
 // that the copy works.
 module.exports = { FTFC_RULE_VERSION, startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded,
                    resetSyncState, jobRunning, runExclusive, withExceptions, withoutQueueCollisions,
-                   syncLandingUpdate, stagingUpdate, publishStaged, runStagedBatch, enrichOne, ITEM_WAIT, ENRICH_BATCH,
+                   syncLandingUpdate, stagingUpdate, publishStaged, runStagedBatch, enrichOne, ITEM_WAIT, ENRICH_BATCH, P2_EVENTS,
                    noteBackfillProgress,
                    enrichWithUnderlyingPrices, priceWithProvenance,
                    enrichWithFtfc, enrichWithReplayData, enrichWithStopRule, enrichWithStrategy,
