@@ -339,6 +339,13 @@ router.post('/trades/reset', wrap(async (req, res) => {
   return res.status(503).json({ applied: false, reason: out.status });
 }));
 
+// THE PRESERVED-STATE REPORT (queue plan 5.8.6 (3), Q-T11 (d)): read-only,
+// behind the app key, written to be sent to the auditor, never shown on the
+// owner's screen. It reads the live record and fence each time.
+router.get('/queue/status', wrap(async (req, res) => {
+  res.json(await tradeStore.preservedStateReport());
+}));
+
 // 5.9.3 (S-R6): the counters the app reads as `base` before sending a reset.
 // Declared before the :requestId route so "state" is never taken for an id.
 router.get('/trades/reset/state', wrap(async (req, res) => {

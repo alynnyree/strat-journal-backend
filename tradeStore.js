@@ -412,6 +412,43 @@ async function readDocument() {
   return p.why ? { kind: 'unreadable', why: p.why } : { ...r, doc: p.doc };
 }
 
+// THE PRESERVED-STATE REPORT (plan 5.8.6 (3), 5.4 RB-2, Q-T11 (d), (e)):
+// read-only, from the LIVE record and the LIVE fence (each read inside a
+// script), never from a remembered figure. It never says a rollback is safe:
+// once the fence reads 2, going back to generation 0 or 1 is never safe,
+// whatever the counts say (an empty staging list included).
+async function preservedStateReport() {
+  const at = new Date().toISOString();
+  let fence;
+  try {
+    const f = await raw.eval(RESOLUTION_READ, [FENCE_KEY], []);
+    fence = Array.isArray(f) && f[0] === 'present' ? f[2] : Array.isArray(f) && f[0] === 'absent' ? 'absent' : 'unreadable';
+  } catch (e) { fence = 'could not be read'; }
+  let r;
+  try { r = await readDocument(); } catch (e) { r = { kind: 'could not be read' }; }
+  const doc = r.kind === 'present' ? r.doc : null;
+  const expanded = !!(doc && doc.schemaVersion === 2);
+  const untagged = expanded ? Q.untaggedCounts(doc) : null;
+  const damaged = expanded && Q.isPlain(doc.opRecords)
+    ? Object.entries(doc.opRecords).filter(([k, rec]) => Q.untrustedWhy(rec, k, doc.stateVersion, Date.now())).length : null;
+  return {
+    readAt: at,
+    fence,
+    record: r.kind === 'present' ? 'present' : r.kind,
+    schemaVersion: doc ? (doc.schemaVersion === undefined ? null : doc.schemaVersion) : null,
+    stateVersion: doc && Number.isSafeInteger(doc.stateVersion) ? doc.stateVersion : null,
+    stagedCount: expanded && Array.isArray(doc.pendingStaged) ? doc.pendingStaged.length : null,
+    waitingCount: doc && Array.isArray(doc.pending) ? doc.pending.length : null,
+    untagged,
+    damagedRecords: damaged,
+    removalEnabled: expanded ? doc.removalEnabled : null,
+    thisProcess: writerStatus(),
+    rollback: /^0*2$/.test(String(fence))
+      ? 'NOT SAFE: the fence reads 2. Generation 0 or 1 must never be deployed again (plan 5.4 RB-2); stop and preserve (5.8.6).'
+      : 'The fence does not read 2. Whether a rollback is safe is decided by plan 5.4, never by this report.',
+  };
+}
+
 // For tests only: forget what this process learned about its own saves.
 function _resetProcessState() {
   Object.assign(writer, { fenced: null, ready: false, startup: { stage: 'not-started', why: null, at: null },
@@ -423,6 +460,6 @@ function _resetProcessState() {
 
 module.exports = {
   KEY, FENCE_KEY, LOG_KEY, WRITER_GENERATION, SCRIPTS, PINNED, MAX_RUNS, OP_DEADLINE_MS, REQUEST_LIMIT_MS,
-  protect, startGeneration2, raiseFence, getState, readDocument, writerStatus, publicStatus, logFailure,
+  protect, startGeneration2, raiseFence, getState, readDocument, writerStatus, publicStatus, logFailure, preservedStateReport,
   _resetProcessState,
 };
