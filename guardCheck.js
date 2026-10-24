@@ -98,6 +98,11 @@ if (errIdx !== -1 && lastRoute > errIdx) {
   problems.push('server.js  errorHandler is mounted before a route — it only catches what is mounted above it.');
 }
 
+// 6. THE QUEUE'S SOURCE CHECK (queue plan v14.1 rev 3.2, 5.5 and 5.8.3 (D5)):
+//    a change that saves the shared record any way other than THE COMMIT, or
+//    a COMMIT without its fence check, fails here, on every pull request.
+for (const p of require('./queueSourceCheck').checkTree(DIR)) problems.push('queue source check: ' + p);
+
 if (problems.length) {
   console.error(`\nFound ${problems.length} way(s) the server could shut itself down again:\n`);
   problems.forEach(p => console.error('  - ' + p));

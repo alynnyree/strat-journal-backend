@@ -15,6 +15,12 @@
 // The stand-in answers the save the way the script does (tests/lib/
 // gen1SaveStandIn.js). The script itself, on a real Redis, is
 // tests/writer-fence.js.
+//
+// SINCE DEPLOY 2 (queue plan v14.1 rev 3.2, Q-T11 (a)): the generation-1 code
+// is no longer in this tree, so this runs the REAL generation-1 build, taken
+// from history (eb3880b, tests/lib/olderBuild.js) -- the build that may still
+// be running during Deploy 2's overlap -- and, with the fence at 2, against
+// the record as generation 2 leaves it (expanded).
 const Module = require('module');
 const path = require('path');
 const BACKEND = path.join(__dirname, '..');
@@ -34,7 +40,10 @@ const fakeRedis = {
   set: async (k, v) => { store[k] = JSON.stringify(v); return 'OK'; },
   del: async k => { delete store[k]; return 1; },
 };
-const gen1Save = require('./lib/gen1SaveStandIn').gen1SaveVia(fakeRedis);
+const { olderBuild, removeOlderBuilds, GEN1 } = require('./lib/olderBuild');
+const GEN1DIR = olderBuild(GEN1);
+const G2 = require('./lib/gen2StandIn');
+const gen1Save = require('./lib/gen1SaveStandIn').gen1SaveVia(fakeRedis, GEN1DIR);
 // Every save attempt and its answer, so a refusal that a caller swallows is
 // still seen here.
 const saves = [];
@@ -80,9 +89,9 @@ Module._load = function (request) {
   if (Object.prototype.hasOwnProperty.call(stubs, request)) return stubs[request];
   return origLoad.apply(this, arguments);
 };
-const cron = require(path.join(BACKEND, 'cron.js'));
-const tradeStore = require(path.join(BACKEND, 'tradeStore.js'));
-const api = require(path.join(BACKEND, 'api.js'));
+const cron = require(path.join(GEN1DIR, 'cron.js'));
+const tradeStore = require(path.join(GEN1DIR, 'tradeStore.js'));
+const api = require(path.join(GEN1DIR, 'api.js'));
 
 const OCC = 'SPY   261231C00600000';
 const ACCT = 'acct-aaaaaaaaaaaaaaaa';
@@ -96,7 +105,8 @@ function fill(id, kind, minute) {
 const START = { openLegs: [], pending: [{ id: 'WAITING-1', fills: ['111', '112'] }], lastProcessedIds: ['111', '112'], exceptions: {} };
 function fresh(fence) {
   for (const k of Object.keys(store)) delete store[k];
-  store[RECORD] = JSON.stringify(START);
+  // With the fence at 2, the record is the one generation 2 leaves: expanded.
+  store[RECORD] = JSON.stringify(fence === 2 ? G2.expanded(START) : START);
   if (fence !== undefined) store[FENCE] = JSON.stringify(fence);
   tokens.last_transaction_check = null; schwab.answers = []; told.closed = 0; told.opened = 0;
 }
@@ -211,6 +221,7 @@ function route(method, p, req) {
     check('with no fence, saving never creates one', !(FENCE in store));
   });
 
+  removeOlderBuilds();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
-})().catch(e => { console.log('FAIL: TEST CRASHED', e && e.stack || e); process.exit(1); });
+})().catch(e => { removeOlderBuilds(); console.log('FAIL: TEST CRASHED', e && e.stack || e); process.exit(1); });

@@ -30,12 +30,15 @@ const fakeRedis = {
   set: async (k, v) => { store[k] = JSON.stringify(v); return 'OK'; },
   del: async k => { delete store[k]; return 1; },
 };
-// Deploy 1 (queue plan 5.8.2): "trades:state" is saved by one script now; the stand-in answers it.
-fakeRedis.eval = require('./lib/gen1SaveStandIn').gen1SaveVia(fakeRedis);
+// Deploy 2 (queue plan v14.1 rev 3.2): "trades:state" is read and saved only by
+// scripts now; the stand-in answers them (tests/lib/gen2StandIn.js).
+const G2 = require('./lib/gen2StandIn');
+fakeRedis.eval = G2.gen2Via(fakeRedis);
 class Redis { constructor(){ return fakeRedis; } }
 Redis.fromEnv = () => fakeRedis;
 const readState = () => (store['trades:state'] ? JSON.parse(store['trades:state']) : null);
-const writeState = s => { store['trades:state'] = JSON.stringify(s); };
+// A starting record is stored as generation 2 leaves it (expanded, fence 2).
+const writeState = s => { store['trades:state'] = JSON.stringify(G2.expanded(s)); store['{trades:state}:fence'] = JSON.stringify('2'); };
 
 // ---- Stand-in Schwab, at the level the real reader talks to it.
 const schwab = { transactions: [] };
@@ -126,6 +129,8 @@ const U = /^U-[0-9a-f]{32}$/;
 
 (async () => {
   try {
+    // Generation 2: this process raises the fence and expands the record first.
+    await require(path.join(BACKEND, 'tradeStore.js')).startGeneration2({ pauseMs: 0 });
     // =====================================================================
     console.log('--- identity: an activityId record is unchanged ---');
     {

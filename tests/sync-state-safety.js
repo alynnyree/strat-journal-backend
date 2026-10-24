@@ -28,12 +28,15 @@ const fakeRedis = {
   set: async (k, v) => { store[k] = JSON.stringify(v); return 'OK'; },
   del: async k => { delete store[k]; return 1; },
 };
-// Deploy 1 (queue plan 5.8.2): "trades:state" is saved by one script now; the stand-in answers it.
-fakeRedis.eval = require('./lib/gen1SaveStandIn').gen1SaveVia(fakeRedis);
+// Deploy 2 (queue plan v14.1 rev 3.2): "trades:state" is read and saved only by
+// scripts now; the stand-in answers them (tests/lib/gen2StandIn.js).
+const G2 = require('./lib/gen2StandIn');
+fakeRedis.eval = G2.gen2Via(fakeRedis);
 class Redis { constructor(){ return fakeRedis; } }
 Redis.fromEnv = () => fakeRedis;
 const readState = () => (store['trades:state'] ? JSON.parse(store['trades:state']) : null);
-const writeState = s => { store['trades:state'] = JSON.stringify(s); };
+// A starting record is stored as generation 2 leaves it (expanded, fence 2).
+const writeState = s => { store['trades:state'] = JSON.stringify(G2.expanded(s)); store['{trades:state}:fence'] = JSON.stringify('2'); };
 
 // ---- Stand-in Schwab. Each call takes the next scripted answer.
 const schwab = { answers: [], asked: [] };
@@ -123,6 +126,8 @@ const noRepeats = list => new Set(list.map(String)).size === list.length;
 
 (async () => {
   try {
+    // Generation 2: this process raises the fence and expands the record first.
+    await require(path.join(BACKEND, 'tradeStore.js')).startGeneration2({ pauseMs: 0 });
     // =====================================================================
     console.log('--- 1. an acknowledgement made during a sync stays acknowledged ---');
     {
@@ -131,7 +136,7 @@ const noRepeats = list => new Set(list.map(String)).size === list.length;
       const release = holdEnrichment();
       const job = cron.runSyncCheck();
       const reached = await waitFor(() => gate.entered > 0);
-      await tradeStore.removePendingTrade('WAITING-A');        // the phone says "taken"
+      await G2.removePending(tradeStore, 'WAITING-A');        // the phone says "taken"
       const stillRunning = gate.held !== null;
       release(); await job;
       const st = readState();
@@ -164,7 +169,7 @@ const noRepeats = list => new Set(list.map(String)).size === list.length;
       const release = holdEnrichment();
       const job = cron.runBackfill(30);
       const reached = await waitFor(() => gate.entered > 0);
-      await tradeStore.addPendingTrade({ id: 'ADDED-DURING', fills: ['z1', 'z2'] });
+      await G2.addPending(tradeStore, { id: 'ADDED-DURING', fills: ['z1', 'z2'] });
       // A five-minute tick arriving now must not run alongside the backfill.
       schwab.answers.push({ fills: [fill('s1', 'open', 10), fill('s2', 'close', 12)] });
       const checkpointBefore = tokens.last_transaction_check;

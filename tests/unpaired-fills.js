@@ -25,12 +25,16 @@ const fakeRedis = {
   set: async (k, v) => { store[k] = JSON.stringify(v); return 'OK'; },
   del: async k => { delete store[k]; return 1; },
 };
-// Deploy 1 (queue plan 5.8.2): "trades:state" is saved by one script now; the stand-in answers it.
-fakeRedis.eval = require('./lib/gen1SaveStandIn').gen1SaveVia(fakeRedis);
+// Deploy 2 (queue plan v14.1 rev 3.2): "trades:state" is read and saved only by
+// scripts now; the stand-in answers them (tests/lib/gen2StandIn.js).
+const G2 = require('./lib/gen2StandIn');
+fakeRedis.eval = G2.gen2Via(fakeRedis);
 class Redis { constructor(){ return fakeRedis; } }
 Redis.fromEnv = () => fakeRedis;
 const readState = () => (store['trades:state'] ? JSON.parse(store['trades:state']) : null);
-const writeState = s => { store['trades:state'] = JSON.stringify(s); };
+// A starting record is stored as generation 2 leaves it (expanded, fence 2).
+// (expandedAnyway: some cases here store a deliberately damaged record.)
+const writeState = s => { store['trades:state'] = JSON.stringify(G2.expandedAnyway(s)); store['{trades:state}:fence'] = JSON.stringify('2'); };
 
 // ---- Stand-in Schwab: each call takes the next scripted answer.
 const schwab = { answers: [] };
@@ -97,6 +101,8 @@ async function section(fn) { try { await fn(); } catch (e) { fail++; console.log
 
 (async () => {
   try {
+    // Generation 2: this process raises the fence and expands the record first.
+    await require(path.join(BACKEND, 'tradeStore.js')).startGeneration2({ pauseMs: 0 });
     console.log('--- T1. a sale with no purchase on file: no trade, one record, the fill processed ---');
     await section(async () => {
       const m = processFills([fill('c1', 'close', 5, { price: 1.2, fees: 0.67 })], { openLegs: [], pending: [] });
@@ -151,7 +157,7 @@ async function section(fn) { try { await fn(); } catch (e) { fail++; console.log
       const sync = cron.runSyncCheck();
       const reached = await waitFor(() => gate.entered > 0);
       const backfill = cron.runBackfill(30);                               // waits for the sync (runExclusive)
-      await tradeStore.removePendingTrade('W');                             // the phone says "taken"
+      await G2.removePending(tradeStore, 'W');                             // the phone says "taken"
       const midway = gate.held !== null;
       release(); await sync; await backfill;
       const st = readState();
@@ -489,8 +495,8 @@ async function section(fn) { try { await fn(); } catch (e) { fail++; console.log
       const steps = [
         ['a sync with nothing new', () => sync([])],
         ['a sync that pairs an ordinary trade', () => sync([fill('o22', 'open', 6), fill('c22', 'close', 7)])],
-        ['the phone taking a trade', () => tradeStore.removePendingTrade(readState().pending[0].id)],
-        ['a trade added to the queue', () => tradeStore.addPendingTrade({ id: 'x', fills: ['y', 'z'] })],
+        ['the phone taking a trade', () => G2.removePending(tradeStore, readState().pending[0].id)],
+        ['a trade added to the queue', () => G2.addPending(tradeStore, { id: 'x', fills: ['y', 'z'] })],
         ['a backfill with nothing new in it', () => backfill([])],
         ['a reset', () => cron.resetSyncState()],
       ];

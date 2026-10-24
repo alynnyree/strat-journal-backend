@@ -15,6 +15,12 @@
 //      fence's every value is tried; a raise is raced against a run of
 //      saves; and a broken two-command copy is shown to be caught.
 //
+// SINCE DEPLOY 2 (queue plan v14.1 rev 3.2, Q-T24 (a), (b), (h)): the
+// generation-1 save lives only in history, so this runs the REAL generation-1
+// build (eb3880b, tests/lib/olderBuild.js) -- the build that may still be
+// running beside generation 2 during the deploy. The checks of the CURRENT
+// tree's sources moved to tests/source-check.js.
+//
 // What it does NOT prove: that Upstash's own servers behave as this Redis
 // does (the separately authorised real-store gate, plan 6.0), or how the
 // callers of the save behave when refused (tests/writer-fence-callers.js).
@@ -26,6 +32,8 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const BACKEND = path.join(__dirname, '..');
+const { olderBuild, removeOlderBuilds, GEN1 } = require('./lib/olderBuild');
+const GEN1DIR = olderBuild(GEN1);
 
 let pass = 0, fail = 0;
 const check = (label, ok, detail) => {
@@ -125,7 +133,7 @@ const verb = c => String(c[0]).toLowerCase();
     process.env.UPSTASH_REDIS_REST_URL = URL_;
     process.env.UPSTASH_REDIS_REST_TOKEN = 'stand-in-token';
     process.env.UPSTASH_DISABLE_TELEMETRY = '1';
-    const tradeStore = require(path.join(BACKEND, 'tradeStore.js'));
+    const tradeStore = require(path.join(GEN1DIR, 'tradeStore.js'));
     const { Redis } = require('@upstash/redis');
     const other = new Redis({ url: URL_, token: 'stand-in-token', retry: false });
 
@@ -190,22 +198,7 @@ const verb = c => String(c[0]).toLowerCase();
     await tradeStore.updateState(() => null);
     check('A7. a change that returns nothing sends no save at all (as today)', !shim.log.some(c => verb(c) !== 'get'), shim.log.map(verb));
 
-    // A9. Source: the save module saves only through the script, and nothing
-    // else in the service names the record.
-    const src = fs.readFileSync(path.join(BACKEND, 'tradeStore.js'), 'utf8').replace(/\/\/.*$/gm, '');
-    check('A9. tradeStore.js has no SET call', !/redis\.set\s*\(/.test(src));
-    check('A9. tradeStore.js has exactly one script call, with the generation-1 save', (src.match(/redis\.eval\s*\(/g) || []).length === 1 && /redis\.eval\s*\(\s*GEN1_SAVE_SCRIPT/.test(src));
-    const files = [];
-    (function walk(d) {
-      for (const n of fs.readdirSync(d)) {
-        if (n === 'node_modules' || n === 'tests' || n.startsWith('.')) continue;
-        const p = path.join(d, n);
-        if (fs.statSync(p).isDirectory()) walk(p);
-        else if (n.endsWith('.js') && fs.readFileSync(p, 'utf8').includes('trades:state')) files.push(path.relative(BACKEND, p));
-      }
-    })(BACKEND);
-    check('A9. only tradeStore.js and the read-only Step E tool name "trades:state"', JSON.stringify(files.sort()) === JSON.stringify(['tools/stepE-prepare.js', 'tradeStore.js']), files);
-    check('A9. the Step E tool does not talk to the storage service', !/@upstash\/redis/.test(fs.readFileSync(path.join(BACKEND, 'tools/stepE-prepare.js'), 'utf8')));
+    // (A9, the source checks of the current tree, are in tests/source-check.js.)
 
     // =================================================================
     console.log('\n--- B. the script itself, on a real Redis on this machine ---');
@@ -329,6 +322,7 @@ const verb = c => String(c[0]).toLowerCase();
     if (redisProc) redisProc.kill('SIGKILL');
     if (redisDir) try { fs.rmSync(redisDir, { recursive: true, force: true }); } catch (e) { /* temp folder only */ }
     server.close();
+    removeOlderBuilds();
     console.log(`\n${pass} passed, ${fail} failed`);
     process.exit(fail ? 1 : 0);
   }

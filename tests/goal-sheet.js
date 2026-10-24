@@ -31,8 +31,10 @@ const fakeRedis = {
   lpush: async () => 1, lrange: async () => [], lrem: async () => 0, ltrim: async () => 'OK', rpop: async () => null,
   mget: async (...ks) => ks.map(k => (k in store ? JSON.parse(store[k]) : null)),
 };
-// Deploy 1 (queue plan 5.8.2): "trades:state" is saved by one script now; the stand-in answers it.
-fakeRedis.eval = require('./lib/gen1SaveStandIn').gen1SaveVia(fakeRedis);
+// Deploy 2 (queue plan v14.1 rev 3.2): "trades:state" is read and saved only by
+// scripts now; the stand-in answers them (tests/lib/gen2StandIn.js).
+const G2 = require('./lib/gen2StandIn');
+fakeRedis.eval = G2.gen2Via(fakeRedis);
 class Redis { constructor() { return fakeRedis; } }
 Redis.fromEnv = () => fakeRedis;
 const readState = () => (store['trades:state'] ? JSON.parse(store['trades:state']) : null);
@@ -123,7 +125,7 @@ const ny = ms => {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(ms)).map(x => [x.type, x.value]));
   return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour === '24' ? '00' : p.hour}:${p.minute}` };
 };
-const reset = () => { for (const k of Object.keys(store)) delete store[k]; store['trades:state'] = JSON.stringify({ openLegs: [], pending: [], lastProcessedIds: [] }); tokens.last_transaction_check = null; alerts.length = 0; browserEvents.length = 0; };
+const reset = () => { for (const k of Object.keys(store)) delete store[k]; store['trades:state'] = JSON.stringify(G2.expanded({ openLegs: [], pending: [], lastProcessedIds: [] })); store['{trades:state}:fence'] = JSON.stringify('2'); tokens.last_transaction_check = null; alerts.length = 0; browserEvents.length = 0; };
 
 // The owner's sheet, item 7, matched to the app's three play names.
 const SHEET = {
@@ -144,6 +146,8 @@ async function runTrade(play, playConfidence = 'high') {
 
 (async () => {
   try {
+    // Generation 2: this process raises the fence and expands the record first.
+    await require(path.join(BACKEND, 'tradeStore.js')).startGeneration2({ pauseMs: 0 });
     // ================= RISING market, the play answered "2s Turning Into 3s"
     market = 'rising';
     const st = await runTrade(SHEET.a.key);
