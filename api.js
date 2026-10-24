@@ -5,6 +5,7 @@ const axios = require('axios');
 const { getValidAccessToken } = require('./auth');
 const { getTokens, setLastCheck } = require('./tokenStore');
 const tradeStore = require('./tradeStore');
+const Q = require('./queueOps');
 const alpaca = require('./alpacaClient');
 const { runBackfill, runSyncCheck, resetSyncState, jobRunning } = require('./cron');
 const { getFtfcForTrade, getUnderlyingPriceAt } = require('./ftfcCheck');
@@ -82,7 +83,11 @@ router.get('/trades/pending', wrap(async (req, res) => {
     replayData: null,
     replayWaiting: !!(t.replayData && (t.replayData.candles || []).length),
   }));
-  res.json({ pending: out, waiting: all.length });
+  // Generation 2 (queue plan 4.1, 5.7, 5.9.3): each entry carries its qid;
+  // removalEnabled and the reset counters are ADDED fields, which an older
+  // app ignores. Staged trades (pendingStaged) are never in this answer.
+  res.json({ pending: out, waiting: all.length, removalEnabled: state.removalEnabled === true,
+    resetCounter: Q.resetCounterOf(state), prunedResetThrough: Q.prunedResetThroughOf(state) });
 }));
 
 // The chart bars for ONE waiting trade, asked for only when the phone has
@@ -113,23 +118,52 @@ router.get('/trades/pending/:id/replay', wrap(async (req, res) => {
 // One with the same id and a DIFFERENT pair is kept, and the answer is 409
 // naming it, so the app can record the collision. Without "fills" (an app
 // from before this change) it behaves exactly as before.
+//
+// Generation 2 (queue plan 4.2, 4.3): with ?qid=Q as well, ONLY the one
+// entry with that qid is removed, and only if its id and fill pair are the
+// ones named. Without a qid, both older forms behave exactly as before.
+// Every removal is ONE change under THE COMMIT; one that could not be saved
+// says why and removes nothing.
+const SAVED = ['committed', 'unchanged', 'recovered'];
+function removalNotSaved(res, out) {
+  if (out.status === 'outcome-unknown') return res.status(503).json({ removed: 0, reason: 'outcome-unknown' });
+  return res.status(503).json({ removed: 0, reason: out.status === 'busy' ? 'busy' : out.status });
+}
 router.delete('/trades/pending/:id', wrap(async (req, res) => {
+  const qid = req.query.qid;
+  if (qid !== undefined) {
+    if (!Q.isQid(String(qid))) return res.status(400).json({ removed: 0, reason: 'bad-qid' });
+    if (req.query.fills === undefined) return res.status(400).json({ removed: 0, reason: 'qid-without-fills' });
+  }
   if (req.query.fills === undefined) {
-    await tradeStore.removePendingTrade(req.params.id);
+    const out = await tradeStore.protect('legacy-removal', Q.legacyRemovalById, { payload: { id: req.params.id } });
+    if (!SAVED.includes(out.status)) return removalNotSaved(res, out);
     return res.json({ ok: true });
   }
   const pair = String(req.query.fills).split(',');
   if (pair.length !== 2 || pair.some(f => !f)) {
     return res.status(400).json({ error: 'The trade to remove must name exactly two broker fills (open,close).', removed: 0 });
   }
-  const out = await tradeStore.removePendingTradeIfPair(req.params.id, pair);
-  if (out.kept.length) {
+  if (qid !== undefined) {
+    const out = await tradeStore.protect('qid-removal', Q.qidRemoval, { payload: { id: req.params.id, pair, qid: String(qid) } });
+    if (!SAVED.includes(out.status)) return removalNotSaved(res, out);
+    const r = out.result;
+    if (r.reason === 'removed') return res.json({ ok: true, removed: 1, reason: 'removed', qid: r.removedQid });
+    if (r.reason === 'not-found') return res.json({ ok: true, removed: 0, reason: 'not-found' });
+    return res.status(409).json(Object.assign({ removed: 0 }, r.reason === 'qid-mismatch'
+      ? { reason: 'qid-mismatch', mismatch: r.mismatch } : { reason: 'other-qids', queuedQids: r.queuedQids }));
+  }
+  const out = await tradeStore.protect('legacy-removal', Q.legacyRemovalByPair, { payload: { id: req.params.id, pair } });
+  if (!SAVED.includes(out.status)) return removalNotSaved(res, out);
+  const removed = out.result ? out.result.removed : 0;
+  const kept = (out.out && out.out.kept) || [];
+  if (kept.length) {
     return res.status(409).json({
       error: 'Another trade with the same id but different broker fills is waiting; it was kept.',
-      removed: out.removed, queuedPairs: out.kept.slice(0, 10),
+      removed, queuedPairs: kept.slice(0, 10),
     });
   }
-  res.json({ ok: true, removed: out.removed });
+  res.json({ ok: true, removed });
 }));
 
 // One-time historical pull. daysBack defaults to ~90 days; Schwab's own
@@ -264,16 +298,88 @@ router.post('/ftfc/check', wrap(async (req, res) => {
 // backfill after a matching-logic fix, so every trade gets freshly
 // re-matched instead of keeping old (possibly wrong) results around.
 // This does NOT touch your saved Journal (that's local to the app).
+//
+// Generation 2 (queue plan 5.9.3). The app sends requestId (32 lower-case
+// hex) and base (the resetCounter it read just before). The SAME request sent
+// again cannot reset twice (S-R2). It never waits behind a running job
+// (S-R3). Each answer means exactly one thing (S-R4): 200 only for a reset
+// this service CONFIRMED; applied: false only when it is certain nothing was
+// reset; applied: "unknown" when it cannot know. A request without requestId
+// (every app before the 5.9 app change) is accepted the same way, with an id
+// made here (S-R7).
+const HEX32 = /^[0-9a-f]{32}$/;
+const isBase = b => /^\d+$/.test(String(b)) && Number.isSafeInteger(Number(b));
 router.post('/trades/reset', wrap(async (req, res) => {
-  try {
-    // Through the one-job-at-a-time guard (audit Step B): waits for a running
-    // sync or import, so neither can save its results over the emptied record.
-    await resetSyncState();
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('reset error:', err.message);
-    res.status(500).json({ error: 'Reset failed' });
+  const body = req.body || {};
+  const requestId = body.requestId !== undefined ? body.requestId : req.query.requestId;
+  const base = body.base !== undefined ? body.base : req.query.base;
+  const legacy = requestId === undefined && base === undefined;
+  if (!legacy) {
+    if (typeof requestId !== 'string' || !HEX32.test(requestId)) return res.status(400).json({ applied: false, reason: 'bad-request-id' });
+    if (!isBase(base)) return res.status(400).json({ applied: false, reason: 'bad-base' });
   }
+  let out;
+  try { out = await resetSyncState({ requestId: legacy ? undefined : requestId }); }
+  catch (err) {
+    // Nothing above throws by design; if something does, the reset may or
+    // may not have landed, and that is what is said.
+    console.error('reset error:', err.message);
+    return res.status(503).json({ applied: 'unknown', reason: 'outcome-unknown' });
+  }
+  const id = out.record ? out.record.opId : (legacy ? null : requestId);
+  if (out.status === 'job-running') return res.status(409).json({ applied: false, reason: 'busy', busyWith: out.busyWith });
+  if (out.status === 'committed') return res.json({ applied: true, status: 'applied', requestId: id });
+  if (out.status === 'recovered') {
+    if (out.record.kind === 'reset-cancel') return res.status(409).json({ applied: false, reason: 'cancelled', requestId: id });
+    return res.json({ applied: true, status: 'recovered', requestId: id });
+  }
+  if (out.status === 'outcome-unknown') return res.status(503).json({ applied: 'unknown', reason: 'outcome-unknown' });
+  // busy (5.6), fenced, not-ready, state-invalid, could-not-read, too-large:
+  // each refused before anything was written.
+  return res.status(503).json({ applied: false, reason: out.status });
+}));
+
+// THE PRESERVED-STATE REPORT (queue plan 5.8.6 (3), Q-T11 (d)): read-only,
+// behind the app key, written to be sent to the auditor, never shown on the
+// owner's screen. It reads the live record and fence each time.
+router.get('/queue/status', wrap(async (req, res) => {
+  res.json(await tradeStore.preservedStateReport());
+}));
+
+// 5.9.3 (S-R6): the counters the app reads as `base` before sending a reset.
+// Declared before the :requestId route so "state" is never taken for an id.
+router.get('/trades/reset/state', wrap(async (req, res) => {
+  const state = await tradeStore.getState();
+  res.json({ resetCounter: Q.resetCounterOf(state), prunedResetThrough: Q.prunedResetThroughOf(state) });
+}));
+
+// 5.9.3 (S-R6) STATUS, read-only: "applied", "cancelled", "not-yet" (it has
+// not been applied so far) or "unknown". Read inside a script with its
+// fingerprint checked (THE RESOLUTION READ); a stale read can only make the
+// answer late or "unknown", never a wrong final one (Amendment A2).
+router.get('/trades/reset/:requestId', wrap(async (req, res) => {
+  const requestId = req.params.requestId;
+  if (!HEX32.test(String(requestId))) return res.status(400).json({ status: 'bad-request', reason: 'bad-request-id' });
+  if (!isBase(req.query.base)) return res.status(400).json({ status: 'bad-request', reason: 'bad-base' });
+  let read;
+  try { read = await tradeStore.readDocument(); }
+  catch (err) { return res.json({ status: 'unknown', why: 'the record could not be read' }); }
+  res.json(Q.resetStatus(read, requestId, Number(req.query.base), Date.now()));
+}));
+
+// 5.9.3 (S-R6) CANCEL: a protected change (kind "reset-cancel") whose id IS
+// the requestId. If the reset (or an earlier cancel) is recorded, nothing
+// changes and that record is the answer; otherwise a tombstone is written,
+// and any late copy of the reset finds it and does nothing. Only "applied"
+// and "cancelled" are final; anything else leaves the question open.
+router.post('/trades/reset/:requestId/cancel', wrap(async (req, res) => {
+  const requestId = req.params.requestId;
+  if (!HEX32.test(String(requestId))) return res.status(400).json({ status: 'bad-request', reason: 'bad-request-id' });
+  const out = await tradeStore.protect('reset-cancel', Q.resetCancelUpdate, { opId: requestId, acceptKinds: ['reset', 'reset-cancel'] });
+  if (out.status === 'committed') return res.json({ status: 'cancelled', final: true });
+  if (out.status === 'recovered') return res.json({ status: out.record.kind === 'reset' ? 'applied' : 'cancelled', final: true });
+  if (out.status === 'outcome-unknown') return res.status(503).json({ status: 'outcome-unknown', final: false });
+  return res.status(503).json({ status: out.status, final: false });
 }));
 
 // Lets a manually-entered trade (typed into the New Trade form, not pulled

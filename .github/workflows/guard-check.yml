@@ -17,7 +17,23 @@ jobs:
   guard-check:
     runs-on: ubuntu-latest
     steps:
+      # The whole history, not the last commit: the rollback checks run the
+      # REAL older builds of this server (generation 1 = eb3880b, generation
+      # 0 = 6cb24a4), written out of history, and a shallow copy has neither
+      # (queue plan v14.1 rev 3.2, Q-T11; Deploy 2 plan v2, section 4).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # A real Redis for the checks of the protected save (queue plan, 6.0
+      # (L) and (CI)): each check starts its own on a private socket file and
+      # stops it with SHUTDOWN NOSAVE. The one the package starts by itself
+      # is stopped, so nothing else is answering.
+      - name: Install a local Redis for the protected-save checks
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q redis-server
+          sudo systemctl stop redis-server || true
+          redis-server --version
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -31,5 +47,9 @@ jobs:
       # The runner fails on a FAIL line or a stall as well as on a bad
       # ending, because the crash guard can let a half-finished check end
       # as a success.
+      # REQUIRE_REAL_REDIS: a check that needs Redis and cannot find one is a
+      # FAILURE here, never a quiet skip.
       - name: Run every check
+        env:
+          REQUIRE_REAL_REDIS: '1'
         run: node tests/run-all.js
