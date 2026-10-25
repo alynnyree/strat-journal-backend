@@ -39,7 +39,7 @@ const stubs = {
       if (isEntry) process.send({ event: 'measuring', index: i });
       if (isEntry && b === 'exit') { process.send({ event: 'exiting', index: i }); setImmediate(() => process.exit(0)); await new Promise(() => {}); }
       if (isEntry && b === 'hang') await new Promise(r => market.hung.push(r));
-      return 500;
+      return market.price || 500;
     },
     getFtfcForTrade: async () => ({ timeframes: { '1D': 'BULLISH' }, runLength: 4, confirmed: true, direction: 'BULLISH', timeframesInRun: ['1D'] }),
   },
@@ -74,12 +74,20 @@ async function handle(m) {
       Q = require(path.join(BUILD, 'queueOps.js'));
       cron = require(path.join(BUILD, 'cron.js'));
       return m.start === false ? { started: false } : ts.startGeneration2({ pauseMs: 0 });
-    case 'market': market.behaviour = m.behaviour; return true;
+    case 'market': market.behaviour = m.behaviour; if (m.price) market.price = m.price; return true;
     // BROKEN-COPY CONTROL (Q-T14 (f)): a guard that FORGETS saved decisions --
     // it is shown every staged trade as undecided, so a trade measured before
     // a crash is counted and measured again. cron.js reads Q.poisonGuardUpdate
     // at each call, so replacing it here reaches the real batch code.
     case 'variant': {
+      if (m.name === 'mismatch-decision') {
+        // A decision whose trade is NOT the staged one (a fault that must
+        // never happen): the guard must refuse it and the batch must stop.
+        const realG = Q.poisonGuardUpdate;
+        Q.poisonGuardUpdate = (doc, fx) => realG(doc, fx.payload.prev
+          ? Object.assign({}, fx, { payload: Object.assign({}, fx.payload, { prev: Object.assign({}, fx.payload.prev, { trade: Object.assign({}, fx.payload.prev.trade, { id: 'NOT-THIS-TRADE' }) }) }) }) : fx);
+        return true;
+      }
       if (m.name !== 'forget-decisions') throw new Error('unknown variant ' + m.name);
       const real = Q.poisonGuardUpdate;
       Q.poisonGuardUpdate = (doc, fx) => real(Object.assign({}, doc, { pendingStaged: (doc.pendingStaged || []).map(e => { const o = Object.assign({}, e); delete o.decided; return o; }) }), fx);

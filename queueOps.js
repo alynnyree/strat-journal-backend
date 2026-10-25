@@ -411,10 +411,21 @@ function withDecision(staged, prev) {
   const next = staged.slice(); next[i] = entry;
   return { staged: next, saved: { qid: prev.qid, outcome: 'saved' } };
 }
+// A decision handed in that CANNOT be saved -- its trade is no longer staged,
+// or the decision is not about the staged trade -- stops the batch: the
+// change refuses and writes NOTHING (the next trade is not counted, so it is
+// not measured), and the caller records why (the second correction of 25 Oct
+// 2026, the auditor's targeted review). "already-decided" is not a stop: the
+// decision saved first is kept and is the one published (I2, I3).
+const NOT_SAVED = ['not-staged', 'mismatch'];
+const decisionRefusal = saved => (saved && NOT_SAVED.includes(saved.outcome)
+  ? { refuse: 'decision-not-saved', why: `the decision for ${saved.qid} was not saved (${saved.outcome})` } : null);
 function poisonGuardUpdate(doc, fixed) {
   const { prev, qid } = fixed.payload;
   const before = doc.pendingStaged || [];
   let { staged, saved } = withDecision(before, prev || null);
+  const stop = decisionRefusal(saved);
+  if (stop) return Object.assign(stop, { result: { saved, current: null } });
   let current = null;
   if (qid !== null && qid !== undefined) {
     const i = staged.findIndex(e => isPlain(e) && e.qid === qid);
@@ -457,6 +468,8 @@ function publicationUpdate(doc, fixed) {
   const qids = [...new Set(fixed.payload.qids)];
   const before = doc.pendingStaged || [];
   const { staged, saved } = withDecision(before, fixed.payload.prev || null);
+  const stop = decisionRefusal(saved);
+  if (stop) return Object.assign(stop, { result: { saved, published: [], notStaged: [], abandoned: [], undecided: [] } });
   const byQid = new Map(staged.filter(isPlain).map(e => [e.qid, e]));
   const notStaged = qids.filter(q => !byQid.has(q));
   const undecided = qids.filter(q => byQid.has(q) && byQid.get(q).decided === undefined);
@@ -476,6 +489,16 @@ function publicationUpdate(doc, fixed) {
   lb.stagedCount = next.pendingStaged.length;
   next.lastBackfill = lb;
   return { next, result };
+}
+// A decision that could not be saved, kept in lastBackfill as a count and up
+// to 10 examples {qid, outcome, at}, so a stopped batch can be diagnosed
+// after the run's own status has been overwritten. payload: {qid, outcome}.
+function decisionNotSavedUpdate(doc, fixed) {
+  const lb = Object.assign({}, isObjectish(doc.lastBackfill) ? doc.lastBackfill : {});
+  const p = isObjectish(lb.decisionNotSaved) ? lb.decisionNotSaved : {};
+  const ex = { qid: fixed.payload.qid, outcome: fixed.payload.outcome, at: fixed.at };
+  lb.decisionNotSaved = { count: (safeInt(p.count, 0) ? p.count : 0) + 1, examples: [ex, ...(Array.isArray(p.examples) ? p.examples : [])].slice(0, 10) };
+  return { next: Object.assign({}, doc, { lastBackfill: lb }), result: { fields: ['decisionNotSaved'] } };
 }
 // 3.3: "not-staged", a count and up to 10 examples.
 function notStagedNote(prev, qids) {
@@ -519,6 +542,6 @@ module.exports = {
   RESULT_SHAPES, untrustedWhy, docProblems, resetCounterOf, prunedResetThroughOf,
   expansionRefusal, expandUpdate, finalize, identityCase, issueQids, untaggedCounts,
   qidRemoval, legacyRemovalById, legacyRemovalByPair, resetUpdate, resetCancelUpdate,
-  activateUpdate, deactivateUpdate, progressUpdate, poisonGuardUpdate, publicationUpdate, DECISIONS,
+  activateUpdate, deactivateUpdate, progressUpdate, poisonGuardUpdate, publicationUpdate, DECISIONS, NOT_SAVED, decisionNotSavedUpdate,
   withUnmeasured, notStagedNote, withoutStagingFields,
 };

@@ -285,7 +285,11 @@ const stubs = {
       }
     });
 
-    await section('Q-T7 A BATCH THAT FINISHES AFTER A RESET publishes nothing and records "not-staged"', async () => {
+    // Since the second correction (25 Oct 2026, the auditor's targeted review)
+    // the batch does not finish quietly: its first unsaved decision STOPS it,
+    // with the reason recorded, and the run ends "failed". It still publishes
+    // nothing (3.3, Q-T7).
+    await section('Q-T7 A BATCH THAT FINISHES AFTER A RESET publishes nothing, STOPS, and records why', async () => {
       await fresh();
       let open; const gate = new Promise(r => { open = r; });
       market.behaviour.set(0, { gate });
@@ -296,11 +300,14 @@ const stubs = {
       // reset never waits behind it): straight through THE COMMIT.
       const rs = await ts.protect('reset', Q.resetUpdate, { acceptKinds: ['reset', 'reset-cancel'] });
       open();
-      await job;
+      const err = await job.then(() => null, e => e);
       const st = await h.doc();
       check('the reset committed while the batch was being measured; afterwards nothing was published, both lists are empty',
         rs.status === 'committed' && st.pending.length === 0 && st.pendingStaged.length === 0, { rs: rs.status, p: st.pending.length });
-      check('the batch\'s qids were noted "not-staged"', st.lastBackfill && st.lastBackfill.notStaged && st.lastBackfill.notStaged.count === 2, st.lastBackfill);
+      check('the batch STOPPED at its first unsaved decision, and market.starts shows the second trade was never measured', err && /not-staged/.test(err.message) && !market.starts.get(1), err && err.message);
+      check('the reason is recorded twice over: lastBackfill.decisionNotSaved ("not-staged") and the run\'s own "failed" status naming it',
+        st.lastBackfill.decisionNotSaved && st.lastBackfill.decisionNotSaved.count === 1 && st.lastBackfill.decisionNotSaved.examples[0].outcome === 'not-staged'
+        && st.lastBackfill.status === 'failed' && /not-staged/.test(st.lastBackfill.error), st.lastBackfill);
     });
 
     await section('I4 (the correction of 25 Oct 2026): NO MEASUREMENT ON A COUNT WHOSE OUTCOME IS UNKNOWN', async () => {

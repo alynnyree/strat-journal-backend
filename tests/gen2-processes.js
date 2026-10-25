@@ -13,7 +13,10 @@
 //              AT A TIME (the correction of 25 Oct 2026): a failing trade
 //              first, middle and last in a batch with healthy ones; a crash
 //              after a decision is saved but before publication (T2); and two
-//              broken copies (the pre-correction build, a forgetful guard)
+//              broken copies (the pre-correction build, a forgetful guard);
+//              a decision that cannot be saved (a reset or another process in
+//              the gap, a mismatch) stops the batch; one already saved by
+//              another process is kept and the batch goes on
 //   Q-T5 (a)-(d)   restarts: after staging; then a reset; two measurements of
 //              one item; a process ending at the publication's save
 //   Q-T23 (f)  a process ending at each point of a commit
@@ -180,7 +183,11 @@ const newestKind = cmd => { const d = JSON.parse(cmd[6]); const r = Object.value
         // A reset that committed AFTER the other change removes it on
         // purpose; one that committed BEFORE leaves the other nothing to do.
         const aOk = oa.status === 'committed' && (effect(ka, 1, d, n) || kb === 'reset');
-        const bOk = ['committed', 'unchanged'].includes(ob.status) && (effect(kb, 2, d, n) || (ka === 'reset' && ob.status === 'unchanged') || (ka === 'reset' && kb !== 'reset' && ob.status === 'committed'));
+        // A publication re-run after a reset finds its trade gone: since the
+        // second correction (25 Oct 2026) it REFUSES ("decision-not-saved")
+        // rather than quietly doing nothing.
+        const bOk = (['committed', 'unchanged'].includes(ob.status) && (effect(kb, 2, d, n) || (ka === 'reset' && ob.status === 'unchanged') || (ka === 'reset' && kb !== 'reset' && ob.status === 'committed')))
+          || (ka === 'reset' && kb === 'publication' && ob.status === 'refused' && ob.why === 'decision-not-saved');
         if (!(ra === 'COMMITTED' && rb === 'CONFLICT' && aOk && bOk)) problems.push({ pair: ka + ' then ' + kb, ra, rb, oa: oa.status, ob: ob.status });
       }
       check(`${n} ordered pairs: both read the same record first; the first saved, the second was refused, re-ran on the newer record, and BOTH changes are in it (unless a reset removed one on purpose)`, problems.length === 0, problems.slice(0, 5));
@@ -319,6 +326,106 @@ const newestKind = cmd => { const d = JSON.parse(cmd[6]); const r = Object.value
         && !d.lastBackfill.unmeasured, d.pending.map(e => [e.entryTimestamp, e.undEntry]));
     });
 
+    // A DECISION THAT CANNOT BE SAVED STOPS THE BATCH (the second correction
+    // of 25 Oct 2026, the auditor's targeted review). Two staged trades A, B,
+    // one batch; another process acts in the gap between A's measurement and
+    // the commit that would save it. Throughout, the waiting list is watched:
+    // it must never show A without B, or B without A.
+    const measuredBy = (c, i) => c.events.filter(e => e.event === 'measuring' && e.index === i).length;
+    const watchPartial = qids => { let bad = 0, stop = false; const run = (async () => { while (!stop) { const d = await doc(); const n = d.pending.filter(e => qids.includes(e.qid)).length; if (n && n !== qids.length) bad++; await sleep(2); } })(); return async () => { stop = true; await run; return bad; }; };
+    async function twoStaged(c) { await c.call({ cmd: 'protect', update: 'staging', payload: { fills: fillsFor(2, 0) } }); return (await doc()).pendingStaged; }
+
+    await section('DECISION NOT SAVED (a): a RESET between A\'s measurement and its save: the batch stops, nothing more measured, the reason kept', async () => {
+      await fresh();
+      const p1 = await child('P1'), p2 = await child('P2');
+      await p1.call({ cmd: 'init', url: p1.url }); await p2.call({ cmd: 'init', url: p2.url });
+      const entries = await twoStaged(p1);
+      const watch = watchPartial(entries.map(e => e.qid));
+      await p1.call({ cmd: 'market', behaviour: { 0: 'hang' } });
+      const job = p1.call({ cmd: 'batch', entries }).then(() => null, e => e);
+      await waitFor(async () => measuredBy(p1, 0) === 1);
+      await p2.call({ cmd: 'protect', update: 'reset', opts: { acceptKinds: ['reset', 'reset-cancel'] } });
+      await p2.call({ cmd: 'protect', update: 'staging', payload: { fills: fillsFor(1, 5) } });
+      await p1.call({ cmd: 'release' });
+      const err = await job;
+      const d = await doc();
+      check('P1 stopped: "the decision for A was not saved (not-staged)"', err && /stopped/.test(err.message) && err.message.includes(entries[0].qid) && /not-staged/.test(err.message), err && err.message);
+      check('P1 measured nothing after it: B never measured', measuredBy(p1, 1) === 0);
+      check('the trade staged after the reset is untouched (never counted), nothing published', d.pendingStaged.length === 1 && d.pendingStaged[0].stagedTries === 0 && d.pending.length === 0, d.pendingStaged);
+      check('the reason is kept: lastBackfill.decisionNotSaved names A, "not-staged"', d.lastBackfill && d.lastBackfill.decisionNotSaved && d.lastBackfill.decisionNotSaved.examples[0].qid === entries[0].qid && d.lastBackfill.decisionNotSaved.examples[0].outcome === 'not-staged', d.lastBackfill);
+      check('the waiting list never showed part of the batch', (await watch()) === 0);
+    });
+
+    await section('DECISION NOT SAVED (b): ANOTHER PROCESS publishes A (and B) in the gap: P1 stops; each trade published once, by the process that saved first', async () => {
+      await fresh();
+      const p1 = await child('P1'), p2 = await child('P2');
+      await p1.call({ cmd: 'init', url: p1.url }); await p2.call({ cmd: 'init', url: p2.url });
+      const entries = await twoStaged(p1);
+      const watch = watchPartial(entries.map(e => e.qid));
+      await p1.call({ cmd: 'market', behaviour: { 0: 'hang' }, price: 502 });
+      await p2.call({ cmd: 'market', behaviour: {}, price: 501 });
+      const job = p1.call({ cmd: 'batch', entries }).then(() => null, e => e);
+      await waitFor(async () => measuredBy(p1, 0) === 1);
+      await p2.call({ cmd: 'batch', entries });
+      await p1.call({ cmd: 'release' });
+      const err = await job;
+      const d = await doc();
+      check('P1 stopped: A\'s decision not saved (not-staged), and P1 never measured B', err && /not-staged/.test(err.message) && measuredBy(p1, 1) === 0, err && err.message);
+      check('A and B are published ONCE each, with P2\'s measurements; nothing staged', d.pending.length === 2 && d.pending.every(e => e.undEntry === 501) && d.pendingStaged.length === 0, d.pending.map(e => e.undEntry));
+      check('the reason is kept for A', d.lastBackfill.decisionNotSaved.examples[0].qid === entries[0].qid);
+      check('the waiting list never showed part of the batch', (await watch()) === 0);
+    });
+
+    await section('DECISION NOT SAVED (c): a decision that is NOT about the staged trade ("mismatch"): refused, the batch stops, the next run finishes it', async () => {
+      await fresh();
+      const p1 = await child('P1');
+      await p1.call({ cmd: 'init', url: p1.url });
+      await p1.call({ cmd: 'variant', name: 'mismatch-decision' });
+      const entries = await twoStaged(p1);
+      const before = await text();
+      let err = null;
+      try { await p1.call({ cmd: 'batch', entries }); } catch (e) { err = e; }
+      let d = await doc();
+      check('the guard REFUSED it: the batch stopped "mismatch", B never measured', err && /mismatch/.test(err.message) && measuredBy(p1, 0) === 1 && measuredBy(p1, 1) === 0, err && err.message);
+      check('nothing of the refused change was written: A counted once, undecided; B never counted; nothing published',
+        d.pendingStaged.map(e => [e.stagedTries, e.decided || null]).join('|') === '1,|0,' && d.pending.length === 0 && d.lastBackfill.decisionNotSaved.examples[0].outcome === 'mismatch', d.pendingStaged.map(e => [e.stagedTries, e.decided]));
+      void before;
+      const p2 = await child('P2');
+      await p2.call({ cmd: 'init', url: p2.url });
+      await p2.call({ cmd: 'publishStaged' });
+      d = await doc();
+      check('a correct process then measures and publishes both; nothing lost', d.pending.length === 2 && d.pending.every(e => e.undEntry === 500) && d.pendingStaged.length === 0);
+    });
+
+    await section('ALREADY DECIDED: two processes measured A; the FIRST saved decision is kept (never overwritten, never measured again) and the batch goes on', async () => {
+      await fresh();
+      const p1 = await child('P1'), p2 = await child('P2');
+      await p1.call({ cmd: 'init', url: p1.url }); await p2.call({ cmd: 'init', url: p2.url });
+      const entries = await twoStaged(p1);
+      const watch = watchPartial(entries.map(e => e.qid));
+      await p1.call({ cmd: 'market', behaviour: { 0: 'hang' }, price: 502 });
+      await p2.call({ cmd: 'market', behaviour: { 0: 'hang', 1: 'hang' }, price: 501 });
+      const j1 = p1.call({ cmd: 'batch', entries }).then(() => null, e => e);
+      await waitFor(async () => measuredBy(p1, 0) === 1);
+      const j2 = p2.call({ cmd: 'batch', entries }).then(() => null, e => e);
+      await waitFor(async () => measuredBy(p2, 0) === 1);
+      await p2.call({ cmd: 'release' });                               // P2 saves A (501), counts B, hangs on B
+      await waitFor(async () => measuredBy(p2, 1) === 1);
+      let d = await doc();
+      check('set-up: P2 saved its decision for A first', d.pendingStaged[0].decided === 'result' && d.pendingStaged[0].undEntry === 501);
+      await p1.call({ cmd: 'release' });                               // P1 hands in its own A (502)
+      const e1 = await j1;
+      d = await doc();
+      check('P1 was told "already-decided" and CARRIED ON: it measured B and published the batch', e1 === null && measuredBy(p1, 1) === 1 && d.pending.length === 2, e1 && e1.message);
+      check('A was published with P2\'s decision (501): the first saved decision was not overwritten by P1\'s (502)', d.pending.find(e => e.qid === entries[0].qid).undEntry === 501);
+      check('B was published with P1\'s measurement; nothing staged', d.pending.find(e => e.qid === entries[1].qid).undEntry === 502 && d.pendingStaged.length === 0);
+      await p2.call({ cmd: 'release' });
+      const e2 = await j2;
+      d = await doc();
+      check('P2, finishing B late, stopped (B already published, "not-staged"); nothing published twice', e2 && /not-staged/.test(e2.message) && d.pending.length === 2, e2 && e2.message);
+      check('the waiting list never showed part of the batch', (await watch()) === 0);
+    });
+
     await section('Q-T14 (f) BROKEN COPIES: each must be CAUGHT by the mixed-batch check', async () => {
       const PRE = olderBuild(PRE_CORRECTION);
       const r1 = await poisonRuns(1, { build: PRE });
@@ -391,10 +498,14 @@ const newestKind = cmd => { const d = JSON.parse(cmd[6]); const r = Object.value
         await waitFor(() => slow.events.some(e => e.event === 'measuring'));
         await quick.call({ cmd: 'batch', entries });
         await slow.call({ cmd: 'release' });
-        await ps;
+        const late = await ps.then(() => null, e => e);
         const d = await doc();
-        check(`${firstPublisher === 'B' ? 'the resume publishes first, the slow call second' : 'the slow call publishes first, the resume second'}: exactly ONE entry for the qid; the second write noted "not-staged" and changed nothing else`,
-          d.pending.filter(e => e.qid === entries[0].qid).length === 1 && d.pendingStaged.length === 0 && d.lastBackfill.notStaged && d.lastBackfill.notStaged.count === 1);
+        // Since the second correction (25 Oct 2026) the late batch, whose own
+        // decision can no longer be saved (its trade was published), STOPS and
+        // records why, instead of finishing quietly as "not-staged".
+        check(`${firstPublisher === 'B' ? 'the resume publishes first, the slow call second' : 'the slow call publishes first, the resume second'}: exactly ONE entry for the qid; the late batch STOPPED ("not-staged"), recorded its reason, and changed nothing else`,
+          d.pending.filter(e => e.qid === entries[0].qid).length === 1 && d.pendingStaged.length === 0 && late && /not-staged/.test(late.message)
+          && d.lastBackfill.decisionNotSaved && d.lastBackfill.decisionNotSaved.count === 1 && d.lastBackfill.decisionNotSaved.examples[0].qid === entries[0].qid, late && late.message);
         await killAll();
       }
     });

@@ -796,12 +796,29 @@ function enrichOne(token, staged) {
 // A guard or publication that does not go through throws: the trades stay
 // staged with their decisions so far, and the resume takes them again (3.6),
 // without measuring or counting a decided one again (I3).
+// EVERY decision handed to a commit is checked for having been SAVED (the
+// second correction, 25 Oct 2026): "saved" or "already-decided" (another
+// process saved one first; that one is kept and published) may continue.
+// Anything else stops the batch with nothing more measured, after a note in
+// lastBackfill.decisionNotSaved naming the trade and why; the run then ends
+// "failed" with the same reason. Decisions already saved stay staged and are
+// published by the next run without being measured again.
+const DECISION_KEPT = ['saved', 'already-decided'];
+async function stopOnUnsavedDecision(prev, out) {
+  const saved = out.result && out.result.saved;
+  if (out.status === 'refused' || !saved || saved.qid !== prev.qid || !DECISION_KEPT.includes(saved.outcome)) {
+    const outcome = (saved && saved.qid === prev.qid && saved.outcome) || (out.status === 'refused' ? out.why : 'no answer about it');
+    await noteBackfillProgress({ qid: prev.qid, outcome }, Q.decisionNotSavedUpdate);
+    throw new Error(`the batch stopped: the decision for ${prev.qid} was not saved (${outcome})`);
+  }
+}
 async function runStagedBatch(token, entries) {
   const guards = [];
   const waits = [];
   let prev = null;
   for (const e of entries) {
     const guard = await tradeStore.protect('poison-guard', Q.poisonGuardUpdate, { payload: { prev, qid: e.qid } });
+    if (prev && (SAVED.includes(guard.status) || guard.status === 'refused')) await stopOnUnsavedDecision(prev, guard);
     if (!SAVED.includes(guard.status)) throw new Error(`this trade's start could not be counted (${guard.status}${guard.why ? ': ' + guard.why : ''})`);
     guards.push(guard);
     prev = null;
@@ -812,6 +829,7 @@ async function runStagedBatch(token, entries) {
     prev = { qid: e.qid, decided: r.decision, trade: r.decision === 'timed-out' ? structuredClone(e) : r.trade };
   }
   const pub = await tradeStore.protect('publication', Q.publicationUpdate, { payload: { prev, qids: entries.map(e => e.qid) } });
+  if (prev && (SAVED.includes(pub.status) || pub.status === 'refused')) await stopOnUnsavedDecision(prev, pub);
   if (!SAVED.includes(pub.status)) throw new Error(`the batch could not be published (${pub.status}${pub.why ? ': ' + pub.why : ''})`);
   // 3.3: a qid no longer staged publishes nothing and is noted once. When
   // NOTHING in the batch was still staged, nothing was saved, so the note is
