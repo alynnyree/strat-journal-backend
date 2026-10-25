@@ -270,7 +270,13 @@ const verb = c => String(c[0]).toLowerCase();
           const outcomes = [];
           let raisedAt = -1, afterRaise = null, n = 0, stop = false;
           const saver = (async () => {
-            while (!stop && n < 400) { n++; outcomes.push({ n, r: await saveOnce(n), afterConfirmed: raisedAt >= 0 }); }
+            // "After the raise" is judged when the save STARTS: a save sent
+            // before the raise was confirmed may land before it (allowed by
+            // Q-T24 (b)) and only answer after it. Judging it on its answer,
+            // as this did until 25 Oct 2026, now and then counted such a save
+            // as landing after the raise (1 run in 7 locally). The record's
+            // own re-read below ("unchanged") is the check on the store.
+            while (!stop && n < 400) { n++; const startedAfter = raisedAt >= 0; outcomes.push({ n, r: await saveOnce(n), afterConfirmed: startedAfter }); }
           })();
           await new Promise(r => setTimeout(r, 40));
           await direct.call('SET', KEYS[1], '2');     // THE RAISE, by "another process"
