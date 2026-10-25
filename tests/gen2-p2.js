@@ -11,6 +11,8 @@
 //   Q-T6   the per-trade wait limit with a CONTROLLED timer: (a)-(h), and the
 //          broken copies of (e).
 //   Q-T7   a batch that finishes after a reset publishes nothing.
+//   I4     (the poison-guard correction of 25 Oct 2026) no measurement starts
+//          on a count whose outcome is unknown.
 //   Q-T2, Q-T3  CHARACTERISATION of the harm on the REAL generation-1 build
 //          (eb3880b, which still queues before measuring), then the same
 //          scenario on generation 2: nothing lost.
@@ -299,6 +301,42 @@ const stubs = {
       check('the reset committed while the batch was being measured; afterwards nothing was published, both lists are empty',
         rs.status === 'committed' && st.pending.length === 0 && st.pendingStaged.length === 0, { rs: rs.status, p: st.pending.length });
       check('the batch\'s qids were noted "not-staged"', st.lastBackfill && st.lastBackfill.notStaged && st.lastBackfill.notStaged.count === 2, st.lastBackfill);
+    });
+
+    await section('I4 (the correction of 25 Oct 2026): NO MEASUREMENT ON A COUNT WHOSE OUTCOME IS UNKNOWN', async () => {
+      // (1) The counting commit lands but its answer is lost; the save resolves
+      // it ("recovered") and only THEN may the measurement start.
+      await fresh();
+      let st = await ts.protect('staging', cron.stagingUpdate(fillsFor(2, 70)));
+      const entries = st.out.staged;
+      const seq = [];
+      let dropped = false;
+      const orig = market.price;
+      market.price = async t => { if (((t - T0) / 60000) % 10 === 0) seq.push('measuring ' + indexOfTs(t)); return orig(t); };
+      shim.hooks.before = async cmd => { if (dropped && h.scriptOf(cmd) === 'RESOLUTION_READ') seq.push('resolution read'); };
+      shim.hooks.after = async (cmd, reply) => { if (!dropped && h.scriptOf(cmd) === 'COMMIT' && reply === 'COMMITTED' && newKind(cmd) === 'poison-guard') { dropped = true; seq.push('count landed, answer lost'); return { drop: true }; } };
+      const r = await cron.runStagedBatch('tok', entries);
+      let d = await h.doc();
+      check('a lost answer to the count: resolved as "recovered" BEFORE the trade\'s measurement started', r.guards[0].status === 'recovered'
+        && seq.indexOf('count landed, answer lost') < seq.indexOf('resolution read') && seq.indexOf('resolution read') < seq.indexOf('measuring 70'), seq);
+      check('and the trade was counted ONCE and measured ONCE; both published measured', market.starts.get(70) === 1 && market.starts.get(71) === 1 && d.pending.filter(measured).length === 2 && !d.pendingStaged.length, { starts: [...market.starts], seq });
+      // (2) The answer is lost and the outcome CANNOT be resolved (every read
+      // refused): "outcome-unknown", so the batch stops and nothing is measured.
+      await fresh();
+      st = await ts.protect('staging', cron.stagingUpdate(fillsFor(2, 72)));
+      dropped = false;
+      shim.hooks.before = async cmd => (dropped && h.scriptOf(cmd) === 'RESOLUTION_READ' ? { error: 'stand-in: this read is refused' } : undefined);
+      shim.hooks.after = async (cmd, reply) => { if (!dropped && h.scriptOf(cmd) === 'COMMIT' && reply === 'COMMITTED' && newKind(cmd) === 'poison-guard') { dropped = true; return { drop: true }; } };
+      let err = null;
+      try { await cron.runStagedBatch('tok', st.out.staged); } catch (e) { err = e; }
+      check('an outcome that cannot be resolved: the batch stops ("outcome-unknown") and the trade is NOT measured', err && /outcome-unknown/.test(err.message) && !market.starts.get(72) && !market.starts.get(73), { err: err && err.message, starts: [...market.starts] });
+      shim.hooks = {};
+      d = await h.doc();
+      check('the count had in fact landed (stagedTries 1), and nothing is visible', d.pendingStaged.find(e => e.entryTimestamp === T0 + 72 * 600000).stagedTries === 1 && d.pending.length === 0);
+      await cron.publishStaged('tok', null);
+      d = await h.doc();
+      check('the resume counts it again (the bounded cost of QR-12) and measures it once; both published measured', market.starts.get(72) === 1 && d.pending.filter(measured).length === 2 && !d.pendingStaged.length, [...market.starts]);
+      market.price = orig;
     });
 
     await section('Q-T2, Q-T3 CHARACTERISATION on the REAL generation-1 build, then the same with P2 and P1', async () => {

@@ -171,7 +171,7 @@ const stubs = {
       const f = (id, kind, m) => { const t = Date.parse('2026-10-20T14:00:00Z') + m * 60000; const dd = new Date(t); return { transactionId: id, accountRef: 'acct-x', occ: OCC, ticker: 'SPY', putCall: 'CALL', instruction: kind === 'open' ? 'BUY_TO_OPEN' : 'SELL_TO_CLOSE', price: 1, quantity: 1, fees: 0.66, date: dd.toISOString().slice(0, 10), time: dd.toISOString().slice(11, 16), timestamp: t }; };
       const st = await ts.protect('staging', cron.stagingUpdate([f('71001', 'open', 0), f('71002', 'close', 5)]));
       const staged = st.out.staged[0];
-      const pub = await ts.protect('publication', Q.publicationUpdate, { payload: { items: [{ qid: staged.qid, trade: staged, unmeasured: null }] } });
+      const pub = await ts.protect('publication', Q.publicationUpdate, { payload: { prev: { qid: staged.qid, decided: 'result', trade: staged }, qids: [staged.qid] } });
       const r = await del(staged.id, { fills: staged.fills.join(','), qid: staged.qid });
       check('a staged item stages WITH a qid, publishes under it, and is removed by that exact qid', st.status === 'committed' && Q.isQid(staged.qid) && pub.status === 'committed' && r.body.reason === 'removed');
       const land = await ts.protect('sync-landing', cron.syncLandingUpdate({ fills: [f('72001', 'open', 0), f('72002', 'close', 5)], report: {}, syncNote: null, enriched: new Map(), cutoverIso: '2026-10-01T00:00:00.000Z', cutoverMs: Date.parse('2026-10-01'), nowIso: new Date().toISOString() }));

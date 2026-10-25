@@ -336,8 +336,8 @@ setTimeout(() => { console.log('FAIL: this check stalled'); process.exit(1); }, 
     const landOne = async () => { const r = await ts.protect('sync-landing', landingFn([fill('92001', 'open', 0), fill('92002', 'close', 5)])); return r.out.landed[0]; };
     const KINDS = {
       staging: { prep: async () => ({}), run: () => ['staging', cron.stagingUpdate([fill('93001', 'open', 0), fill('93002', 'close', 5)]), {}], effect: d => d.pendingStaged.length === 1 && d.queueSeq === 1 && d.lastProcessedIds.includes('93002') },
-      publication: { prep: async () => ({ e: await stageOne() }), run: c => ['publication', Q.publicationUpdate, { payload: { items: [{ qid: c.e.qid, trade: { ...c.e, measured: 1 }, unmeasured: null }] } }], effect: d => d.pending.filter(e => e.measured === 1).length === 1 && d.pendingStaged.length === 0 },
-      'poison-guard': { prep: async () => ({ e: await stageOne() }), run: c => ['poison-guard', Q.poisonGuardUpdate, { payload: { qids: [c.e.qid] } }], effect: d => d.pendingStaged[0].stagedTries === 1 },
+      publication: { prep: async () => ({ e: await stageOne() }), run: c => ['publication', Q.publicationUpdate, { payload: { prev: { qid: c.e.qid, decided: 'result', trade: { ...c.e, measured: 1 } }, qids: [c.e.qid] } }], effect: d => d.pending.filter(e => e.measured === 1).length === 1 && d.pendingStaged.length === 0 },
+      'poison-guard': { prep: async () => ({ e: await stageOne() }), run: c => ['poison-guard', Q.poisonGuardUpdate, { payload: { prev: null, qid: c.e.qid } }], effect: d => d.pendingStaged[0].stagedTries === 1 },
       'qid-removal': { prep: async () => ({ e: await landOne() }), run: c => ['qid-removal', Q.qidRemoval, { payload: { id: c.e.id, pair: c.e.fills, qid: c.e.qid } }], effect: d => d.pending.length === 1 },
       'legacy-removal': { prep: async () => ({}), run: () => ['legacy-removal', Q.legacyRemovalById, { payload: { id: 'W1' } }], effect: d => d.pending.length === 0 },
       reset: { prep: async () => ({ e: await landOne() }), run: () => ['reset', Q.resetUpdate, { acceptKinds: ['reset', 'reset-cancel'] }], effect: d => d.resetCounter === 1 && d.pending.length === 0 },

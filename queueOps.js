@@ -74,14 +74,18 @@ const idQidList = a => Array.isArray(a) && a.every(x => exactKeys(x, ['id', 'qid
 
 // ---- 5.5 (1a) "result has the shape its kind defines". One rule per kind.
 // A record whose result does not have its kind's exact shape is UNTRUSTED.
+const savedShape = s => s === null || (exactKeys(s, ['qid', 'outcome']) && typeof s.qid === 'string'
+  && ['saved', 'already-decided', 'not-staged', 'mismatch'].includes(s.outcome));
 const RESULT_SHAPES = {
   expand: r => exactKeys(r, ['added', 'unknownFields']) && canonicalJson(r.added) === canonicalJson(NEW_NAMES) && strList(r.unknownFields),
   staging: r => exactKeys(r, ['staged', 'fillsProcessed']) && idQidList(r.staged) && safeInt(r.fillsProcessed, 0),
   'sync-landing': r => exactKeys(r, ['landed', 'fillsProcessed']) && idQidList(r.landed) && safeInt(r.fillsProcessed, 0),
-  publication: r => exactKeys(r, ['published', 'notStaged', 'abandoned']) && strList(r.published) && strList(r.notStaged) && strList(r.abandoned),
-  'poison-guard': r => exactKeys(r, ['items']) && Array.isArray(r.items) && r.items.every(i =>
-    exactKeys(i, ['qid', 'outcome', 'stagedTries']) && typeof i.qid === 'string'
-    && ['counted', 'abandoned', 'skipped'].includes(i.outcome) && (i.stagedTries === null || safeInt(i.stagedTries, 0))),
+  publication: r => exactKeys(r, ['saved', 'published', 'notStaged', 'abandoned', 'undecided']) && savedShape(r.saved)
+    && strList(r.published) && strList(r.notStaged) && strList(r.abandoned) && strList(r.undecided),
+  'poison-guard': r => exactKeys(r, ['saved', 'current']) && savedShape(r.saved) && (r.current === null || (
+    exactKeys(r.current, ['qid', 'outcome', 'stagedTries']) && typeof r.current.qid === 'string'
+    && ['counted', 'abandoned', 'already-decided', 'skipped'].includes(r.current.outcome)
+    && (r.current.stagedTries === null || safeInt(r.current.stagedTries, 0)))),
   'qid-removal': r => exactKeys(r, ['status', 'reason', 'removedQid']) && r.status === 200 && r.reason === 'removed' && isQid(r.removedQid),
   'legacy-removal': r => exactKeys(r, ['status', 'removed']) && r.status === 200 && safeInt(r.removed, 1),
   reset: r => exactKeys(r, ['emptied', 'resetSeq']) && exactKeys(r.emptied, ['pending', 'pendingStaged', 'openLegs', 'lastProcessedIds'])
@@ -373,38 +377,64 @@ function progressUpdate(doc, fixed) {
     result: { fields: Object.keys(patch) } };
 }
 
-// 3.11 THE POISON GUARD, before a batch's enrichment starts. `qids` is the
-// batch. An item tried twice already is published unmeasured ("abandoned")
-// in this same write; every other item still staged has stagedTries + 1.
-function poisonGuardUpdate(doc, fixed) {
-  const qids = fixed.payload.qids;
-  const staged = doc.pendingStaged || [];
-  const byQid = new Map(staged.filter(isPlain).map(e => [e.qid, e]));
-  const items = [];
-  const abandon = new Set(), count = new Map();
-  for (const q of qids) {
-    const e = byQid.get(q);
-    if (!e) { items.push({ qid: q, outcome: 'skipped', stagedTries: null }); continue; }
-    const tries = safeInt(e.stagedTries, 0) ? e.stagedTries : 0;
-    if (tries >= 2) { abandon.add(q); items.push({ qid: q, outcome: 'abandoned', stagedTries: tries }); continue; }
-    count.set(q, tries + 1); items.push({ qid: q, outcome: 'counted', stagedTries: tries + 1 });
-  }
-  if (!abandon.size && !count.size) return { next: null, result: { items } };
-  const nextStaged = [];
-  const published = [];
-  for (const e of staged) {
-    if (isPlain(e) && abandon.has(e.qid)) { published.push(withoutStagingFields(e)); continue; }
-    if (isPlain(e) && count.has(e.qid)) { nextStaged.push(Object.assign({}, e, { stagedTries: count.get(e.qid) })); continue; }
-    nextStaged.push(e);
-  }
-  const next = Object.assign({}, doc, { pendingStaged: nextStaged });
-  if (published.length) {
-    next.pending = [...published, ...(doc.pending || [])];
-    next.lastBackfill = withUnmeasured(doc.lastBackfill, published.map(e => ({ qid: e.qid, id: e.id, reason: 'abandoned' })));
-  }
-  return { next, result: { items } };
+// 3.11 THE POISON GUARD, ONE TRADE AT A TIME (the correction of 25 Oct 2026,
+// accepted by the auditor; it replaces the batch-wide count, which counted a
+// start against EVERY trade of a batch before any was measured, so one trade
+// that ended the process had its healthy batch-mates abandoned too).
+// One commit per trade, on the latest document, does two things:
+//   (a) saves the PREVIOUS trade's single decision (3.7) into its own staged
+//       entry -- only if that qid is still staged (I1), and never over a
+//       decision already saved (I2);
+//   (b) applies 3.11 (1)-(3) to THIS trade only: not staged, skipped (I5);
+//       already decided, neither counted nor measured again (I3); tried twice,
+//       decided "abandoned"; otherwise stagedTries + 1, and its measurement
+//       may start only once this commit is confirmed (I4, in cron.js).
+// So a trade's count rises only when its OWN measurement starts, and the
+// bound of two starts per trade holds. Nothing is published here: the batch
+// is published together (publicationUpdate), from the document.
+// payload: {prev: null | {qid, decided, trade}, qid: string | null}.
+const DECISIONS = ['result', 'failed', 'invalid-reading', 'timed-out', 'abandoned'];
+function withDecision(staged, prev) {
+  if (!prev) return { staged, saved: null };
+  if (!DECISIONS.includes(prev.decided) || prev.decided === 'abandoned' || !isPlain(prev.trade)) throw new Error('not a measurement decision');
+  const i = staged.findIndex(e => isPlain(e) && e.qid === prev.qid);
+  if (i < 0) return { staged, saved: { qid: prev.qid, outcome: 'not-staged' } };
+  const e = staged[i];
+  if (e.decided !== undefined) return { staged, saved: { qid: prev.qid, outcome: 'already-decided' } };
+  // The decision must be about THIS staged trade (its id and its fill pair).
+  if (prev.trade.id !== e.id || canonicalJson(prev.trade.fills) !== canonicalJson(e.fills)) return { staged, saved: { qid: prev.qid, outcome: 'mismatch' } };
+  const entry = withoutStagingFields(prev.trade);
+  entry.qid = e.qid;
+  if (e.stagedAt !== undefined) entry.stagedAt = e.stagedAt;
+  if (e.stagedTries !== undefined) entry.stagedTries = e.stagedTries;
+  entry.decided = prev.decided;
+  const next = staged.slice(); next[i] = entry;
+  return { staged: next, saved: { qid: prev.qid, outcome: 'saved' } };
 }
-const withoutStagingFields = e => { const o = Object.assign({}, e); delete o.stagedAt; delete o.stagedTries; return o; };
+function poisonGuardUpdate(doc, fixed) {
+  const { prev, qid } = fixed.payload;
+  const before = doc.pendingStaged || [];
+  let { staged, saved } = withDecision(before, prev || null);
+  let current = null;
+  if (qid !== null && qid !== undefined) {
+    const i = staged.findIndex(e => isPlain(e) && e.qid === qid);
+    if (i < 0) current = { qid, outcome: 'skipped', stagedTries: null };
+    else {
+      const e = staged[i];
+      const tries = safeInt(e.stagedTries, 0) ? e.stagedTries : 0;
+      if (e.decided !== undefined) current = { qid, outcome: 'already-decided', stagedTries: tries };
+      else {
+        const next = staged.slice();
+        if (tries >= 2) { next[i] = Object.assign({}, e, { decided: 'abandoned' }); current = { qid, outcome: 'abandoned', stagedTries: tries }; }
+        else { next[i] = Object.assign({}, e, { stagedTries: tries + 1 }); current = { qid, outcome: 'counted', stagedTries: tries + 1 }; }
+        staged = next;
+      }
+    }
+  }
+  if (staged === before) return { next: null, result: { saved, current } };
+  return { next: Object.assign({}, doc, { pendingStaged: staged }), result: { saved, current } };
+}
+const withoutStagingFields = e => { const o = Object.assign({}, e); delete o.stagedAt; delete o.stagedTries; delete o.decided; return o; };
 // 3.5: lastBackfill.unmeasured, a count per reason and up to 10 examples.
 function withUnmeasured(lastBackfill, list) {
   const lb = Object.assign({}, isObjectish(lastBackfill) ? lastBackfill : {});
@@ -416,24 +446,28 @@ function withUnmeasured(lastBackfill, list) {
   return lb;
 }
 
-// 3.3 PUBLICATION, matched by qid ONLY. `items` is
-// [{qid, trade, unmeasured: null | 'failed' | 'invalid-reading' | 'timed-out'}],
-// each trade being the copy to publish (enriched, or as staged when
-// unmeasured). A qid no longer staged publishes NOTHING ("not-staged").
+// 3.3 PUBLICATION, matched by qid ONLY, the whole batch together. It first
+// saves the batch's LAST decision exactly as the guard saves the others
+// (withDecision: I1, I2), then publishes every trade of `qids` that is still
+// staged AND carries a saved decision -- the copy published is the one in the
+// DOCUMENT, never one held in memory (I5). A qid no longer staged publishes
+// nothing ("not-staged"); a staged one with no decision stays staged
+// ("undecided"). payload: {prev: null | {qid, decided, trade}, qids}.
 function publicationUpdate(doc, fixed) {
-  const items = fixed.payload.items;
-  const staged = doc.pendingStaged || [];
-  const stagedQids = new Set(staged.filter(isPlain).map(e => e.qid));
-  const publish = [], notStaged = [], unmeasured = [];
-  for (const it of items) {
-    if (!stagedQids.has(it.qid)) { notStaged.push(it.qid); continue; }
-    publish.push(Object.assign(withoutStagingFields(it.trade), { qid: it.qid }));
-    if (it.unmeasured) unmeasured.push({ qid: it.qid, id: it.trade.id, reason: it.unmeasured });
-  }
-  if (!publish.length) return { next: null, result: { published: [], notStaged, abandoned: [] } };
-  const pubSet = new Set(publish.map(e => e.qid));
+  const qids = [...new Set(fixed.payload.qids)];
+  const before = doc.pendingStaged || [];
+  const { staged, saved } = withDecision(before, fixed.payload.prev || null);
+  const byQid = new Map(staged.filter(isPlain).map(e => [e.qid, e]));
+  const notStaged = qids.filter(q => !byQid.has(q));
+  const undecided = qids.filter(q => byQid.has(q) && byQid.get(q).decided === undefined);
+  const go = qids.filter(q => byQid.has(q) && byQid.get(q).decided !== undefined);
+  const result = { saved, published: go, notStaged, abandoned: go.filter(q => byQid.get(q).decided === 'abandoned'), undecided };
+  if (!go.length) return { next: staged === before ? null : Object.assign({}, doc, { pendingStaged: staged }), result };
+  const goSet = new Set(go);
+  const publish = go.map(q => withoutStagingFields(byQid.get(q)));
+  const unmeasured = go.filter(q => byQid.get(q).decided !== 'result').map(q => ({ qid: q, id: byQid.get(q).id, reason: byQid.get(q).decided }));
   const next = Object.assign({}, doc, {
-    pendingStaged: staged.filter(e => !(isPlain(e) && pubSet.has(e.qid))),
+    pendingStaged: staged.filter(e => !(isPlain(e) && goSet.has(e.qid))),
     pending: [...publish, ...(doc.pending || [])],
   });
   let lb = Object.assign({}, isObjectish(doc.lastBackfill) ? doc.lastBackfill : {});
@@ -441,7 +475,7 @@ function publicationUpdate(doc, fixed) {
   if (notStaged.length) lb.notStaged = notStagedNote(lb.notStaged, notStaged);
   lb.stagedCount = next.pendingStaged.length;
   next.lastBackfill = lb;
-  return { next, result: { published: publish.map(e => e.qid), notStaged, abandoned: [] } };
+  return { next, result };
 }
 // 3.3: "not-staged", a count and up to 10 examples.
 function notStagedNote(prev, qids) {
@@ -485,6 +519,6 @@ module.exports = {
   RESULT_SHAPES, untrustedWhy, docProblems, resetCounterOf, prunedResetThroughOf,
   expansionRefusal, expandUpdate, finalize, identityCase, issueQids, untaggedCounts,
   qidRemoval, legacyRemovalById, legacyRemovalByPair, resetUpdate, resetCancelUpdate,
-  activateUpdate, deactivateUpdate, progressUpdate, poisonGuardUpdate, publicationUpdate,
+  activateUpdate, deactivateUpdate, progressUpdate, poisonGuardUpdate, publicationUpdate, DECISIONS,
   withUnmeasured, notStagedNote, withoutStagingFields,
 };

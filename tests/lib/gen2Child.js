@@ -11,6 +11,9 @@
 const Module = require('module');
 const path = require('path');
 const BACKEND = path.join(__dirname, '..', '..');
+// The build to run: this checkout, or (for a broken-copy control) an earlier
+// build written out of history by tests/lib/olderBuild.js.
+const BUILD = process.argv[2] || BACKEND;
 
 const market = { behaviour: {}, hung: [] };
 const schwab = { answers: [] };
@@ -67,11 +70,21 @@ async function handle(m) {
       process.env.UPSTASH_REDIS_REST_URL = m.url;
       process.env.UPSTASH_REDIS_REST_TOKEN = 'stand-in-token';
       process.env.UPSTASH_DISABLE_TELEMETRY = '1';
-      ts = require(path.join(BACKEND, 'tradeStore.js'));
-      Q = require(path.join(BACKEND, 'queueOps.js'));
-      cron = require(path.join(BACKEND, 'cron.js'));
+      ts = require(path.join(BUILD, 'tradeStore.js'));
+      Q = require(path.join(BUILD, 'queueOps.js'));
+      cron = require(path.join(BUILD, 'cron.js'));
       return m.start === false ? { started: false } : ts.startGeneration2({ pauseMs: 0 });
     case 'market': market.behaviour = m.behaviour; return true;
+    // BROKEN-COPY CONTROL (Q-T14 (f)): a guard that FORGETS saved decisions --
+    // it is shown every staged trade as undecided, so a trade measured before
+    // a crash is counted and measured again. cron.js reads Q.poisonGuardUpdate
+    // at each call, so replacing it here reaches the real batch code.
+    case 'variant': {
+      if (m.name !== 'forget-decisions') throw new Error('unknown variant ' + m.name);
+      const real = Q.poisonGuardUpdate;
+      Q.poisonGuardUpdate = (doc, fx) => real(Object.assign({}, doc, { pendingStaged: (doc.pendingStaged || []).map(e => { const o = Object.assign({}, e); delete o.decided; return o; }) }), fx);
+      return true;
+    }
     case 'release': market.hung.splice(0).forEach(r => r()); return true;
     case 'schwab': schwab.answers.push(m.fills); return true;
     case 'start': return ts.startGeneration2({ pauseMs: 0 });

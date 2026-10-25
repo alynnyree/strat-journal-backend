@@ -785,27 +785,33 @@ function enrichOne(token, staged) {
   });
 }
 
-// ONE BATCH of staged trades: the poison guard (3.11), then each counted
-// trade's enrichment under the wait limit (3.7), then ONE publication (3.3).
+// ONE BATCH of staged trades (3.11 as corrected on 25 Oct 2026; the
+// auditor's accepted correction plan): for each trade in turn, ONE guard
+// commit saves the previous trade's decision and counts THIS trade only; its
+// measurement (3.7, one decision) starts only after that commit is confirmed
+// (I4: "committed", "unchanged" or "recovered" -- an outcome still unknown
+// throws, so nothing is measured on a count that may not exist). Then ONE
+// publication saves the last decision and publishes every decided trade of
+// the batch together, from the document (3.3).
 // A guard or publication that does not go through throws: the trades stay
-// staged and the run ends as failed, so the resume takes them again (5.6).
+// staged with their decisions so far, and the resume takes them again (3.6),
+// without measuring or counting a decided one again (I3).
 async function runStagedBatch(token, entries) {
-  const qids = entries.map(e => e.qid);
-  const guard = await tradeStore.protect('poison-guard', Q.poisonGuardUpdate, { payload: { qids } });
-  if (!SAVED.includes(guard.status)) throw new Error(`the batch's start could not be counted (${guard.status}${guard.why ? ': ' + guard.why : ''})`);
-  const outcome = new Map((guard.result && guard.result.items || []).map(i => [i.qid, i.outcome]));
-  const items = [];
+  const guards = [];
   const waits = [];
+  let prev = null;
   for (const e of entries) {
-    if (outcome.get(e.qid) !== 'counted') continue;   // skipped, or already published "abandoned"
+    const guard = await tradeStore.protect('poison-guard', Q.poisonGuardUpdate, { payload: { prev, qid: e.qid } });
+    if (!SAVED.includes(guard.status)) throw new Error(`this trade's start could not be counted (${guard.status}${guard.why ? ': ' + guard.why : ''})`);
+    guards.push(guard);
+    prev = null;
+    const cur = guard.result && guard.result.current;
+    if (!cur || cur.outcome !== 'counted') continue;   // skipped, already decided, or decided "abandoned"
     const r = await enrichOne(token, e);
     waits.push({ qid: e.qid, decision: r.decision, waitedMs: r.waitedMs });
-    if (r.decision === 'result') items.push({ qid: e.qid, trade: r.trade, unmeasured: null });
-    else if (r.decision === 'failed') items.push({ qid: e.qid, trade: r.trade, unmeasured: 'failed' });
-    else items.push({ qid: e.qid, trade: structuredClone(e), unmeasured: 'timed-out' });
+    prev = { qid: e.qid, decided: r.decision, trade: r.decision === 'timed-out' ? structuredClone(e) : r.trade };
   }
-  if (!items.length) return { guard, publication: null, waits };
-  const pub = await tradeStore.protect('publication', Q.publicationUpdate, { payload: { items } });
+  const pub = await tradeStore.protect('publication', Q.publicationUpdate, { payload: { prev, qids: entries.map(e => e.qid) } });
   if (!SAVED.includes(pub.status)) throw new Error(`the batch could not be published (${pub.status}${pub.why ? ': ' + pub.why : ''})`);
   // 3.3: a qid no longer staged publishes nothing and is noted once. When
   // NOTHING in the batch was still staged, nothing was saved, so the note is
@@ -817,7 +823,7 @@ async function runStagedBatch(token, entries) {
       return { next: Object.assign({}, doc, { lastBackfill: lb }), result: { fields: ['notStaged'] } };
     });
   }
-  return { guard, publication: pub, waits };
+  return { guard: guards[guards.length - 1] || null, guards, publication: pub, waits };
 }
 
 // 3.6: take the trades left in staging, in batches. `first`, when given, is

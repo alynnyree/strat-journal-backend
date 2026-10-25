@@ -9,7 +9,11 @@
 //              protected save (counted at the store's door)
 //   Q-T20 (a)  2 x 1,000 log calls at once; (e) a process that ends between
 //              exhaustion and its log call; (f) the two-command broken copy
-//   Q-T14 (a)-(d)  the poison guard across real process exits
+//   Q-T14 (a)-(d), (f)  the poison guard across real process exits, ONE TRADE
+//              AT A TIME (the correction of 25 Oct 2026): a failing trade
+//              first, middle and last in a batch with healthy ones; a crash
+//              after a decision is saved but before publication (T2); and two
+//              broken copies (the pre-correction build, a forgetful guard)
 //   Q-T5 (a)-(d)   restarts: after staging; then a reset; two measurements of
 //              one item; a process ending at the publication's save
 //   Q-T23 (f)  a process ending at each point of a commit
@@ -20,6 +24,10 @@ const path = require('path');
 const crypto = require('crypto');
 const { fork } = require('child_process');
 const { startRedis, restShim, scriptName, verb } = require('./lib/localRedis');
+const { olderBuild, removeOlderBuilds } = require('./lib/olderBuild');
+// The pull request's own head before the poison-guard correction (25 Oct
+// 2026): its batch-wide count is the broken copy Q-T14 (f) must catch.
+const PRE_CORRECTION = 'a783456a3a741580659d80c49cb5215189fa8c23';
 
 let pass = 0, fail = 0;
 const check = (label, ok, d) => { if (ok) { pass++; console.log('PASS:', label); } else { fail++; console.log('FAIL:', label, d === undefined ? '' : JSON.stringify(d).slice(0, 700)); } };
@@ -48,9 +56,9 @@ const fillsFor = (n, base) => {
 let redis = null, R = null;
 const children = [];
 const allShims = [];
-async function child(name) {
+async function child(name, build) {
   const shim = restShim(R); const url = await shim.listen(); allShims.push(shim);
-  const proc = fork(path.join(__dirname, 'lib', 'gen2Child.js'), [], { silent: true });
+  const proc = fork(path.join(__dirname, 'lib', 'gen2Child.js'), build ? [build] : [], { silent: true });
   const c = { name, proc, shim, url, events: [], pending: new Map(), seq: 0, exited: false };
   proc.stdout.on('data', () => {}); proc.stderr.on('data', () => {});
   proc.on('message', m => {
@@ -130,8 +138,8 @@ const newestKind = cmd => { const d = JSON.parse(cmd[6]); const r = Object.value
         switch (k) {
           case 'staging': return { update: 'staging', payload: { fills } };
           case 'landing': return { update: 'landing', payload: { fills } };
-          case 'publication': return { update: 'publication', payload: { items: [{ qid: E + '-' + c, trade: { ...base.pendingStaged[c - 1], measured: c }, unmeasured: null }] } };
-          case 'poison': return { update: 'poison', payload: { qids: [E + '-' + c] } };
+          case 'publication': return { update: 'publication', payload: { prev: { qid: E + '-' + c, decided: 'result', trade: { ...base.pendingStaged[c - 1], measured: c } }, qids: [E + '-' + c] } };
+          case 'poison': return { update: 'poison', payload: { prev: null, qid: E + '-' + c } };
           case 'qidRemoval': return { update: 'qidRemoval', payload: { id: 'L' + c, pair: ['l' + c, 'm' + c], qid: E + '-' + (10 + c) } };
           case 'legacyRemoval': return { update: 'legacyRemoval', payload: { id: 'LEG' + c } };
           case 'reset': return { update: 'reset', opts: { acceptKinds: ['reset', 'reset-cancel'] } };
@@ -232,36 +240,94 @@ const newestKind = cmd => { const d = JSON.parse(cmd[6]); const r = Object.value
       check('the record is intact (the competitor\'s last save) and the failed change is absent', d.lastSync.n === n && !(d.lastBackfill && d.lastBackfill.lost) && d.stateVersion === before.stateVersion + n);
     });
 
-    await section('Q-T14 (a)-(c) THE POISON GUARD ACROSS REAL PROCESS EXITS', async () => {
+    // THE POISON GUARD, ONE TRADE AT A TIME (3.11 as corrected on 25 Oct 2026;
+    // the auditor's accepted correction plan and its rules I1-I5). A batch of
+    // three trades; X ends the process every time it is measured; A and C are
+    // healthy. Runs until a run finishes (at most 4), each a new real process.
+    const NAMES = ['A', 'B', 'C'];
+    async function poisonRuns(xAt, { build, variant } = {}) {
       await fresh();
-      const tries = async () => (await doc()).pendingStaged.map(e => e.stagedTries);
-      // Run 1: one trade, whose measurement ends the process.
+      const label = i => (i === xAt ? 'X' : NAMES[i]);
+      const measured = {}, maxTries = {}, history = [];
+      let order = [];
+      for (let run = 1; run <= 4; run++) {
+        const c = await child('run' + run, build);
+        await c.call({ cmd: 'init', url: c.url });
+        if (variant) await c.call({ cmd: 'variant', name: variant });
+        await c.call({ cmd: 'market', behaviour: { [xAt]: 'exit' } });
+        if (run === 1) await c.call({ cmd: 'schwab', fills: fillsFor(3, 0) });
+        // (b) at the store's door: each counting commit is CONFIRMED before that trade's measurement starts.
+        c.shim.hooks.after = async (cmd, reply) => { if (scriptName(cmd, SCRIPTS) === 'COMMIT' && reply === 'COMMITTED' && newestKind(cmd) === 'poison-guard') order.push('guard saved'); };
+        const seen = new Set();
+        const watch = setInterval(() => { for (const e of c.events) if (e.event === 'measuring' && !seen.has(e)) { seen.add(e); order.push('measuring ' + label(e.index)); } }, 1);
+        const done = c.call({ cmd: 'backfill' }).then(() => 'finished', () => 'ended');
+        const how = await Promise.race([done, c.exitedP.then(() => 'ended')]);
+        clearInterval(watch);
+        for (const e of c.events) if (e.event === 'measuring') measured[label(e.index)] = (measured[label(e.index)] || 0) + 1;
+        const d = await doc();
+        for (const e of d.pendingStaged) { const i = Math.round((e.entryTimestamp - T0) / 600000); maxTries[label(i)] = Math.max(maxTries[label(i)] || 0, e.stagedTries || 0); }
+        history.push(run + ':' + how + ' staged ' + JSON.stringify(d.pendingStaged.map(e => [label(Math.round((e.entryTimestamp - T0) / 600000)), e.stagedTries, e.decided || null])));
+        if (how === 'finished') { c.proc.send({ cmd: 'exit', id: 0 }); await c.exitedP; break; }
+      }
+      const d = await doc();
+      const pub = {};
+      for (const e of d.pending) pub[label(Math.round((e.entryTimestamp - T0) / 600000))] = e.undEntry === 500 ? 'measured' : 'unmeasured';
+      return { d, measured, maxTries, history, pub, order };
+    }
+    const healthyOk = r => ['A', 'B', 'C'].filter(n => n in r.pub || n in r.measured).every(n => r.pub[n] === 'measured' && r.measured[n] === 1 && (r.maxTries[n] || 0) <= 1);
+
+    for (const [xAt, where] of [[0, 'FIRST'], [1, 'MIDDLE'], [2, 'LAST']]) {
+      await section(`Q-T14 (a), (f) THE POISON GUARD, X ${where} in a batch with two healthy trades, across real process exits`, async () => {
+        const r = await poisonRuns(xAt);
+        console.log('     ' + r.history.join(' | '));
+        const healthy = NAMES.filter((n, i) => i !== xAt);
+        check(`X ${where}: X is published "abandoned" at run 3, measured at most twice, its counter left at 2`,
+          r.history.length === 3 && r.pub.X === 'unmeasured' && r.measured.X === 2 && r.maxTries.X === 2 && r.d.lastBackfill.unmeasured.counts.abandoned === 1, { history: r.history, measured: r.measured, pub: r.pub });
+        check(`X ${where}: the healthy trades (${healthy.join(', ')}) are measured EXACTLY ONCE and published MEASURED; their counters never pass 1`,
+          healthy.every(n => r.pub[n] === 'measured' && r.measured[n] === 1 && (r.maxTries[n] || 0) <= 1) && !r.d.lastBackfill.unmeasured.counts.failed, { measured: r.measured, maxTries: r.maxTries, pub: r.pub });
+        check(`X ${where}: nothing is left staged; nothing was published twice`, r.d.pendingStaged.length === 0 && r.d.pending.length === 3);
+        if (xAt === 1) {
+          const firstMeasure = r.order.indexOf('measuring A');
+          check('(b) every measurement started only after a counting commit was CONFIRMED at the store', firstMeasure > 0 && r.order.slice(0, firstMeasure).includes('guard saved')
+            && r.order.every((x, i) => !x.startsWith('measuring') || r.order.slice(0, i).filter(y => y === 'guard saved').length > r.order.slice(0, i).filter(y => y.startsWith('measuring')).length), r.order);
+        }
+      });
+    }
+
+    await section('T2: A CRASH AFTER A DECISION IS SAVED, BEFORE PUBLICATION: the resume publishes it with NO new measurement', async () => {
+      await fresh();
       let a = await child('run1');
       await a.call({ cmd: 'init', url: a.url });
-      await a.call({ cmd: 'market', behaviour: { 0: 'exit' } });
-      await a.call({ cmd: 'schwab', fills: fillsFor(1, 0) });
-      const order1 = [];
-      a.shim.hooks.after = async (cmd, reply) => { if (scriptName(cmd, SCRIPTS) === 'COMMIT' && reply === 'COMMITTED' && newestKind(cmd) === 'poison-guard') order1.push('guard saved'); };
-      const watch = setInterval(() => { if (a.events.some(e => e.event === 'measuring') && !order1.includes('measuring')) order1.push('measuring'); }, 1);
-      a.call({ cmd: 'backfill' }).catch(() => {});
-      await a.exitedP; clearInterval(watch);
-      check('run 1: stagedTries 1 was STORED before its measurement started; the measurement ended the process', JSON.stringify(await tries()) === '[1]' && order1[0] === 'guard saved', { order1, tries: await tries() });
-      // Run 2: the resume counts it again, then the process ends again.
-      a = await child('run2');
-      await a.call({ cmd: 'init', url: a.url }); await a.call({ cmd: 'market', behaviour: { 0: 'exit' } });
+      await a.call({ cmd: 'market', behaviour: {} });
+      await a.call({ cmd: 'schwab', fills: fillsFor(2, 0) });
+      // The process ends the moment its PUBLICATION reaches the store: both
+      // decisions were computed, the first one saved by the second's guard.
+      a.shim.hooks.before = async cmd => { if (scriptName(cmd, SCRIPTS) === 'COMMIT' && newestKind(cmd) === 'publication') { a.proc.send({ cmd: 'exit', id: 0 }); return { drop: true }; } };
       a.call({ cmd: 'backfill' }).catch(() => {});
       await a.exitedP;
-      check('run 2: stagedTries 2 stored, then the process ended again', JSON.stringify(await tries()) === '[2]');
-      // Run 3: it is published unmeasured ("abandoned") WITHOUT being measured.
-      a = await child('run3');
-      await a.call({ cmd: 'init', url: a.url }); await a.call({ cmd: 'market', behaviour: { 0: 'exit' } });
-      await a.call({ cmd: 'schwab', fills: fillsFor(2, 1) });
+      let d = await doc();
+      const first = d.pendingStaged.find(e => e.entryTimestamp === T0), second = d.pendingStaged.find(e => e.entryTimestamp === T0 + 600000);
+      check('run 1 ended before publication: nothing visible; the first trade\'s decision is SAVED in staging (measured), the second\'s is not',
+        d.pending.length === 0 && first && first.decided === 'result' && first.undEntry === 500 && first.stagedTries === 1 && second && second.decided === undefined && second.stagedTries === 1, d.pendingStaged);
+      a = await child('run2');
+      await a.call({ cmd: 'init', url: a.url });
       await a.call({ cmd: 'backfill' });
-      const d = await doc();
-      const bad = d.pending.find(e => e.entryTimestamp === T0);
-      check('run 3: the trade is published unmeasured ("abandoned"), never measured, its counter left at 2', bad && bad.undEntry !== 500 && d.lastBackfill.unmeasured.counts.abandoned === 1 && !a.events.some(e => e.event === 'measuring' && e.index === 0), bad);
-      check('(c) the trades staged afterwards were measured and published normally, never near 2 tries', d.pending.filter(e => e.undEntry === 500).length === 2 && d.pendingStaged.length === 0);
-      console.log('     NOTE (3.11, QR-3): a trade in the SAME batch as one that ends the process is counted with it, so after two such endings the whole batch is published unmeasured; here the failing trade was alone in its batch, by construction.');
+      d = await doc();
+      const m = a.events.filter(e => e.event === 'measuring').map(e => e.index);
+      check('run 2: the saved decision is published WITHOUT measuring it again (I3); only the undecided trade is measured', JSON.stringify(m) === '[1]', m);
+      check('run 2: both published measured, nothing staged, the saved trade\'s counter never raised again', d.pending.length === 2 && d.pending.every(e => e.undEntry === 500) && d.pendingStaged.length === 0
+        && !d.lastBackfill.unmeasured, d.pending.map(e => [e.entryTimestamp, e.undEntry]));
+    });
+
+    await section('Q-T14 (f) BROKEN COPIES: each must be CAUGHT by the mixed-batch check', async () => {
+      const PRE = olderBuild(PRE_CORRECTION);
+      const r1 = await poisonRuns(1, { build: PRE });
+      console.log('     the PR\'s own pre-correction build (' + PRE_CORRECTION.slice(0, 7) + ', batch-wide count): ' + r1.history.join(' | '));
+      check('the batch-wide guard (the PR\'s pre-correction build, run for real) FAILS: a healthy trade is measured twice or published unmeasured',
+        !healthyOk(r1) && (r1.pub.A === 'unmeasured' || r1.measured.A > 1), { measured: r1.measured, pub: r1.pub });
+      const r2 = await poisonRuns(1, { variant: 'forget-decisions' });
+      console.log('     a guard that forgets saved decisions: ' + r2.history.join(' | '));
+      check('a guard that FORGETS saved decisions FAILS: the healthy trade before X is measured twice', r2.measured.A > 1 && !healthyOk(r2), { measured: r2.measured, pub: r2.pub });
     });
 
     await section('Q-T14 (d) TWO PROCESSES START THE SAME BATCH AT ONCE: both starts counted (0, 1, 2)', async () => {
@@ -410,6 +476,7 @@ const newestKind = cmd => { const d = JSON.parse(cmd[6]); const r = Object.value
     fail++; console.log('FAIL: TEST CRASHED', e && e.stack || e);
   } finally {
     await killAll();
+    removeOlderBuilds();
     const stopped = await redis.stop();
     check('the local Redis was stopped by SHUTDOWN NOSAVE and its folder removed', stopped.exited && stopped.folderGone, stopped);
     console.log(`\n${pass} passed, ${fail} failed`);

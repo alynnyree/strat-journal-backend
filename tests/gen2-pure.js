@@ -93,8 +93,10 @@ const UPDATES = {
   'activation (activateUpdate)': [d => Q.activateUpdate(d, fixedFor())],
   'deactivation (deactivateUpdate)': [d => Q.deactivateUpdate(d, fixedFor())],
   'backfill progress (W3, progressUpdate)': [d => Q.progressUpdate(d, fixedFor({ phase: 'enriching', tradesEnriched: 3 }))],
-  'poison guard (poisonGuardUpdate)': [d => Q.poisonGuardUpdate(d, fixedFor({ qids: [EPOCH_A + '-3', EPOCH_A + '-4', EPOCH_A + '-99'] }))],
-  'publication (publicationUpdate)': [d => Q.publicationUpdate(d, fixedFor({ items: [{ qid: EPOCH_A + '-3', trade: { id: 'S1', fills: ['7', '8'], undEntry: 500 }, unmeasured: null }, { qid: EPOCH_A + '-77', trade: { id: 'Z' }, unmeasured: 'failed' }] }))],
+  'poison guard (poisonGuardUpdate), counting': [d => Q.poisonGuardUpdate(d, fixedFor({ prev: null, qid: EPOCH_A + '-3' }))],
+  'poison guard (poisonGuardUpdate), abandoning': [d => Q.poisonGuardUpdate(d, fixedFor({ prev: null, qid: EPOCH_A + '-4' }))],
+  'poison guard (poisonGuardUpdate), saving a decision': [d => Q.poisonGuardUpdate(d, fixedFor({ prev: { qid: EPOCH_A + '-3', decided: 'result', trade: { id: 'S1', fills: ['7', '8'], undEntry: 500 } }, qid: EPOCH_A + '-99' }))],
+  'publication (publicationUpdate)': [d => Q.publicationUpdate(d, fixedFor({ prev: { qid: EPOCH_A + '-3', decided: 'failed', trade: { id: 'S1', fills: ['7', '8'] } }, qids: [EPOCH_A + '-3', EPOCH_A + '-4', EPOCH_A + '-77'] }))],
   'the commit\'s bookkeeping (finalize)': [d => Q.finalize(d, Object.assign({}, d, { touched: 1 }), { fields: ['touched'] }, 'progress', fixedFor())],
   'qid issuing (issueQids)': [d => Q.issueQids(d, 3, EPOCH_B, AT)],
   'live-sync landing (W1, syncLandingUpdate)': [d => cron.syncLandingUpdate({ fills: FILLS, report: {}, syncNote: null, enriched: new Map(), cutoverIso: '2026-10-01T00:00:00.000Z', cutoverMs: Date.parse('2026-10-01T00:00:00.000Z'), nowIso: '2026-10-24T12:00:00.000Z' })(d, fixedFor())],
@@ -370,28 +372,63 @@ section('5.7 ACTIVATION (Q-T22 (a)-(d), on the function)', () => {
   check('deactivation always produces a change (its record is the evidence it ran)', Q.deactivateUpdate(clean).next.removalEnabled === false);
 });
 
-section('3.11 THE POISON GUARD and 3.3 PUBLICATION (the functions)', () => {
+section('3.11 THE POISON GUARD, ONE TRADE AT A TIME, and 3.3 PUBLICATION (the functions; correction of 25 Oct 2026)', () => {
   const d = sampleDoc();
-  const g = Q.poisonGuardUpdate(d, fixedFor({ qids: [EPOCH_A + '-3', EPOCH_A + '-4', EPOCH_A + '-99'] }));
-  const items = Object.fromEntries(g.result.items.map(i => [i.qid, i]));
-  check('an item tried fewer than twice: counted, stagedTries + 1, still staged', items[EPOCH_A + '-3'].outcome === 'counted' && g.next.pendingStaged.find(e => e.qid === EPOCH_A + '-3').stagedTries === 1);
-  check('an item already tried twice: published UNMEASURED ("abandoned") in this same write, its counter not raised',
-    items[EPOCH_A + '-4'].outcome === 'abandoned' && items[EPOCH_A + '-4'].stagedTries === 2 && !g.next.pendingStaged.some(e => e.qid === EPOCH_A + '-4')
-    && g.next.pending[0].qid === EPOCH_A + '-4' && g.next.lastBackfill.unmeasured.counts.abandoned === 1);
-  check('a published entry keeps its qid and loses its staging bookkeeping', !('stagedTries' in g.next.pending[0]) && !('stagedAt' in g.next.pending[0]));
-  check('an item no longer staged: skipped', items[EPOCH_A + '-99'].outcome === 'skipped');
-  // Publication.
-  const p = Q.publicationUpdate(d, fixedFor({ items: [{ qid: EPOCH_A + '-3', trade: { id: 'S1', fills: ['7', '8'], measured: true, stagedTries: 1 }, unmeasured: null }, { qid: EPOCH_A + '-50', trade: { id: 'Z' }, unmeasured: null }] }));
-  check('publication by qid ONLY: the staged item moves to the front of the visible list, keeping its qid', p.next.pending[0].qid === EPOCH_A + '-3' && p.next.pending[0].measured === true && !p.next.pendingStaged.some(e => e.qid === EPOCH_A + '-3'));
-  check('a qid not staged publishes NOTHING and is noted "not-staged"', p.result.notStaged.join() === EPOCH_A + '-50' && !p.next.pending.some(e => e.id === 'Z') && p.next.lastBackfill.notStaged.count === 1);
-  check('a publication where nothing is still staged: no change, no record', Q.publicationUpdate(d, fixedFor({ items: [{ qid: EPOCH_A + '-50', trade: {}, unmeasured: null }] })).next === null);
+  const S1 = EPOCH_A + '-3', S2 = EPOCH_A + '-4';
+  const at = (doc, q) => doc.pendingStaged.find(e => e.qid === q);
+  const shapeOk = (kind, r) => Q.RESULT_SHAPES[kind](r);
+  // Counting: ONLY the named trade.
+  let g = Q.poisonGuardUpdate(d, fixedFor({ prev: null, qid: S1 }));
+  check('counting: ONLY the named trade gets stagedTries + 1; its batch-mate is untouched', g.result.current.outcome === 'counted' && at(g.next, S1).stagedTries === 1 && at(g.next, S2).stagedTries === 2 && shapeOk('poison-guard', g.result));
+  check('counting publishes nothing (the batch is published together)', g.next.pending.length === d.pending.length);
+  g = Q.poisonGuardUpdate(d, fixedFor({ prev: null, qid: S2 }));
+  check('a trade already started twice: decided "abandoned" in staging, its counter NOT raised, not published here',
+    g.result.current.outcome === 'abandoned' && at(g.next, S2).decided === 'abandoned' && at(g.next, S2).stagedTries === 2 && g.next.pending.length === d.pending.length);
+  // I5: not staged.
+  g = Q.poisonGuardUpdate(d, fixedFor({ prev: null, qid: EPOCH_A + '-99' }));
+  check('I5 a trade no longer staged: skipped, nothing written, nothing resurrected', g.result.current.outcome === 'skipped' && g.next === null);
+  // Saving the previous decision.
+  const dec = { qid: S1, decided: 'result', trade: { id: 'S1', fills: ['7', '8'], undEntry: 500, qid: 'ignored', stagedTries: 9, stagedAt: 'y' } };
+  g = Q.poisonGuardUpdate(d, fixedFor({ prev: dec, qid: S2 }));
+  const saved = at(g.next, S1);
+  check('the previous decision is saved in ITS OWN staged entry, in the same commit as the next trade\'s count',
+    g.result.saved.outcome === 'saved' && saved.decided === 'result' && saved.undEntry === 500 && at(g.next, S2).decided === 'abandoned' && shapeOk('poison-guard', g.result));
+  check('the saved entry keeps the STORED qid and staging bookkeeping, never the copy\'s', saved.qid === S1 && saved.stagedTries === 0 && saved.stagedAt === 'x');
+  // I1: previous no longer staged.
+  const gone = clone(d); gone.pendingStaged = gone.pendingStaged.filter(e => e.qid !== S1);
+  g = Q.poisonGuardUpdate(gone, fixedFor({ prev: dec, qid: null }));
+  check('I1 the previous trade is no longer staged: its decision is NOT saved and NOT published; nothing written', g.result.saved.outcome === 'not-staged' && g.next === null);
+  // I2: never over a saved decision.
+  const done = clone(d); done.pendingStaged[0] = Object.assign({}, done.pendingStaged[0], { decided: 'result', undEntry: 111 });
+  g = Q.poisonGuardUpdate(done, fixedFor({ prev: { qid: S1, decided: 'failed', trade: { id: 'S1', fills: ['7', '8'], undEntry: 999 } }, qid: null }));
+  check('I2 a decision already saved is never overwritten (later or stale)', g.result.saved.outcome === 'already-decided' && g.next === null);
+  // I3: the current trade already decided.
+  g = Q.poisonGuardUpdate(done, fixedFor({ prev: null, qid: S1 }));
+  check('I3 a trade with a saved decision is neither counted nor measured again', g.result.current.outcome === 'already-decided' && g.next === null);
+  // A decision about a different trade is refused.
+  g = Q.poisonGuardUpdate(d, fixedFor({ prev: { qid: S1, decided: 'result', trade: { id: 'OTHER', fills: ['7', '8'] } }, qid: null }));
+  check('a decision whose trade is not the staged one (id or fill pair) is NOT saved ("mismatch")', g.result.saved.outcome === 'mismatch' && g.next === null);
+  let threw = false; try { Q.poisonGuardUpdate(d, fixedFor({ prev: { qid: S1, decided: 'abandoned', trade: { id: 'S1', fills: ['7', '8'] } }, qid: null })); } catch (e) { threw = true; }
+  check('"abandoned" is never a measurement decision handed in (only the guard decides it)', threw);
+  // Publication: from the DOCUMENT, decided trades only.
+  const half = Q.poisonGuardUpdate(d, fixedFor({ prev: null, qid: S2 })).next;   // S2 decided "abandoned"
+  const p = Q.publicationUpdate(half, fixedFor({ prev: dec, qids: [S1, S2, EPOCH_A + '-50'] }));
+  check('publication saves the last decision, then publishes every decided trade of the batch together, keeping each qid',
+    p.result.saved.outcome === 'saved' && p.result.published.join() === [S1, S2].join() && p.next.pending[0].qid === S1 && p.next.pending[0].undEntry === 500 && p.next.pending[1].qid === S2 && !p.next.pendingStaged.length && shapeOk('publication', p.result));
+  check('a published entry loses its staging bookkeeping (stagedAt, stagedTries, decided)', p.next.pending.slice(0, 2).every(e => !('stagedAt' in e) && !('stagedTries' in e) && !('decided' in e)));
+  check('the unmeasured reasons are counted (abandoned 1), the not-staged qid noted', p.next.lastBackfill.unmeasured.counts.abandoned === 1 && !p.next.lastBackfill.unmeasured.counts.result && p.result.notStaged.join() === EPOCH_A + '-50' && p.next.lastBackfill.notStaged.count === 1);
+  const und = Q.publicationUpdate(d, fixedFor({ prev: null, qids: [S1] }));
+  check('a staged trade with NO saved decision stays staged ("undecided"); nothing written', und.result.undecided.join() === S1 && und.next === null);
+  check('a publication where nothing is still staged: no change, no record', Q.publicationUpdate(d, fixedFor({ prev: null, qids: [EPOCH_A + '-50'] })).next === null);
+  const goneP = Q.publicationUpdate(gone, fixedFor({ prev: dec, qids: [S1] }));
+  check('I5 publication never publishes a trade no longer staged from the copy in memory', goneP.next === null && goneP.result.notStaged.join() === S1 && goneP.result.published.length === 0);
   // Two staged items with the same id and pair: each published once, by its own qid.
   const tw = sampleDoc();
   tw.pendingStaged = [{ id: 'T', fills: ['1', '2'], qid: EPOCH_A + '-20', stagedTries: 1 }, { id: 'T', fills: ['1', '2'], qid: EPOCH_A + '-21', stagedTries: 1 }];
-  const p1 = Q.publicationUpdate(tw, fixedFor({ items: [{ qid: EPOCH_A + '-20', trade: { id: 'T', fills: ['1', '2'], v: 1 }, unmeasured: null }] }));
-  const p2 = Q.publicationUpdate(p1.next, fixedFor({ items: [{ qid: EPOCH_A + '-21', trade: { id: 'T', fills: ['1', '2'], v: 2 }, unmeasured: null }] }));
-  check('two staged items with the same id and pair: each published exactly once, each under its own qid',
-    p2.next.pending.filter(e => e.id === 'T').map(e => e.qid).sort().join() === [EPOCH_A + '-20', EPOCH_A + '-21'].join() && !p2.next.pendingStaged.length);
+  const p1 = Q.publicationUpdate(tw, fixedFor({ prev: { qid: EPOCH_A + '-20', decided: 'result', trade: { id: 'T', fills: ['1', '2'], v: 1 } }, qids: [EPOCH_A + '-20'] }));
+  const p2 = Q.publicationUpdate(p1.next, fixedFor({ prev: { qid: EPOCH_A + '-21', decided: 'result', trade: { id: 'T', fills: ['1', '2'], v: 2 } }, qids: [EPOCH_A + '-21'] }));
+  check('two staged items with the same id and pair: each published exactly once, each under its own qid, each with its own decision',
+    p2.next.pending.filter(e => e.id === 'T').map(e => e.qid + ':' + e.v).sort().join() === [EPOCH_A + '-20:1', EPOCH_A + '-21:2'].join() && !p2.next.pendingStaged.length);
   const byIdPair = (doc, item) => doc.pendingStaged.filter(e => !(e.id === item.trade.id && canon(e.fills) === canon(item.trade.fills)));
   check('BROKEN COPY that matches staging by id and pair: takes BOTH twins out for one publication (caught)', byIdPair(tw, { trade: { id: 'T', fills: ['1', '2'] } }).length === 0);
 });
