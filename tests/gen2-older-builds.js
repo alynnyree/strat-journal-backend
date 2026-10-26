@@ -353,7 +353,7 @@ const firstDiff = (a, b) => { const n = Math.min(a.length, b.length); let i = 0;
 
   removeOlderBuilds();
   const stopped = await redis.stop();
-  check('the local Redis was stopped by SHUTDOWN NOSAVE and its folder removed', stopped.exited && stopped.folderGone, stopped);
+  require('./lib/localRedis').reportStop(check, stopped);
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(async e => { console.log('FAIL: TEST CRASHED', e && e.stack || e); await killAll(); removeOlderBuilds(); if (redis) await redis.stop(); process.exit(1); });

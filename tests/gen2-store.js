@@ -234,7 +234,10 @@ setTimeout(() => { console.log('FAIL: this check stalled'); process.exit(1); }, 
       const d = await h.doc();
       check('(b) [stand-in at the client boundary] an error reply: treated as ambiguous (the stricter reading), resolved R1, applied exactly once',
         out.status === 'committed' && d.stateVersion === JSON.parse(t0).stateVersion + 1 && ts.writerStatus().commitErrors >= 1, out);
-      // (c) a REAL error at the SET: the store at its memory limit.
+      // (c) a REAL error at the SET: the store at its memory limit. LOCAL ONLY:
+      // it is produced with CONFIG SET maxmemory, which Upstash does not
+      // offer, so a real-store run says so and never counts it as a pass.
+      if (require('./lib/localRedis').STORE) { console.log('LOCAL ONLY: (c) the memory-limit error is produced with CONFIG, which Upstash does not offer; not run in a real-store run'); return; }
       await h.ready(START);
       const t1 = await h.text();
       await R.call('CONFIG', 'SET', 'maxmemory', '1');
@@ -492,7 +495,7 @@ setTimeout(() => { console.log('FAIL: this check stalled'); process.exit(1); }, 
     fail++; console.log('FAIL: TEST CRASHED', e && e.stack || e);
   } finally {
     const stopped = await h.tearDown();
-    check('the local Redis was stopped by SHUTDOWN NOSAVE and its folder removed', stopped.exited && stopped.folderGone, stopped);
+    require('./lib/localRedis').reportStop(check, stopped);
     console.log(`\n${pass} passed, ${fail} failed`);
     process.exit(fail ? 1 : 0);
   }

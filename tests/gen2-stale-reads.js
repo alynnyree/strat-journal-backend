@@ -258,7 +258,7 @@ const stubs = {
   } finally {
     await shim2.close();
     const stopped = await h.tearDown();
-    check('the local Redis was stopped by SHUTDOWN NOSAVE and its folder removed', stopped.exited && stopped.folderGone, stopped);
+    require('./lib/localRedis').reportStop(check, stopped);
     console.log(`\n${pass} passed, ${fail} failed`);
     process.exit(fail ? 1 : 0);
   }
