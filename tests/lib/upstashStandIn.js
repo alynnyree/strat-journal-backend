@@ -77,7 +77,9 @@ async function upstashStandIn({ token = 'stand-in-token-0123456789abcdef', id = 
       try { parsed = JSON.parse(raw.toString('utf8')); } catch (e) { return reply(res, 400, { error: 'ERR failed to parse command' }); }
       const run = async cmd => {
         const r = await R.call(...cmd.map(x => String(x)));
-        return isErr(r) ? { error: r.error } : { result: enc(r, base64) };
+        // s.errorText: reword error texts, as another Redis implementation
+        // might (real-store run 2: Upstash's E-1 text was not Redis 7's).
+        return isErr(r) ? { error: s.errorText ? s.errorText(r.error) : r.error } : { result: enc(r, base64) };
       };
       if (req.url === '/pipeline') {
         if (!Array.isArray(parsed)) return reply(res, 400, { error: 'ERR invalid pipeline' });

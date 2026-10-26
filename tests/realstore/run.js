@@ -344,8 +344,9 @@ async function protocolProbe(identity, D, ledgerDir, say) {
   const { Redis } = require('@upstash/redis');
   const k = 'realstore-probe:' + crypto.randomBytes(6).toString('hex');
   const expect = [];
-  const eq = (label, got, want) => { const ok = JSON.stringify(got) === JSON.stringify(want); expect.push(ok); say(`STEP 0 ${ok ? 'ok  ' : 'DIFF'} ${label}${ok ? '' : ': got ' + JSON.stringify(got).slice(0, 160)}`); };
-  const like = (label, got, test) => { const ok = test(got); expect.push(ok); say(`STEP 0 ${ok ? 'ok  ' : 'DIFF'} ${label}${ok ? '' : ': got ' + JSON.stringify(got).slice(0, 160)}`); };
+  // Every answer is logged as received (C-4), not only the ones that differ.
+  const eq = (label, got, want) => { const ok = JSON.stringify(got) === JSON.stringify(want); expect.push(ok); say(`STEP 0 ${ok ? 'ok  ' : 'DIFF'} ${label}: got ${JSON.stringify(got).slice(0, 160)}`); };
+  const like = (label, got, test) => { const ok = test(got); expect.push(ok); say(`STEP 0 ${ok ? 'ok  ' : 'DIFF'} ${label}: got ${JSON.stringify(got).slice(0, 160)}`); };
   // PATH D
   eq('D SET', await D.call('SET', k + ':s', 'café ✓ "q"'), 'OK');
   eq('D GET (not plain ASCII)', await D.call('GET', k + ':s'), 'café ✓ "q"');
@@ -354,7 +355,7 @@ async function protocolProbe(identity, D, ledgerDir, say) {
   eq('D EVAL integer', await D.call('EVAL', 'return 42', '0'), 42);
   eq('D EVAL nil', await D.call('EVAL', 'return nil', '0'), null);
   eq('D EVAL array', await D.call('EVAL', "return {'a', 1, {'b'}}", '0'), ['a', 1, ['b']]);
-  eq('D E-1 (error_reply wrong-type)', await D.call('EVAL', "return redis.error_reply('wrong-type')", '0'), { error: 'ERR wrong-type' });
+  like('D E-1 (error_reply wrong-type; either accepted form, C-5)', await D.call('EVAL', "return redis.error_reply('wrong-type')", '0'), r => !!r && typeof r.error === 'string' && UR.ACCEPTED_ERRORS[0](r.error));
   eq('D RPUSH', await D.call('RPUSH', k + ':l', 'x'), 1);
   like('D E-2 (WRONGTYPE)', await D.call('GET', k + ':l'), r => r && UR.ACCEPTED_ERRORS[1](r.error));
   like('D E-2 inside a script', await D.call('EVAL', "return redis.call('GET', KEYS[1])", '1', k + ':l'), r => r && UR.ACCEPTED_ERRORS[1](r.error));

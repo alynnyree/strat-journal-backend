@@ -21,9 +21,13 @@ const path = require('path');
 
 // ---- The closed lists (plan v3.1 A2 / v3.2). Never widened during a run.
 // E-1, E-2: the only Redis errors the suite provokes on purpose (Q-T20 (b);
-// writer-fence.js B4), their texts checked on Redis 7.0.15.
+// writer-fence.js B4), their texts checked on Redis 7.0.15. E-1 is accepted
+// with or without the "ERR " prefix (real-store run 2: Upstash's text was not
+// "ERR wrong-type"; the older Redis form has no prefix), and with the same
+// optional script suffix as E-2. Nothing else (C-5, owner's words, 26 Oct).
+const SCRIPT_SUFFIX = '(?: script: [0-9a-f]{40}, on @user_script:\\d+\\.)?';
 const ACCEPTED_ERRORS = [
-  t => t === 'ERR wrong-type',
+  t => new RegExp('^(?:ERR )?wrong-type' + SCRIPT_SUFFIX + '$').test(t),
   t => /^WRONGTYPE Operation against a key holding the wrong kind of value(?: script: [0-9a-f]{40}, on @user_script:\d+\.)?$/.test(t),
 ];
 // L-1 to L-7: Upstash's documented limit messages (its troubleshooting pages).
@@ -101,6 +105,10 @@ function commandWhy(c) {
 const exactlyOneKey = (o, k) => o !== null && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length === 1 && k in o;
 const errorEnvelope = o => exactlyOneKey(o, 'error') && typeof o.error === 'string';
 const resultEnvelope = o => exactlyOneKey(o, 'result');
+// C-4: an error text that decides nothing else is QUOTED in the reason, at
+// most 200 characters (the runner's redactor still scrubs every credential):
+// a stop names exactly what Upstash said (real-store run 2 could not).
+const quoted = t => JSON.stringify(String(t).length > 200 ? String(t).slice(0, 200) + '...' : String(t));
 const textMarker = (t, list) => typeof t === 'string' && list.find(m => t.startsWith(m)) || null;
 
 // ---- A2 (plan v3.2): ONE ORDER, FIRST APPLICABLE STEP DECIDES.
@@ -149,7 +157,7 @@ function classify(answer, req) {
     const t = body.error;
     if (textMarker(t, IDENTITY_MARKERS)) return out('IDENTITY', 5);
     if (textMarker(t, LIMIT_MARKERS)) return out('LIMIT', 6, { marker: textMarker(t, LIMIT_MARKERS) });
-    return out('AMBIGUOUS', 9, { why: 'whole-batch error not identity or limit' });
+    return out('AMBIGUOUS', 9, { why: 'whole-batch error not identity or limit: ' + quoted(t) });
   }
   // STEPS 5-9, entry by entry in command order; the first decisive entry decides.
   const judged = [];
@@ -161,7 +169,7 @@ function classify(answer, req) {
       if (lm) return out('LIMIT', 6, { position: pos, marker: lm });
       const statusOk = req.kind === 'single' ? st === 400 : st === 200;
       if (statusOk && req.wellFormed !== false && ACCEPTED_ERRORS.some(f => f(e.error))) { judged.push({ error: e.error }); continue; }
-      return out('AMBIGUOUS', 9, { position: pos, why: 'an error not on the accepted list' });
+      return out('AMBIGUOUS', 9, { position: pos, why: `an error not on the accepted list${statusOk ? '' : ' (under status ' + st + ')'}: ${quoted(e.error)}` });
     }
     // 'result'
     if (st !== 200) return out('AMBIGUOUS', 9, { position: pos, why: 'a result under status ' + st });
@@ -248,6 +256,7 @@ function storeFromEnv(env = process.env) {
 }
 
 module.exports = {
+  quoted,
   ACCEPTED_ERRORS, LIMIT_MARKERS, IDENTITY_MARKERS, COMMANDS,
   strictBase64, replyValueOk, decodeValue, encodeValue, commandOk, commandWhy, classify, send, recorder,
   directClient, TransportError, storeFromEnv, bindingOf, ENDPOINT_REAL, REQUEST_LIMIT_MS,

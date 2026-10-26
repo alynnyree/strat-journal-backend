@@ -18,7 +18,10 @@ const check = (label, ok, d) => { if (ok) { pass++; console.log('PASS:', label);
 
 (async () => {
   const S = await upstashStandIn();
-  const outDir = process.argv[2] || fs.mkdtempSync(path.join(os.tmpdir(), 'realstore-s3-'));
+  // --e1-bare: the stand-in words E-1 as "wrong-type" (no "ERR "), the older
+  // Redis form, so the whole suite is shown to run with that wording (C-5).
+  if (process.argv.includes('--e1-bare')) { S.errorText = t => t.replace(/^ERR wrong-type/, 'wrong-type'); console.log('STAND-IN: E-1 is worded "wrong-type" (no ERR prefix)'); }
+  const outDir = (process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : null) || fs.mkdtempSync(path.join(os.tmpdir(), 'realstore-s3-'));
   fs.mkdirSync(outDir, { recursive: true });
   const r = await run({ selftest: { id: S.id, endpoint: S.endpoint, token: S.token, metricsUrl: S.metricsUrl }, outDir, quietMs: 1000, secondScanMs: 1000, identityWaitMs: 5000, quiet: true });
   const log = fs.readFileSync(r.logFile, 'utf8');

@@ -404,6 +404,42 @@ const E2s = E2 + ' script: ' + 'a'.repeat(40) + ', on @user_script:1.';
     fs.rmSync(outDir, { recursive: true, force: true });
   });
 
+  await section('C-4 and C-5 (real-store run 2): E-1 in either form; any other error text QUOTED where the run stops', async () => {
+    const one = t => UR.classify(A(400, { error: t }), single());
+    const suf = ' script: ' + 'c'.repeat(40) + ', on @user_script:3.';
+    for (const t of ['ERR wrong-type', 'wrong-type', 'wrong-type' + suf, 'ERR wrong-type' + suf]) check(`E-1 accepted: ${JSON.stringify(t).slice(0, 40)}`, one(t).decision === 'COMMAND_ERROR');
+    for (const t of ['ERR  wrong-type', 'WRONG-TYPE', 'wrong-type!', 'xwrong-type', 'ERR Error running script, wrong-type', 'wrong-type script: abc, on @user_script:1.']) {
+      const c = one(t);
+      check(`refused AND quoted: ${JSON.stringify(t).slice(0, 44)}`, c.decision === 'AMBIGUOUS' && c.step === 9 && c.why === 'an error not on the accepted list: ' + JSON.stringify(t), c.why);
+    }
+    const oldE1 = t => t === 'ERR wrong-type';
+    check('BROKEN COPY: the old E-1 rule (exact "ERR wrong-type") refuses the bare form -- the run-2 stop', !oldE1('wrong-type'));
+    const long = one('E'.repeat(500));
+    check('a long error text is quoted to 200 characters, never in full', long.why === 'an error not on the accepted list: ' + JSON.stringify('E'.repeat(200) + '...'));
+    check('an unlisted error under the wrong status says so', /\(under status 200\): "wrong-type"$/.test(UR.classify(A(200, { error: 'wrong-type' }), single()).why || ''));
+    check('a whole-batch refusal quotes its text', /whole-batch error not identity or limit: "ERR syntax error"$/.test(UR.classify(A(400, { error: 'ERR syntax error' }), pipe(3)).why));
+    check('identity and limit texts are still NOT quoted (marker only)', !('why' in UR.classify(A(400, { error: 'WRONGPASS invalid password' }), single())) && UR.classify(A(400, { error: L1 }), single()).marker === L1);
+    // Through the runner, against the stand-in.
+    const { run } = require('./realstore/run.js');
+    const fx = fs.mkdtempSync(path.join(os.tmpdir(), 'realstore-e1-'));
+    fs.writeFileSync(path.join(fx, 'clean.js'), `
+      const { startRedis, reportStop } = require(${JSON.stringify(path.join(__dirname, 'lib', 'localRedis.js'))});
+      (async () => { const r = await startRedis(); await r.client.call('SET', 'fixture:w', '1');
+        console.log('PASS: wrote a key'); reportStop(()=>{}, await r.stop()); console.log('\\n1 passed, 0 failed'); process.exit(0); })();`);
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'realstore-e1-out-'));
+    const go = () => run({ selftest: { id: S.id, endpoint: S.endpoint, token: S.token, metricsUrl: S.metricsUrl }, files: [['clean.js', 10]], testsDir: fx, outDir, quietMs: 200, secondScanMs: 200, identityWaitMs: 5000, quiet: true });
+    await D.call('FLUSHALL'); S.errorText = t => t.replace(/^ERR wrong-type/, 'wrong-type');
+    const ra = await go(); const la = fs.readFileSync(ra.logFile, 'utf8');
+    check('E-1 worded "wrong-type" (the older form): step 0 accepts it, logs the answer as received, and the run passes', ra.ok && /STEP 0 ok +D E-1 .*: got \{"error":"wrong-type"\}/.test(la), la.split('\n').filter(l => /STEP 0|STOP|TESTS/.test(l)));
+    check('every step-0 answer is logged as received ("got ..." on every line)', la.split('\n').filter(l => /^STEP 0 /.test(l)).every(l => / got /.test(l)));
+    await D.call('FLUSHALL'); S.errorText = t => t.replace(/^ERR wrong-type/, 'ERR Error running script (call to f_0123): @user_script:1: wrong-type');
+    const rb = await go(); const lb = fs.readFileSync(rb.logFile, 'utf8');
+    check('E-1 in an unknown wording: the run STOPS and the stop QUOTES Upstash\'s text', !rb.ok && /STOP: .*an error not on the accepted list: "ERR Error running script \(call to f_0123\): @user_script:1: wrong-type"/.test(lb), lb.split('\n').filter(l => /STOP/.test(l)));
+    check('...and no test file ran after that stop', !/^FILE /m.test(lb));
+    S.errorText = null;
+    fs.rmSync(fx, { recursive: true, force: true }); fs.rmSync(outDir, { recursive: true, force: true });
+  });
+
   await section('the runner refuses to run for real without the owner\'s words', async () => {
     const { run } = require('./realstore/run.js');
     const saved = process.env.DEPLOY2_REALSTORE_RUN; delete process.env.DEPLOY2_REALSTORE_RUN;
