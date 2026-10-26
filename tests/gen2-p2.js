@@ -346,6 +346,55 @@ const stubs = {
       market.price = orig;
     });
 
+    // THE STOP NOTE (the third correction, 25-26 Oct 2026): when a batch stops
+    // because a decision was not saved, the note of why is a diagnostic. Its
+    // own save may succeed, be refused, or end with its outcome unknown; in
+    // every case the batch still stops at once, nothing more is measured,
+    // nothing is published, the original reason is kept, the message says
+    // what became of the note, and the record holds nothing but that note.
+    const stripBook = d => { const o = JSON.parse(JSON.stringify(d)); delete o.stateVersion; delete o.opRecords; delete o.prunedThroughVersion; if (o.lastBackfill) delete o.lastBackfill.decisionNotSaved; if (o.lastBackfill && !Object.keys(o.lastBackfill).length) delete o.lastBackfill; return JSON.stringify(o); };
+    for (const fate of ['recorded', 'refused (fenced)', 'outcome unknown']) {
+      await section(`THE STOP NOTE: its own save ${fate}; the batch still stops, nothing more measured or published, the record untouched but for the note`, async () => {
+        await fresh();
+        let open; const gate = new Promise(r => { open = r; });
+        market.behaviour.set(80, { gate });
+        const st = await ts.protect('staging', cron.stagingUpdate(fillsFor(2, 80)));
+        const job = cron.runStagedBatch('tok', st.out.staged).then(() => null, e => e);
+        await waitFor(() => market.starts.get(80) === 1);
+        await ts.protect('reset', Q.resetUpdate, { acceptKinds: ['reset', 'reset-cancel'] });   // A is no longer staged
+        let beforeNote = null, dropped = false;
+        shim.hooks.before = async cmd => {
+          if (h.scriptOf(cmd) === 'COMMIT' && newKind(cmd) === 'progress' && beforeNote === null) {
+            beforeNote = await h.text();
+            if (fate === 'refused (fenced)') await h.R.call('SET', h.FENCE, '3');      // another generation took over: nothing can save
+          }
+          if (fate === 'outcome unknown' && dropped && h.scriptOf(cmd) === 'RESOLUTION_READ') return { error: 'stand-in: this read is refused' };
+        };
+        shim.hooks.after = async (cmd, reply) => {
+          if (fate === 'outcome unknown' && !dropped && h.scriptOf(cmd) === 'COMMIT' && newKind(cmd) === 'progress' && reply === 'COMMITTED') { dropped = true; return { drop: true }; }
+        };
+        open();
+        const err = await job;
+        shim.hooks = {};
+        const d = await h.doc();
+        const msg = err ? err.message : '';
+        check('the batch STOPPED, and the message keeps the ORIGINAL reason (A not saved, "not-staged")', /^the batch stopped: the decision for .* was not saved \(not-staged\);/.test(msg), msg);
+        check('nothing more was measured (B never), nothing published', !market.starts.get(81) && d.pending.length === 0, { starts: [...market.starts], pending: d.pending.length });
+        check('the stop note\'s save was really attempted', beforeNote !== null);
+        if (fate === 'recorded') {
+          check('the message says the reason is recorded, and it is', /the reason is recorded in lastBackfill\.decisionNotSaved/.test(msg) && d.lastBackfill.decisionNotSaved.count === 1, msg);
+          check('the record changed by the note ONLY', stripBook(d) === stripBook(JSON.parse(beforeNote)));
+        } else if (fate === 'refused (fenced)') {
+          check('the message says the reason could NOT be recorded, and why ("fenced")', /the reason could NOT be recorded \(fenced/.test(msg), msg);
+          check('the record is byte-identical to before the note (nothing written)', (await h.text()) === beforeNote);
+        } else {
+          check('the message says it is NOT KNOWN whether the reason was recorded ("outcome-unknown")', /whether the reason was recorded is NOT KNOWN \(outcome-unknown/.test(msg), msg);
+          check('the record holds at most the note (here it had landed): changed by the note ONLY', stripBook(d) === stripBook(JSON.parse(beforeNote)) && d.lastBackfill.decisionNotSaved.count === 1);
+        }
+        check('the record is still a valid expanded record', d.schemaVersion === 2 && Q.docProblems(d).length === 0, Q.docProblems(d));
+      });
+    }
+
     await section('Q-T2, Q-T3 CHARACTERISATION on the REAL generation-1 build, then the same with P2 and P1', async () => {
       const { olderBuild, removeOlderBuilds, GEN1 } = require('./lib/olderBuild');
       const GEN1DIR = olderBuild(GEN1);

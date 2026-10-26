@@ -804,12 +804,25 @@ function enrichOne(token, staged) {
 // "failed" with the same reason. Decisions already saved stay staged and are
 // published by the next run without being measured again.
 const DECISION_KEPT = ['saved', 'already-decided'];
+// What became of the stop note, in words, from the protected save's answer.
+function noteFate(note) {
+  const st = note && note.status;
+  if (st === 'committed' || st === 'recovered') return 'the reason is recorded in lastBackfill.decisionNotSaved';
+  if (st === 'outcome-unknown' || st === 'error' || !st) return `whether the reason was recorded is NOT KNOWN (${st || 'no answer'}${note && note.why ? ': ' + note.why : ''})`;
+  return `the reason could NOT be recorded (${st}${note.why ? ': ' + note.why : ''})`;
+}
 async function stopOnUnsavedDecision(prev, out) {
   const saved = out.result && out.result.saved;
   if (out.status === 'refused' || !saved || saved.qid !== prev.qid || !DECISION_KEPT.includes(saved.outcome)) {
     const outcome = (saved && saved.qid === prev.qid && saved.outcome) || (out.status === 'refused' ? out.why : 'no answer about it');
-    await noteBackfillProgress({ qid: prev.qid, outcome }, Q.decisionNotSavedUpdate);
-    throw new Error(`the batch stopped: the decision for ${prev.qid} was not saved (${outcome})`);
+    // The note is a diagnostic, never a condition of stopping (the third
+    // correction, 25-26 Oct 2026): noteBackfillProgress never throws, the
+    // stop below always follows, and the message keeps the ORIGINAL reason
+    // and says what became of the note -- recorded, not recorded (and why),
+    // or not known. The note goes through the protected save like any other
+    // change, so it lands whole or not at all; it cannot damage the record.
+    const note = await noteBackfillProgress({ qid: prev.qid, outcome }, Q.decisionNotSavedUpdate);
+    throw new Error(`the batch stopped: the decision for ${prev.qid} was not saved (${outcome}); ${noteFate(note)}`);
   }
 }
 async function runStagedBatch(token, entries) {
