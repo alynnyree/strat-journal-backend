@@ -278,6 +278,11 @@ async function run(opts = {}) {
       if (fr.fault) { stop(`a fault in ${file}: ${fr.fault}`); break; }
       if (fr.timedOut) { stop(`${file} stalled`); break; }
       if (fr.passed === null) { stop(`${file} ended without its total line (a crash)`); break; }
+      // A file passes only if its process ENDED SUCCESSFULLY (exit 0) and printed
+      // no FAIL line, whatever its total says (auditor, harness review: a
+      // printed total alone could pass a file whose process then failed).
+      if (fr.exit !== 0) { stop(`${file} ended with exit ${fr.exit}, not 0`); break; }
+      if (fr.fails.length) { stop(`${file} printed ${fr.fails.length} FAIL line(s) although its total said ${fr.failed} failed`); break; }
       if (!c.groupEnded) { stop(`${file}'s process group could not be confirmed ended`); break; }
     }
   } catch (e) {
@@ -287,10 +292,10 @@ async function run(opts = {}) {
   return finish();
 
   function finish() {
-    const passedAll = result.files.length === files.length && result.files.every(f => f.failed === 0 && f.passed > 0);
+    const passedAll = result.files.length === files.length && result.files.every(f => f.exit === 0 && f.failed === 0 && f.passed > 0 && f.fails.length === 0);
     const cleanAll = result.verdicts.length > 0 && result.verdicts.every(v => v.verified);
     say('SUMMARY:');
-    for (const f of result.files) say(`  ${f.file}: ${f.passed === null ? 'NO TOTAL' : f.passed + ' passed, ' + f.failed + ' failed'}; LOCAL ONLY ${f.localOnly}${f.fails.length ? '; FAIL lines: ' + f.fails.length : ''}`);
+    for (const f of result.files) say(`  ${f.file}: exit ${f.exit}; ${f.passed === null ? 'NO TOTAL' : f.passed + ' passed, ' + f.failed + ' failed'}; LOCAL ONLY ${f.localOnly}${f.fails.length ? '; FAIL lines: ' + f.fails.length : ''}`);
     for (const [f] of files) if (!result.files.some(x => x.file === f)) say(`  ${f}: NOT RUN`);
     say(`  run: ${result.stopped ? 'PARTIAL -- stopped: ' + result.stopped : 'every file ran'}; clean-up: ${cleanAll ? 'VERIFIED after every step' : 'NOT VERIFIED (see the CLEAN-UP lines)'}`);
     out.flush();

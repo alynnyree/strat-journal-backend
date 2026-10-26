@@ -25,7 +25,7 @@ const check = (label, ok, d) => { if (ok) { pass++; console.log('PASS:', label);
   console.log('the runner\'s log:', r.logFile);
   for (const [file] of FILES) {
     const f = r.files.find(x => x.file === file);
-    check(`${file}: ran in store mode, ${f ? f.passed + ' passed, ' + f.failed + ' failed' : 'NOT RUN'}; LOCAL ONLY ${f ? f.localOnly : '-'}`, !!f && f.failed === 0 && f.passed > 0 && f.localOnly >= 1 && !f.fault && !f.timedOut, f && { fails: f.fails, fault: f.fault });
+    check(`${file}: ran in store mode, exit ${f ? f.exit : '-'}, ${f ? f.passed + ' passed, ' + f.failed + ' failed' : 'NOT RUN'}; LOCAL ONLY ${f ? f.localOnly : '-'}`, !!f && f.exit === 0 && f.failed === 0 && f.fails.length === 0 && f.passed > 0 && f.localOnly >= 1 && !f.fault && !f.timedOut, f && { fails: f.fails, fault: f.fault });
     check(`${file}: its clean-up VERIFIED`, new RegExp(`CLEAN-UP ${file.replace('.', '\\.')}: VERIFIED`).test(log));
   }
   check('step 0 matched on the stand-in', /CLEAN-UP after step 0: VERIFIED/.test(log) && !/STEP 0 DIFF/.test(log));

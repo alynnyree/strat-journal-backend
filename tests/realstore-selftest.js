@@ -310,6 +310,27 @@ const E2s = E2 + ' script: ' + 'a'.repeat(40) + ', on @user_script:1.';
     const brokenVerify = x => ({ ...x, verified: !!(x.scan2 && x.scan2.found === 0) });
     check('BROKEN COPY: a runner that skips clean-up when the ledger is unresolved fails S-9', !!v && !s9(brokenSkip(v)));
     check('BROKEN COPY: a runner that calls clean-up verified whenever the second scan reads 0 fails S-9', !!v && v.scan2.found === 0 && !s9(brokenVerify(v)));
+    // A false pass the auditor found (harness review, Part 2): the final
+    // decision read only the printed total. A file that prints a perfect total
+    // and then EXITS UNSUCCESSFULLY, or prints a FAIL line under a "0 failed"
+    // total, must fail the run.
+    const lr = JSON.stringify(path.join(__dirname, 'lib', 'localRedis.js'));
+    fs.writeFileSync(path.join(fx, 'exit1.js'), `
+      const { startRedis, reportStop } = require(${lr});
+      (async () => { const r = await startRedis(); await r.client.call('SET', 'fixture:e', '1');
+        console.log('PASS: looks fine'); reportStop(()=>{}, await r.stop()); console.log('\\n1 passed, 0 failed'); process.exit(1); })();`);
+    fs.writeFileSync(path.join(fx, 'hiddenfail.js'), `
+      const { startRedis, reportStop } = require(${lr});
+      (async () => { const r = await startRedis(); await r.client.call('SET', 'fixture:h', '1');
+        console.log('FAIL: something did go wrong'); reportStop(()=>{}, await r.stop()); console.log('\\n1 passed, 0 failed'); process.exit(0); })();`);
+    const oldPassedAll = rr => rr.files.length === 1 && rr.files.every(f => f.failed === 0 && f.passed > 0);
+    for (const [fixture, why] of [['exit1.js', /ended with exit 1, not 0/], ['hiddenfail.js', /printed 1 FAIL line\(s\) although its total said 0 failed/]]) {
+      await D.call('FLUSHALL');
+      const rr = await run({ selftest: { id: S.id, endpoint: S.endpoint, token: S.token, metricsUrl: S.metricsUrl }, files: [[fixture, 10]], testsDir: fx, outDir, quietMs: 200, secondScanMs: 200, identityWaitMs: 5000, quiet: true });
+      const lg = fs.readFileSync(rr.logFile, 'utf8');
+      check(`${fixture}: a perfect printed total does NOT pass the run; it stops, saying why, and the clean-up still ran and was VERIFIED`, !rr.ok && why.test(lg) && /TESTS: FAILED/.test(lg) && new RegExp(`CLEAN-UP ${fixture.replace('.', '\\.')}: VERIFIED`).test(lg), lg.split('\n').filter(l => /FILE|STOP|TESTS|CLEAN-UP .*: (VERIFIED|NOT)/.test(l)));
+      check(`BROKEN COPY: the old final check (the printed total only) would have PASSED ${fixture}`, oldPassedAll(rr));
+    }
     fs.rmSync(fx, { recursive: true, force: true }); fs.rmSync(outDir, { recursive: true, force: true });
   });
 
