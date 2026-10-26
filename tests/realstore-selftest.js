@@ -334,6 +334,76 @@ const E2s = E2 + ' script: ' + 'a'.repeat(40) + ', on @user_script:1.';
     fs.rmSync(fx, { recursive: true, force: true }); fs.rmSync(outDir, { recursive: true, force: true });
   });
 
+  await section('C-3 (run 1): the identity check waits for slow metrics, refuses another database, and logs every reading', async () => {
+    // Real run 1 stopped here: the metrics by id did not show the nonce within
+    // 60 s, and the stop did not record the readings, so slow metrics and the
+    // wrong database could not be told apart.
+    const { run } = require('./realstore/run.js');
+    const fx = fs.mkdtempSync(path.join(os.tmpdir(), 'realstore-identity-'));
+    fs.writeFileSync(path.join(fx, 'clean.js'), `
+      const { startRedis, reportStop } = require(${JSON.stringify(path.join(__dirname, 'lib', 'localRedis.js'))});
+      (async () => { const r = await startRedis(); await r.client.call('SET', 'fixture:i', '1');
+        console.log('PASS: wrote a key'); reportStop(()=>{}, await r.stop()); console.log('\\n1 passed, 0 failed'); process.exit(0); })();`);
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'realstore-identity-out-'));
+    const go = waitMs => run({ selftest: { id: S.id, endpoint: S.endpoint, token: S.token, metricsUrl: S.metricsUrl }, files: [['clean.js', 10]], testsDir: fx, outDir, quietMs: 200, secondScanMs: 200, identityWaitMs: waitMs, identityPollMs: 100, quiet: true });
+    const readings = lg => lg.split('\n').filter(l => /^IDENTITY before step 0: reading t\+\d+s keys \d+, commands_total \d+, uptime_seconds \d+$/.test(l));
+    // (a) Metrics that refresh only every 1.5 s, with a 5 s wait: confirmed.
+    await D.call('FLUSHALL'); S.metricsLagMs = 1500; S.snap = null;
+    const ra = await go(5000);
+    const la = fs.readFileSync(ra.logFile, 'utf8');
+    const rda = readings(la);
+    const frozen = rda.length >= 2 && rda[0].replace(/^.*keys/, 'keys') === rda[1].replace(/^.*keys/, 'keys');
+    check('(a) slow metrics (refreshed every 1.5 s): identity CONFIRMED within the longer wait, and the run passes', ra.ok && /IDENTITY before step 0: the endpoint is this run's database .* after \d+ s/.test(la), la.split('\n').filter(l => /IDENTITY|STOP|TESTS/.test(l)).slice(0, 30));
+    check('(a) EVERY reading is in the log as plain numbers, and the unchanged readings while the metrics lagged are visible', rda.length >= 5 && frozen, rda.slice(0, 6));
+    check('(a) the SET and DEL answers are in the log', /IDENTITY before step 0: SET nonce answered "OK"/.test(la) && /IDENTITY before step 0: DEL nonce answered 1/.test(la));
+    check('(a) the log holds no credential of the run', !la.includes(S.token) && !la.includes(S.endpoint));
+    // BROKEN COPY: the old 60 s limit, scaled: a wait SHORTER than the lag.
+    await D.call('FLUSHALL'); S.snap = null;
+    const rb = await go(1000);
+    const lb = fs.readFileSync(rb.logFile, 'utf8');
+    check('BROKEN COPY (the old short wait): it gives up before the slow metrics refresh -- and its stop now NAMES the cause: the numbers did not move', !rb.ok && /STOP: IDENTITY: .*within 1 s \(first to last: keys 0 -> 0, commands_total (\d+) -> \1;/.test(lb), lb.split('\n').filter(l => /STOP/.test(l)));
+    check('...and after that stop nothing else was sent: no step 0, no file, and the nonce is gone', !/STEP 0/.test(lb) && !/^FILE /m.test(lb) && (await D.call('DBSIZE')) === 0);
+    S.metricsLagMs = 0; S.snap = null;
+    // (b) Metrics of ANOTHER database: they move, never with the nonce.
+    await D.call('FLUSHALL'); S.metricsOther = { keys: 5, commands_total: 100 };
+    const rc = await go(2000);
+    S.metricsOther = null;
+    const lc = fs.readFileSync(rc.logFile, 'utf8');
+    check('(b) metrics of another database: REFUSED (IDENTITY), the stop showing keys unchanged while commands moved', !rc.ok && /STOP: IDENTITY: .*\(first to last: keys 5 -> 5, commands_total (\d+) -> (?!\1;)\d+;/.test(lc), lc.split('\n').filter(l => /STOP/.test(l)));
+    check('(b) every reading is in the log, and nothing else was sent: no step 0, no file, the nonce gone', readings(lc).length >= 5 && !/STEP 0/.test(lc) && !/^FILE /m.test(lc) && (await D.call('DBSIZE')) === 0);
+    const weak = lg => readings(lg).some(l => { const x = /commands_total (\d+)/.exec(l); return x && Number(x[1]) > 100; });
+    check('BROKEN COPY: a check that accepted "commands_total rose" alone would have CONFIRMED the other database here', weak(lc));
+    // (c) A metrics read that fails: the reason is logged, never a bare stop.
+    await D.call('FLUSHALL');
+    S.metricsNext = [{ status: 503, body: 'unavailable' }];
+    const rd = await go(2000);
+    const ld = fs.readFileSync(rd.logFile, 'utf8');
+    check('(c) a metrics read answered 503: the stop says so ("HTTP 503"), with the reading line', !rd.ok && /IDENTITY before step 0: before the nonce: t\+\d+s NO READING: HTTP 503/.test(ld) && /STOP: IDENTITY: the metrics could not be read \(HTTP 503\)/.test(ld), ld.split('\n').filter(l => /IDENTITY|STOP/.test(l)));
+    fs.rmSync(fx, { recursive: true, force: true }); fs.rmSync(outDir, { recursive: true, force: true });
+  });
+
+  await section('C-3 at full scale (auditor, run 1): metrics 90 s late, the REAL wait and poll', async () => {
+    const { run, IDENTITY } = require('./realstore/run.js');
+    check('the real run\'s identity wait is 5 minutes, read every 10 s', IDENTITY.waitMs === 300000 && IDENTITY.pollMs === 10000, IDENTITY);
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'realstore-identity90-'));
+    const go = extra => run({ selftest: { id: S.id, endpoint: S.endpoint, token: S.token, metricsUrl: S.metricsUrl }, files: [], outDir, quietMs: 200, secondScanMs: 200, identityPollMs: IDENTITY.pollMs, quiet: true, ...extra });
+    // The real limit (no override): confirmed after the 90 s delay.
+    await D.call('FLUSHALL'); S.metricsLagMs = 90000; S.snap = null;
+    const t0 = Date.now();
+    const ra = await go({});
+    const la = fs.readFileSync(ra.logFile, 'utf8');
+    const conf = /IDENTITY before step 0: the endpoint is this run's database .* after (\d+) s/.exec(la);
+    check('90 s late metrics, the real 5-minute limit: identity CONFIRMED (after about 90 s), the run passes', ra.ok && !!conf && Number(conf[1]) >= 90 && Number(conf[1]) < 300, { secs: conf && conf[1], took: Math.round((Date.now() - t0) / 1000), lines: la.split('\n').filter(l => /STOP|confirmed|this run's database/.test(l)) });
+    // BROKEN COPY: the old 60 s limit gives up first.
+    await D.call('FLUSHALL'); S.snap = null;
+    const rb = await go({ identityWaitMs: 60000 });
+    const lb = fs.readFileSync(rb.logFile, 'utf8');
+    check('BROKEN COPY (the old 60 s limit): it gives up before the 90 s delay ends, the stop showing the numbers frozen', !rb.ok && /STOP: IDENTITY: .*within 60 s \(first to last: keys 0 -> 0, commands_total (\d+) -> \1;/.test(lb), lb.split('\n').filter(l => /STOP/.test(l)));
+    check('...and nothing else was sent after that stop: no step 0, no clean-up against the unconfirmed database', !/^STEP 0/m.test(lb) && !/^CLEAN-UP /m.test(lb), lb.split('\n').filter(l => /^(STEP 0|CLEAN-UP|FILE|STOP)/.test(l)));
+    S.metricsLagMs = 0; S.snap = null;
+    fs.rmSync(outDir, { recursive: true, force: true });
+  });
+
   await section('the runner refuses to run for real without the owner\'s words', async () => {
     const { run } = require('./realstore/run.js');
     const saved = process.env.DEPLOY2_REALSTORE_RUN; delete process.env.DEPLOY2_REALSTORE_RUN;

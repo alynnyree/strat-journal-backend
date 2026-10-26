@@ -51,10 +51,24 @@ async function upstashStandIn({ token = 'stand-in-token-0123456789abcdef', id = 
       // A request the self-test wants held open (an in-flight forward).
       if (s.holdWhen) { const ms = s.holdWhen(raw.toString('utf8')); if (ms) await new Promise(r => setTimeout(r, ms)); }
       if (req.method === 'GET' && req.url === `/metrics/${s.id}`) {
-        const cs = String(await R.call('INFO', 'commandstats'));
-        let commands = 0; for (const l of cs.split(/\r?\n/)) { const x = /^cmdstat_([a-z_|]+):calls=(\d+)/.exec(l); if (x && !/^(info|config)/.test(x[1])) commands += Number(x[2]); }
-        return reply(res, 200, { uptime_seconds: Math.round((Date.now() - s.started) / 1000), expires_at: new Date(s.started + 3 * 86400000).toISOString(),
-          console_url: 'stand-in', commands_total: commands, commands_per_sec_1m: 0, keys: await R.call('DBSIZE'), memory_bytes: 0, bytes_in: s.bytesIn, bytes_out: s.bytesOut });
+        // s.metricsNext: scripted answers for METRICS reads only.
+        if (s.metricsNext && s.metricsNext.length) { const x = s.metricsNext.shift(); return reply(res, x.status, x.body || ''); }
+        // s.metricsOther: the numbers of ANOTHER database -- they move on their
+        // own (commands rise on every read) but never with this one's keys.
+        if (s.metricsOther) {
+          s.metricsOther.commands_total += 3;
+          return reply(res, 200, { uptime_seconds: 999, expires_at: '', console_url: 'stand-in', commands_total: s.metricsOther.commands_total, commands_per_sec_1m: 0, keys: s.metricsOther.keys, memory_bytes: 0, bytes_in: 0, bytes_out: 0 });
+        }
+        // s.metricsLagMs: numbers refreshed only that often (a slow metrics
+        // service); between refreshes the same snapshot is served.
+        if (!s.snap || !s.metricsLagMs || Date.now() - s.snapAt >= s.metricsLagMs) {
+          const cs = String(await R.call('INFO', 'commandstats'));
+          let commands = 0; for (const l of cs.split(/\r?\n/)) { const x = /^cmdstat_([a-z_|]+):calls=(\d+)/.exec(l); if (x && !/^(info|config)/.test(x[1])) commands += Number(x[2]); }
+          s.snap = { uptime_seconds: Math.round((Date.now() - s.started) / 1000), expires_at: new Date(s.started + 3 * 86400000).toISOString(),
+            console_url: 'stand-in', commands_total: commands, commands_per_sec_1m: 0, keys: await R.call('DBSIZE'), memory_bytes: 0, bytes_in: s.bytesIn, bytes_out: s.bytesOut };
+          s.snapAt = Date.now();
+        }
+        return reply(res, 200, s.snap);
       }
       if (!['POST', 'GET', 'HEAD', 'PUT'].includes(req.method)) return reply(res, 405, { error: 'method not allowed' });
       if (req.headers.authorization !== 'Bearer ' + s.token) return reply(res, 401, { error: 'WRONGPASS invalid password' });

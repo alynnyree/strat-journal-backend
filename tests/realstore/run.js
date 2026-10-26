@@ -53,6 +53,7 @@ const FILES = [
   ['gen2-store.js', 15334], ['gen2-processes.js', 15328], ['gen2-stale-reads.js', 4888], ['gen2-reset.js', 1459],
   ['gen2-p2.js', 1376], ['gen2-older-builds.js', 685], ['gen2-routes.js', 517], ['writer-fence.js', 329],
 ];
+const IDENTITY = Object.freeze({ waitMs: 5 * 60000, pollMs: 10000 });   // the real run's identity wait (after run 1)
 const BUDGET = { commands: 250000, bytes: 5 * 1024 ** 3 };   // upper STOP limits, not capacity (v2 section 8)
 const sha256 = b => crypto.createHash('sha256').update(b).digest('hex');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -63,7 +64,10 @@ async function run(opts = {}) {
   const quietMs = opts.quietMs !== undefined ? opts.quietMs : 40000;     // Q-4: 30 s beyond the 10 s request limit
   const secondScanMs = opts.secondScanMs !== undefined ? opts.secondScanMs : 30000;
   const stallMs = opts.stallMs || 25 * 60000;
-  const identityWaitMs = opts.identityWaitMs || 60000;
+  // The identity wait (run 1 stopped at 60 s with the readings unrecorded):
+  // up to 5 minutes, a reading every 10 s, EVERY reading written to the log.
+  const identityWaitMs = opts.identityWaitMs || IDENTITY.waitMs;
+  const identityPollMs = opts.identityPollMs || (selftest ? 50 : IDENTITY.pollMs);
   const testsDir = opts.testsDir || path.join(BACKEND, 'tests');
   const outDir = opts.outDir || fs.mkdtempSync(path.join(os.tmpdir(), 'realstore-run-'));
   const runTag = crypto.randomBytes(4).toString('hex');
@@ -127,39 +131,60 @@ async function run(opts = {}) {
   const runnerLedger = path.join(ledgerRoot, 'runner'); fs.mkdirSync(runnerLedger);
   const D = UR.directClient(identity, { ledgerDir: runnerLedger });
 
-  const metrics = async () => {
+  // One metrics reading: the numbers, or WHY there are none (never a bare null).
+  const metricsRead = async () => {
     const a = await UR.send(identity.metricsUrl, { method: 'GET', headers: { 'User-Agent': 'claude-code' } });
-    if (a.transport || a.status !== 200) return null;
+    if (a.transport) return { m: null, why: 'no answer (' + a.transport + ')' };
+    if (a.status !== 200) return { m: null, why: 'HTTP ' + a.status };
     try {
       const m = JSON.parse(a.body);
-      for (const k of ['commands_total', 'keys', 'bytes_in', 'bytes_out']) if (!Number.isSafeInteger(m[k])) return null;
-      return m;
-    } catch (e) { return null; }
+      for (const k of ['commands_total', 'keys', 'bytes_in', 'bytes_out']) if (!Number.isSafeInteger(m[k])) return { m: null, why: 'the field ' + k + ' is not a whole number' };
+      return { m, why: null };
+    } catch (e) { return { m: null, why: 'the answer is not JSON' }; }
   };
+  const metrics = async () => (await metricsRead()).m;
   const fmtM = m => (m ? `commands ${m.commands_total}, keys ${m.keys}, bytes in ${m.bytes_in}, out ${m.bytes_out}` : 'NOT AVAILABLE');
 
   // ---- 3. Empty, then THIS run's database (I-5).
+  // I-5, the identity check. Identity is confirmed ONLY when, after this run
+  // writes one nonce key through its client, the metrics read by this run's id
+  // show BOTH keys and commands_total risen; and, after the nonce is deleted,
+  // keys back where they were. Every reading is logged as plain numbers, with
+  // the client's answers to the SET and DEL, so a stop names its cause:
+  // frozen numbers (slow metrics) read differently from numbers that move
+  // without the nonce (another database).
+  const fmtR = (r, t0) => `t+${((Date.now() - t0) / 1000).toFixed(0)}s ` + (r.m ? `keys ${r.m.keys}, commands_total ${r.m.commands_total}, uptime_seconds ${r.m.uptime_seconds}` : 'NO READING: ' + r.why);
   const identityCheck = async (label) => {
-    const m0 = await metrics();
-    if (!m0) return 'the metrics could not be read';
+    const t0 = Date.now();
+    const r0 = await metricsRead();
+    say(`IDENTITY ${label}: before the nonce: ${fmtR(r0, t0)}`);
+    if (!r0.m) return 'the metrics could not be read (' + r0.why + ')';
+    const m0 = r0.m;
     const nonce = 'realstore-nonce:' + crypto.randomBytes(8).toString('hex');
-    await D.call('SET', nonce, '1');
-    let seen = false; const t0 = Date.now();
-    while (Date.now() - t0 < identityWaitMs) {
-      const m = await metrics();
-      if (m && m.keys >= m0.keys + 1 && m.commands_total >= m0.commands_total + 1) { seen = true; break; }
-      await sleep(selftest ? 50 : 2000);
-    }
-    await D.call('DEL', nonce);
-    if (!seen) return 'the metrics read by this run\'s id did not show the nonce write (keys and commands both rising) within ' + identityWaitMs / 1000 + ' s';
-    let back = false; const t1 = Date.now();
+    const setAnswer = await D.call('SET', nonce, '1');
+    say(`IDENTITY ${label}: SET nonce answered ${JSON.stringify(setAnswer)}`);
+    let seen = false, last = r0; const t1 = Date.now();
     while (Date.now() - t1 < identityWaitMs) {
-      const m = await metrics();
-      if (m && m.keys === m0.keys) { back = true; break; }
-      await sleep(selftest ? 50 : 2000);
+      await sleep(identityPollMs);
+      last = await metricsRead();
+      say(`IDENTITY ${label}: reading ${fmtR(last, t0)}`);
+      if (last.m && last.m.keys >= m0.keys + 1 && last.m.commands_total >= m0.commands_total + 1) { seen = true; break; }
     }
-    if (!back) return 'the metrics\' key count did not return after the nonce was deleted';
-    say(`IDENTITY ${label}: the endpoint is this run's database (nonce seen through the metrics by id, then removed)`);
+    const delAnswer = await D.call('DEL', nonce);
+    say(`IDENTITY ${label}: DEL nonce answered ${JSON.stringify(delAnswer)}`);
+    if (!seen) {
+      const moved = last.m ? `keys ${m0.keys} -> ${last.m.keys}, commands_total ${m0.commands_total} -> ${last.m.commands_total}` : 'the last reading failed';
+      return `the metrics read by this run's id did not show the nonce write (keys and commands both rising) within ${identityWaitMs / 1000} s (first to last: ${moved}; every reading is above)`;
+    }
+    let back = false; const t2 = Date.now();
+    while (Date.now() - t2 < identityWaitMs) {
+      await sleep(identityPollMs);
+      const r = await metricsRead();
+      say(`IDENTITY ${label}: after the DEL, reading ${fmtR(r, t0)}`);
+      if (r.m && r.m.keys === m0.keys) { back = true; break; }
+    }
+    if (!back) return `the metrics' key count did not return to ${m0.keys} within ${identityWaitMs / 1000} s after the nonce was deleted (every reading is above)`;
+    say(`IDENTITY ${label}: the endpoint is this run's database (nonce seen through the metrics by id, then removed) after ${((Date.now() - t0) / 1000).toFixed(0)} s`);
     return null;
   };
 
@@ -351,7 +376,7 @@ async function protocolProbe(identity, D, ledgerDir, say) {
   return expect.every(Boolean) ? null : 'the real answers differ from the expected ones (see the DIFF lines)';
 }
 
-module.exports = { run, FILES, GATE1, PRODUCT, PRODUCT_COMMIT };
+module.exports = { run, FILES, GATE1, PRODUCT, PRODUCT_COMMIT, IDENTITY };
 
 if (require.main === module) {
   run({ outDir: process.argv[2] }).then(r => process.exit(r.ok ? 0 : 1), e => { console.log('RUNNER CRASHED', e && e.message); process.exit(1); });
