@@ -29,8 +29,10 @@ const fakeRedis = {
   rpop: async () => null, ltrim: async () => 'OK', incr: async () => 1,
   expire: async () => 1, keys: async () => [],
 };
-// Deploy 1 (queue plan 5.8.2): "trades:state" is saved by one script now; the stand-in answers it.
-fakeRedis.eval = require('./lib/gen1SaveStandIn').gen1SaveVia(fakeRedis);
+// Deploy 2 (queue plan v14.1 rev 3.2): "trades:state" is read and saved only by
+// scripts now; the stand-in answers them (tests/lib/gen2StandIn.js).
+const G2 = require('./lib/gen2StandIn');
+fakeRedis.eval = G2.gen2Via(fakeRedis);
 class Redis { constructor(){ return fakeRedis; } }
 Redis.fromEnv = () => fakeRedis;
 const origLoad = Module._load;
@@ -89,10 +91,14 @@ function trade(i){
 }
 
 (async () => {
+  // Generation 2: this process raises the fence and expands the record first.
+  await require(path.join(BACKEND, 'tradeStore.js')).startGeneration2({ pauseMs: 0 });
   await new Promise(r => setTimeout(r, 700));
 
   const N = 100;
-  await tradeStore.saveState({ openLegs: [], pending: Array.from({length:N}, (_,i) => trade(i)), lastProcessedIds: [] });
+  // A starting record, stored as generation 2 leaves one (saveState is gone:
+  // every write of the record now goes through THE COMMIT).
+  store['trades:state'] = G2.expanded({ openLegs: [], pending: Array.from({length:N}, (_,i) => trade(i)), lastProcessedIds: [] });
 
   const full = await get('/api/trades/pending');
   const slim = await get('/api/trades/pending?slim=1');
@@ -163,7 +169,7 @@ function trade(i){
   check(`a trade no longer in the queue answers 404 (${gone.status})`, gone.status === 404);
   check('and says which fault it is', /no longer waiting/.test(JSON.parse(gone.body).reason || ''));
 
-  await tradeStore.saveState({ openLegs: [], pending: [Object.assign(trade(99), { replayData: null })], lastProcessedIds: [] });
+  store['trades:state'] = G2.expanded({ openLegs: [], pending: [Object.assign(trade(99), { replayData: null })], lastProcessedIds: [] });
   const bare = await get('/api/trades/pending?slim=1');
   check('a trade with no bars says so rather than promising some',
     JSON.parse(bare.body).pending[0].replayWaiting === false);

@@ -17,9 +17,11 @@
 // real-store gate (plan 6.0).
 const path = require('path');
 
-function gen1SaveVia(fake) {
+// `buildDir` is the folder of the generation-1 build (tests/lib/olderBuild.js):
+// since Deploy 2 the generation-1 save lives only in history, at eb3880b.
+function gen1SaveVia(fake, buildDir) {
   return async (script, keys, args) => {
-    const ts = require(path.join(__dirname, '..', '..', 'tradeStore'));
+    const ts = require(path.join(buildDir, 'tradeStore'));
     if (script !== ts.GEN1_SAVE_SCRIPT
         || !Array.isArray(keys) || keys.length !== 2 || keys[0] !== ts.KEY || keys[1] !== ts.FENCE_KEY
         || !Array.isArray(args) || args.length !== 1 || typeof args[0] !== 'string') {

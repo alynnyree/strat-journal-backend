@@ -4,6 +4,7 @@ const { getOptionFills } = require('./schwabClient');
 const alpaca = require('./alpacaClient');
 const { processFills, CLOSE_KINDS, collisionIncident } = require('./matcher');
 const tradeStore = require('./tradeStore');
+const Q = require('./queueOps');
 const { getTokens, setLastCheck } = require('./tokenStore');
 const { getUnderlyingPriceAt, getFtfcForTrade } = require('./ftfcCheck');
 const { getReplayCandles } = require('./replayData');
@@ -507,6 +508,65 @@ function syncProblems(report, ambiguous) {
   return out;
 }
 
+// The outcomes of protect() after which the change IS in the record.
+const SAVED = ['committed', 'unchanged', 'recovered'];
+
+// 4.1 (3): a candidate epoch that collides is refused; a NEW operation with a
+// NEW candidate may follow, at most 3 times in a row.
+async function withFreshEpoch(run) {
+  for (let i = 0; i < 3; i++) {
+    const out = await run(require('crypto').randomBytes(16).toString('hex'));
+    if (!(out.status === 'refused' && out.why === 'epoch-collision')) return out;
+  }
+  return { status: 'refused', why: 'epoch-collision-repeated' };
+}
+
+// W1, THE LIVE-SYNC LANDING, as a PURE update (queue plan 5.5 PURITY): it
+// returns {next, result} and the trades it landed, and reads nothing but the
+// record and the inputs fixed before the first run.
+function syncLandingUpdate({ fills, report, syncNote, enriched, cutoverIso, cutoverMs, nowIso }) {
+  return (latest, fx) => {
+    const ambiguous = [];
+    const latestCutover = latest.identityCutoverAt ? cutoverOf(latest) : cutoverMs;
+    const take = notYetProcessed(fills, latest, { cutoverMs: latestCutover, ambiguous });
+    const problems = syncProblems(report, ambiguous);
+    const hasProblems = Object.keys(problems).length > 0;
+    const prev = latest.lastSync || {};
+    const hadProblems = !!(prev.windowsFailed || prev.unusable || prev.legacyAmbiguous);
+    if (!take.length && !syncNote && !hasProblems && !hadProblems && latest.identityCutoverAt) return { next: null, result: null };
+    const next = { ...latest };
+    if (!next.identityCutoverAt) next.identityCutoverAt = cutoverIso;
+    let landed = [], opened = [];
+    if (take.length) {
+      const m = processFills(clone(take), { openLegs: clone(latest.openLegs || []), pending: [] });
+      // M-1: a trade whose id is already waiting with another pair stays out.
+      // Generation 2: "waiting" includes staged trades (pendingStaged), which
+      // will be published into the same list.
+      const q = withoutQueueCollisions([...(latest.pending || []), ...(latest.pendingStaged || [])],
+        m.newPending.map(t => clone(enriched.get(tradeKey(t)) || t)));
+      if (q.keep.length) {
+        const ids = Q.issueQids(latest, q.keep.length, fx.candidateEpoch, fx.at);
+        if (!ids.ok) return { refuse: ids.reason };
+        Object.assign(next, ids.fields);
+        landed = q.keep.map((t, i) => ({ ...t, qid: ids.qids[i] }));
+      }
+      opened = m.newlyOpenedLegs;
+      next.openLegs = m.updatedState.openLegs;
+      next.pending = [...landed, ...(latest.pending || [])];
+      next.lastProcessedIds = unionIds(latest.lastProcessedIds, take.map(f => f.transactionId));
+      // H-2: in the same change as "processed" (see withExceptions).
+      const ex = withExceptions(latest, [...m.exceptions, ...q.incidents], evidenceAfter(m.fullyPaired, q), nowIso, 'sync');
+      if (ex !== latest.exceptions) next.exceptions = ex;
+    }
+    if (syncNote) next.lastSync = { ...syncNote, ...problems };
+    else if (hasProblems || hadProblems) {
+      next.lastSync = { at: nowIso, windowsFailed: 0, ...problems,
+        ...(prev.windowsFailed ? { recoveredFrom: prev.at || null } : {}) };
+    }
+    return { next, result: { landed: landed.map(t => ({ id: String(t.id), qid: t.qid })), fillsProcessed: take.length }, landed, opened };
+  };
+}
+
 async function runSyncCheck() {
   const out = await runExclusive('sync', syncOnce);
   if (!out.ran) {
@@ -575,39 +635,25 @@ async function syncOnce() {
     // got in the way this is the same match as the trial, so every trade
     // keeps its details; a trade the trial did not produce is queued without
     // them and the app's catch-up fills them in.
-    let landed = [];
-    let opened = [];
-    await tradeStore.updateState(latest => {
-      const ambiguous = [];
-      const latestCutover = latest.identityCutoverAt ? cutoverOf(latest) : cutoverMs;
-      const take = notYetProcessed(fills, latest, { cutoverMs: latestCutover, ambiguous });
-      const problems = syncProblems(report, ambiguous);
-      const hasProblems = Object.keys(problems).length > 0;
-      const prev = latest.lastSync || {};
-      const hadProblems = !!(prev.windowsFailed || prev.unusable || prev.legacyAmbiguous);
-      if (!take.length && !syncNote && !hasProblems && !hadProblems && latest.identityCutoverAt) return null;
-      const next = { ...latest };
-      if (!next.identityCutoverAt) next.identityCutoverAt = cutoverIso;
-      if (take.length) {
-        const m = processFills(take, { openLegs: clone(latest.openLegs || []), pending: [] });
-        // M-1: a trade whose id is already queued with another pair stays out.
-        const q = withoutQueueCollisions(latest.pending, m.newPending.map(t => enriched.get(tradeKey(t)) || t));
-        landed = q.keep;
-        opened = m.newlyOpenedLegs;
-        next.openLegs = m.updatedState.openLegs;
-        next.pending = [...landed, ...(latest.pending || [])];
-        next.lastProcessedIds = unionIds(latest.lastProcessedIds, take.map(f => f.transactionId));
-        // H-2: in the same change as "processed" (see withExceptions).
-        const ex = withExceptions(latest, [...m.exceptions, ...q.incidents], evidenceAfter(m.fullyPaired, q), now.toISOString(), 'sync');
-        if (ex !== latest.exceptions) next.exceptions = ex;
-      }
-      if (syncNote) next.lastSync = { ...syncNote, ...problems };
-      else if (hasProblems || hadProblems) {
-        next.lastSync = { at: now.toISOString(), windowsFailed: 0, ...problems,
-          ...(prev.windowsFailed ? { recoveredFrom: prev.at || null } : {}) };
-      }
-      return next;
-    });
+    //
+    // Generation 2 (queue plan 5.5, W1): a PURE update saved through THE
+    // COMMIT. Everything it needs from outside (the fills, the trial's
+    // details, the time) was fixed above, and what it found is RETURNED,
+    // never written to an outside variable, so a second run of it after a
+    // refused save computes from the record as it then is. Each landed trade
+    // gets its qid in the same save (plan 4.1).
+    const landing = await withFreshEpoch(candidateEpoch => tradeStore.protect('sync-landing', syncLandingUpdate({
+      fills, report, syncNote, enriched, cutoverIso, cutoverMs, nowIso: now.toISOString(),
+    }), { candidateEpoch }));
+    if (!SAVED.includes(landing.status)) {
+      // Not saved, or not known to be: the fills stay unprocessed and the
+      // checkpoint stays put, so the next tick takes them again (5.6).
+      throw new Error(`the sync's save did not go through (${landing.status}${landing.why ? ': ' + landing.why : ''})`);
+    }
+    // A save found already made by an earlier attempt of this same change
+    // returns its record, not the trades: nothing to announce from here.
+    const landed = (landing.out && landing.out.landed) || [];
+    const opened = (landing.out && landing.out.opened) || [];
 
     // Only here, in the live 5-minute/streamer-triggered check — never
     // from runBackfill() below, which can surface a hundred-plus
@@ -642,17 +688,21 @@ async function syncOnce() {
   }
 }
 
-// Empties the record of what is waiting (see the reset route). Waits for a
-// running job, so a sync cannot save its results over the emptied record
-// half-way through.
-async function resetSyncState() {
-  const out = await runExclusive('reset',
-    // The exception ledger (H-2) survives a reset: it records broker fills,
-    // not the queue, and nothing may delete it.
-    () => tradeStore.updateState(latest => ({ openLegs: [], pending: [], lastProcessedIds: [],
-      ...(latest && latest.exceptions ? { exceptions: latest.exceptions } : {}) })),
-    { wait: true });
-  return out.ran;
+// Empties the record of what is waiting (see the reset route).
+//
+// Generation 2 (queue plan 3.8 and 5.9.3): the protected reset, under THE
+// COMMIT. requestId is the app's (S-R2), so the SAME request sent again finds
+// its own record and resets nothing a second time; an older app sends none,
+// and one is made here (S-R7). It NEVER waits behind a running job (S-R3): it
+// used to, and a reset could land minutes after the phone had stopped
+// waiting. If a sync, an import or another reset is running in this process,
+// the answer is "busy" at once. Two processes are settled by THE COMMIT.
+// The exception ledger (H-2) survives a reset, as before.
+async function resetSyncState({ requestId } = {}) {
+  const out = await runExclusive('reset', () => tradeStore.protect('reset', Q.resetUpdate,
+    { opId: requestId || undefined, acceptKinds: ['reset', 'reset-cancel'] }));
+  if (!out.ran) return { status: 'job-running', busyWith: out.busyWith };
+  return out.value;
 }
 
 // One-time (or on-demand) wide-range pull for historical backfill.
@@ -668,15 +718,19 @@ async function resetSyncState() {
 // underlying prices, replay data, setup and stop for every trade found.
 // Before this existed the app waited seven seconds and then announced
 // "Schwab had nothing new", which was not something it could know.
-async function noteBackfillProgress(patch) {
+//
+// Generation 2 (W3, kind "progress"): a merge into lastBackfill under THE
+// COMMIT. Progress reporting must never be the thing that breaks an import
+// (the existing rule): a note that does not go through is said in the log
+// and the import carries on; the next note writes the current figures.
+async function noteBackfillProgress(patch, update = Q.progressUpdate) {
   try {
-    await tradeStore.updateState(latest => ({
-      ...latest,
-      lastBackfill: { ...(latest.lastBackfill || {}), ...patch },
-    }));
+    const out = await tradeStore.protect('progress', update, { payload: patch });
+    if (!SAVED.includes(out.status)) console.log('Could not record backfill progress:', out.status, out.why || '');
+    return out;
   } catch (err) {
-    // Progress reporting must never be the thing that breaks an import.
     console.log('Could not record backfill progress:', err.message);
+    return { status: 'error', why: err.message };
   }
 }
 
@@ -685,19 +739,188 @@ async function noteBackfillProgress(patch) {
 // whole journal on every trade.
 const ENRICH_BATCH = 25;
 
-// Saves the enriched copies of a backfill's own trades -- but only those
-// still waiting. One the phone has already taken stays taken.
-async function refreshWaiting(trades) {
-  const byId = new Map(trades.map(t => [t.id, t]));
-  await tradeStore.updateState(latest => {
-    let changed = false;
-    const pending = (latest.pending || []).map(p => {
-      if (!byId.has(p.id)) return p;
-      changed = true;
-      return byId.get(p.id);
-    });
-    return changed ? { ...latest, pending } : null;
+// P2, QUEUE ONLY AFTER MEASUREMENT (queue plan section 3). A history
+// import's trades used to be queued BEFORE their details were worked out, and
+// then REPLACED in place once they were (refreshWaiting, now deleted). The
+// phone could read the first copy, and its removal then deleted the measured
+// copy it had never seen -- or collect the first copy so early that the
+// measured one was never queued at all. Now a trade waits, hidden, in
+// pendingStaged until its batch is measured (or has failed, or run out of
+// time), and is then published to the visible list ONCE.
+
+// 3.7 ITEM_WAIT: how long the batch waits for ONE trade's result, counted
+// from the start of its enrichment. A timer threshold, not a limit on the
+// calls underneath: nothing is cancelled, a late answer is simply not used.
+const ITEM_WAIT = { ms: 90 * 1000 };
+// Each trade's ONE decision, with its measured wait, is handed to this
+// observer when one is set (the checks set it, to report every wait as plan
+// test Q-T1 asks and to count decisions in Q-T6; nothing in the service does).
+const P2_EVENTS = { observe: null };
+const noteDecision = ev => { try { if (P2_EVENTS.observe) P2_EVENTS.observe(ev); } catch (e) { /* reporting only */ } };
+async function enrichSteps(token, list) {
+  await enrichWithUnderlyingPrices(token, list);
+  await enrichWithFtfc(token, list);
+  await enrichWithReplayData(token, list);
+  await enrichWithStrategy(list);
+  await enrichWithStopRule(token, list);
+}
+// ONE DECISION PER TRADE (3.7): whichever of the result and the timer runs
+// first decides, and records which; the other then does nothing. Each
+// enrichment works on its OWN copy (the steps change the trades they are
+// given), and that copy is read only once the decision is "result" or
+// "failed"; a late call can change nothing anyone else uses.
+function enrichOne(token, staged) {
+  const copy = structuredClone(staged);
+  const started = Date.now();
+  return new Promise(resolve => {
+    let decided = false;
+    const decide = out => { decided = true; noteDecision({ qid: staged.qid, decision: out.decision, waitedMs: out.waitedMs }); resolve(out); };
+    const timer = setTimeout(() => {
+      if (decided) return;
+      decide({ decision: 'timed-out', waitedMs: Date.now() - started });
+    }, ITEM_WAIT.ms);
+    enrichSteps(token, [copy]).then(
+      () => { if (decided) return; clearTimeout(timer); decide({ decision: 'result', trade: copy, waitedMs: Date.now() - started }); },
+      err => { if (decided) return; clearTimeout(timer); decide({ decision: 'failed', trade: copy, why: (err && err.message) || String(err), waitedMs: Date.now() - started }); });
   });
+}
+
+// ONE BATCH of staged trades (3.11 as corrected on 25 Oct 2026; the
+// auditor's accepted correction plan): for each trade in turn, ONE guard
+// commit saves the previous trade's decision and counts THIS trade only; its
+// measurement (3.7, one decision) starts only after that commit is confirmed
+// (I4: "committed", "unchanged" or "recovered" -- an outcome still unknown
+// throws, so nothing is measured on a count that may not exist). Then ONE
+// publication saves the last decision and publishes every decided trade of
+// the batch together, from the document (3.3).
+// A guard or publication that does not go through throws: the trades stay
+// staged with their decisions so far, and the resume takes them again (3.6),
+// without measuring or counting a decided one again (I3).
+// EVERY decision handed to a commit is checked for having been SAVED (the
+// second correction, 25 Oct 2026): "saved" or "already-decided" (another
+// process saved one first; that one is kept and published) may continue.
+// Anything else stops the batch with nothing more measured, after a note in
+// lastBackfill.decisionNotSaved naming the trade and why; the run then ends
+// "failed" with the same reason. Decisions already saved stay staged and are
+// published by the next run without being measured again.
+const DECISION_KEPT = ['saved', 'already-decided'];
+// What became of the stop note, in words, from the protected save's answer.
+function noteFate(note) {
+  const st = note && note.status;
+  if (st === 'committed' || st === 'recovered') return 'the reason is recorded in lastBackfill.decisionNotSaved';
+  if (st === 'outcome-unknown' || st === 'error' || !st) return `whether the reason was recorded is NOT KNOWN (${st || 'no answer'}${note && note.why ? ': ' + note.why : ''})`;
+  return `the reason could NOT be recorded (${st}${note.why ? ': ' + note.why : ''})`;
+}
+async function stopOnUnsavedDecision(prev, out) {
+  const saved = out.result && out.result.saved;
+  if (out.status === 'refused' || !saved || saved.qid !== prev.qid || !DECISION_KEPT.includes(saved.outcome)) {
+    const outcome = (saved && saved.qid === prev.qid && saved.outcome) || (out.status === 'refused' ? out.why : 'no answer about it');
+    // The note is a diagnostic, never a condition of stopping (the third
+    // correction, 25-26 Oct 2026): noteBackfillProgress never throws, the
+    // stop below always follows, and the message keeps the ORIGINAL reason
+    // and says what became of the note -- recorded, not recorded (and why),
+    // or not known. The note goes through the protected save like any other
+    // change, so it lands whole or not at all; it cannot damage the record.
+    const note = await noteBackfillProgress({ qid: prev.qid, outcome }, Q.decisionNotSavedUpdate);
+    throw new Error(`the batch stopped: the decision for ${prev.qid} was not saved (${outcome}); ${noteFate(note)}`);
+  }
+}
+async function runStagedBatch(token, entries) {
+  const guards = [];
+  const waits = [];
+  let prev = null;
+  for (const e of entries) {
+    const guard = await tradeStore.protect('poison-guard', Q.poisonGuardUpdate, { payload: { prev, qid: e.qid } });
+    if (prev && (SAVED.includes(guard.status) || guard.status === 'refused')) await stopOnUnsavedDecision(prev, guard);
+    if (!SAVED.includes(guard.status)) throw new Error(`this trade's start could not be counted (${guard.status}${guard.why ? ': ' + guard.why : ''})`);
+    guards.push(guard);
+    prev = null;
+    const cur = guard.result && guard.result.current;
+    if (!cur || cur.outcome !== 'counted') continue;   // skipped, already decided, or decided "abandoned"
+    const r = await enrichOne(token, e);
+    waits.push({ qid: e.qid, decision: r.decision, waitedMs: r.waitedMs });
+    prev = { qid: e.qid, decided: r.decision, trade: r.decision === 'timed-out' ? structuredClone(e) : r.trade };
+  }
+  const pub = await tradeStore.protect('publication', Q.publicationUpdate, { payload: { prev, qids: entries.map(e => e.qid) } });
+  if (prev && (SAVED.includes(pub.status) || pub.status === 'refused')) await stopOnUnsavedDecision(prev, pub);
+  if (!SAVED.includes(pub.status)) throw new Error(`the batch could not be published (${pub.status}${pub.why ? ': ' + pub.why : ''})`);
+  // 3.3: a qid no longer staged publishes nothing and is noted once. When
+  // NOTHING in the batch was still staged, nothing was saved, so the note is
+  // its own small save.
+  if (pub.status === 'unchanged' && pub.result && pub.result.notStaged.length) {
+    await noteBackfillProgress({ qids: pub.result.notStaged }, (doc, fx) => {
+      const lb = Object.assign({}, Q.isObjectish(doc.lastBackfill) ? doc.lastBackfill : {});
+      lb.notStaged = Q.notStagedNote(lb.notStaged, fx.payload.qids);
+      return { next: Object.assign({}, doc, { lastBackfill: lb }), result: { fields: ['notStaged'] } };
+    });
+  }
+  return { guard: guards[guards.length - 1] || null, guards, publication: pub, waits };
+}
+
+// 3.6: take the trades left in staging, in batches. `first`, when given, is
+// the list a staging save just returned; after it (or without it) whatever is
+// still staged is read and taken too. Each trade is taken at most once per
+// run, so this always ends.
+async function publishStaged(token, first) {
+  const seen = new Set();
+  let queue = (first || []).filter(e => Q.isTagged(e));
+  for (;;) {
+    queue = queue.filter(e => !seen.has(e.qid));
+    if (!queue.length) {
+      const doc = await tradeStore.getState();
+      queue = (doc.pendingStaged || []).filter(e => Q.isTagged(e) && !seen.has(e.qid));
+      if (!queue.length) return seen.size;
+    }
+    const batch = queue.splice(0, ENRICH_BATCH);
+    batch.forEach(e => seen.add(e.qid));
+    await runStagedBatch(token, batch);
+    await noteBackfillProgress({ phase: 'enriching', tradesEnriched: seen.size });
+  }
+}
+
+// W5, THE HISTORY IMPORT'S STAGING SAVE, as a PURE update (5.5 PURITY; 3.2).
+// The clock it used to read twice inside is ONE fixed timestamp now, and the
+// staged list is returned rather than written to an outside variable.
+function stagingUpdate(fills) {
+  return (latest, fx) => {
+    const atIso = new Date(fx.at).toISOString();
+    const cutoverIso = latest.identityCutoverAt || atIso;
+    const ambiguous = [];
+    const take = notYetProcessed(fills, latest, { cutoverMs: Date.parse(cutoverIso), ambiguous });
+    const m = processFills(clone(take), { openLegs: [], pending: [] });
+    // M-1: a trade whose id is already waiting (visible or staged) with
+    // another pair stays out.
+    const q = withoutQueueCollisions([...(latest.pending || []), ...(latest.pendingStaged || [])], m.newPending);
+    let fields = {}, qids = [];
+    if (q.keep.length) {
+      const ids = Q.issueQids(latest, q.keep.length, fx.candidateEpoch, fx.at);
+      if (!ids.ok) return { refuse: ids.reason };
+      fields = ids.fields; qids = ids.qids;
+    }
+    const staged = q.keep.map((t, i) => ({ ...t, qid: qids[i], stagedAt: atIso, stagedTries: 0 }));
+    const pendingStaged = [...(latest.pendingStaged || []), ...staged];
+    const have = new Set((latest.openLegs || []).map(legKey));
+    // H-2: what this run could not pair, in the same change (withExceptions).
+    const ex = withExceptions(latest, [...m.exceptions, ...q.incidents], evidenceAfter(m.fullyPaired, q), atIso, 'backfill');
+    const next = {
+      ...latest,
+      ...fields,
+      ...(ex !== latest.exceptions ? { exceptions: ex } : {}),
+      identityCutoverAt: cutoverIso,
+      openLegs: [...(latest.openLegs || []), ...m.updatedState.openLegs.filter(l => !have.has(legKey(l)))],
+      pendingStaged,
+      lastProcessedIds: unionIds(latest.lastProcessedIds, take.map(f => f.transactionId)),
+      lastBackfill: {
+        ...(latest.lastBackfill || {}),
+        phase: 'enriching',
+        tradesMatched: staged.length,
+        freshFills: take.length,
+        legacyAmbiguous: ambiguous.length ? { count: ambiguous.length, examples: ambiguous.slice(0, 5) } : null,
+        stagedCount: pendingStaged.length,
+      },
+    };
+    return { next, result: { staged: staged.map(e => ({ id: String(e.id), qid: e.qid })), fillsProcessed: take.length }, staged };
+  };
 }
 
 async function runBackfill(daysBack = 365) {
@@ -729,6 +952,10 @@ async function backfillOnce(daysBack) {
 
   try {
     const token = await getValidAccessToken();
+    // 3.6: trades an earlier run left staged go FIRST, before Schwab is asked
+    // for anything new. Fills already marked processed are never fetched
+    // again, so nothing else would ever measure them.
+    await publishStaged(token, null);
     const report = {};
     const fills = await getOptionFills(
       token,
@@ -755,67 +982,22 @@ async function backfillOnce(daysBack) {
     // purchase and its sale was later thrown away as unmatched. Fills
     // handled meanwhile are skipped; the rest still go through.
     //
-    // Queued BEFORE enriching. Enrichment is the slow part -- thirteen
-    // timeframes of candles per trade -- and there is no reason to make him
-    // stare at an empty journal through all of it.
-    let newPending = [];
-    await tradeStore.updateState(latest => {
-      const cutoverIso = latest.identityCutoverAt || new Date().toISOString();
-      const ambiguous = [];
-      const take = notYetProcessed(fills, latest, { cutoverMs: Date.parse(cutoverIso), ambiguous });
-      const m = processFills(take, { openLegs: [], pending: [] });
-      // M-1: a trade whose id is already queued with another pair stays out.
-      const q = withoutQueueCollisions(latest.pending, m.newPending);
-      newPending = q.keep;
-      const have = new Set((latest.openLegs || []).map(legKey));
-      // H-2: what this run could not pair, in the same change (withExceptions).
-      const ex = withExceptions(latest, [...m.exceptions, ...q.incidents], evidenceAfter(m.fullyPaired, q), new Date().toISOString(), 'backfill');
-      return {
-        ...latest,
-        ...(ex !== latest.exceptions ? { exceptions: ex } : {}),
-        identityCutoverAt: cutoverIso,
-        openLegs: [...(latest.openLegs || []), ...m.updatedState.openLegs.filter(l => !have.has(legKey(l)))],
-        pending: [...newPending, ...(latest.pending || [])],
-        lastProcessedIds: unionIds(latest.lastProcessedIds, take.map(f => f.transactionId)),
-        lastBackfill: {
-          ...(latest.lastBackfill || {}),
-          phase: 'enriching',
-          tradesMatched: newPending.length,
-          freshFills: take.length,
-          legacyAmbiguous: ambiguous.length ? { count: ambiguous.length, examples: ambiguous.slice(0, 5) } : null,
-        },
-      };
-    });
-
-    if (newPending.length) {
-      // Worked through in batches, saving after each one.
-      //
-      // It used to enrich all three hundred trades and save once at the
-      // end, so a restart part-way through threw away every minute of it
-      // -- and the server has been restarting, both from the crash and
-      // from running out of memory. Saving as it goes means a restart
-      // costs one batch, not the whole run. It also gives him a journal
-      // that fills in steadily rather than all at once at the end.
-      for (let i = 0; i < newPending.length; i += ENRICH_BATCH) {
-        const batch = newPending.slice(i, i + ENRICH_BATCH);
-        await enrichWithUnderlyingPrices(token, batch);
-        await enrichWithFtfc(token, batch);
-        await enrichWithReplayData(token, batch);
-        await enrichWithStrategy(batch);
-        await enrichWithStopRule(token, batch);
-        // Saved as it goes, onto the record as it is now: only this run's
-        // own trades that are still waiting are updated.
-        await refreshWaiting(batch);
-        await noteBackfillProgress({
-          phase: 'enriching',
-          tradesMatched: newPending.length,
-          tradesEnriched: Math.min(i + ENRICH_BATCH, newPending.length),
-        });
-      }
-      // Once more for the whole run, as before; it changes only this run's
-      // own trades that are still waiting.
-      await refreshWaiting(newPending);
+    // STAGED, not queued (P2, 3.2): the phone cannot see these until each
+    // batch is measured and published. Fills are marked processed in this
+    // same save, exactly as before.
+    const staging = await withFreshEpoch(candidateEpoch => tradeStore.protect('staging', stagingUpdate(fills), { candidateEpoch }));
+    if (!SAVED.includes(staging.status)) {
+      // Not saved: the fills are NOT marked processed, so the next run
+      // fetches them again (5.6).
+      throw new Error(`the import's save did not go through (${staging.status}${staging.why ? ': ' + staging.why : ''})`);
     }
+    const newPending = (staging.out && staging.out.staged) || [];
+
+    // Worked through in batches, saving after each one: a restart costs one
+    // batch, not the whole run, and the journal fills in steadily. A save
+    // found already made by an earlier attempt returns no trades; they are
+    // then taken from the record by publishStaged.
+    await publishStaged(token, newPending);
 
     await noteBackfillProgress({
       status: 'done', phase: 'done',
@@ -930,7 +1112,9 @@ function startAutoSync(intervalCron = '*/5 * * * *') {
 // REAL ones. A rehearsal that calls a copy of the pipeline proves only
 // that the copy works.
 module.exports = { FTFC_RULE_VERSION, startAutoSync, runScheduledTick, runSyncCheck, runBackfill, resumeBackfillIfNeeded,
-                   resetSyncState, jobRunning, withExceptions, withoutQueueCollisions,
+                   resetSyncState, jobRunning, runExclusive, withExceptions, withoutQueueCollisions,
+                   syncLandingUpdate, stagingUpdate, publishStaged, runStagedBatch, enrichOne, ITEM_WAIT, ENRICH_BATCH, P2_EVENTS,
+                   noteBackfillProgress,
                    enrichWithUnderlyingPrices, priceWithProvenance,
                    enrichWithFtfc, enrichWithReplayData, enrichWithStopRule, enrichWithStrategy,
                    applyClassificationToTrade };

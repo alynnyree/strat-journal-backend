@@ -15,17 +15,31 @@
 //      fence's every value is tried; a raise is raced against a run of
 //      saves; and a broken two-command copy is shown to be caught.
 //
+// SINCE DEPLOY 2 (queue plan v14.1 rev 3.2, Q-T24 (a), (b), (h)): the
+// generation-1 save lives only in history, so this runs the REAL generation-1
+// build (eb3880b, tests/lib/olderBuild.js) -- the build that may still be
+// running beside generation 2 during the deploy. The checks of the CURRENT
+// tree's sources moved to tests/source-check.js.
+//
 // What it does NOT prove: that Upstash's own servers behave as this Redis
 // does (the separately authorised real-store gate, plan 6.0), or how the
 // callers of the save behave when refused (tests/writer-fence-callers.js).
 // No network beyond this machine is reached.
+//
+// SINCE 26 OCT 2026 (owner: "...including the writer-fence fix: test code
+// only"): part B's Redis is started by tests/lib/localRedis.js, identified
+// over its own socket and stopped ONLY by SHUTDOWN NOSAVE over that
+// connection. It used to be killed with a process signal (SIGKILL), against
+// the standing rule. In a real-store run (the runner's environment), part B
+// runs against the run's temporary database instead, through the same strict
+// forwarding as every other check.
 const http = require('http');
-const net = require('net');
-const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const { spawn, spawnSync } = require('child_process');
 const BACKEND = path.join(__dirname, '..');
+const { olderBuild, removeOlderBuilds, GEN1 } = require('./lib/olderBuild');
+const { startRedis, STORE, storeForward, reportStop } = require('./lib/localRedis');
+const UR = require('./lib/upstashRest');
+const GEN1DIR = olderBuild(GEN1);
 
 let pass = 0, fail = 0;
 const check = (label, ok, detail) => {
@@ -33,67 +47,21 @@ const check = (label, ok, detail) => {
   else { fail++; console.log('FAIL:', label, detail === undefined ? '' : JSON.stringify(detail).slice(0, 300)); }
 };
 
-// ---- A tiny Redis wire-protocol client, for the real Redis in part B.
-function respClient(port) {
-  const sock = net.connect(port, '127.0.0.1');
-  let buf = Buffer.alloc(0);
-  const waiting = [];
-  function parse(b, i) {
-    if (i >= b.length) return null;
-    const type = String.fromCharCode(b[i]);
-    const eol = b.indexOf('\r\n', i);
-    if (eol < 0) return null;
-    const line = b.slice(i + 1, eol).toString();
-    if (type === '+') return [line, eol + 2];
-    if (type === '-') return [{ error: line }, eol + 2];
-    if (type === ':') return [Number(line), eol + 2];
-    if (type === '$') {
-      const n = Number(line);
-      if (n < 0) return [null, eol + 2];
-      if (b.length < eol + 2 + n + 2) return null;
-      return [b.slice(eol + 2, eol + 2 + n).toString(), eol + 2 + n + 2];
-    }
-    if (type === '*') {
-      const n = Number(line);
-      if (n < 0) return [null, eol + 2];
-      const out = []; let j = eol + 2;
-      for (let k = 0; k < n; k++) { const r = parse(b, j); if (!r) return null; out.push(r[0]); j = r[1]; }
-      return [out, j];
-    }
-    throw new Error('unexpected reply type ' + type);
-  }
-  sock.on('data', d => {
-    buf = Buffer.concat([buf, d]);
-    for (;;) {
-      const r = parse(buf, 0);
-      if (!r) break;
-      buf = buf.slice(r[1]);
-      waiting.shift()(r[0]);
-    }
-  });
-  const ready = new Promise((res, rej) => { sock.once('connect', res); sock.once('error', rej); });
-  return {
-    ready,
-    call(...args) {
-      const parts = args.map(a => String(a));
-      let s = `*${parts.length}\r\n`;
-      for (const p of parts) s += `$${Buffer.byteLength(p)}\r\n${p}\r\n`;
-      return new Promise(res => { waiting.push(res); sock.write(s); });
-    },
-    close() { sock.destroy(); },
-  };
-}
-
 // ---- A stand-in of Upstash's web service. The client posts one command as
 // a JSON list and, as it asks by default, gets text answers back in base64.
 const shim = { mode: 'record', log: [], answer: null, redis: null };
 const b64 = s => Buffer.from(s, 'utf8').toString('base64');
 const encode = v => (typeof v === 'string' ? (v === 'OK' ? 'OK' : b64(v))
   : Array.isArray(v) ? v.map(x => (typeof x === 'string' ? b64(x) : x)) : v);
+const storeShim = { log: null, hooks: {}, count: 0 };
+const storeRec = STORE ? UR.recorder(STORE.ledgerDir) : null;
 const server = http.createServer((req, res) => {
-  let body = '';
-  req.on('data', d => body += d);
+  const chunks = [];
+  req.on('data', d => chunks.push(d));
   req.on('end', async () => {
+    const raw = Buffer.concat(chunks);
+    if (shim.mode === 'redis' && STORE) { storeShim.log = shim.log; await storeForward(STORE, storeShim, req, res, raw, storeRec); return; }
+    const body = raw.toString('utf8');
     let parsed;
     try { parsed = JSON.parse(body); } catch (e) { res.end(JSON.stringify({ error: 'stand-in: not JSON' })); return; }
     // The client batches commands by default ("auto-pipelining"): a batch
@@ -118,14 +86,14 @@ const server = http.createServer((req, res) => {
 const verb = c => String(c[0]).toLowerCase();
 
 (async () => {
-  let redisProc = null, redisDir = null, direct = null;
+  let localR = null, direct = null;
   try {
     await new Promise(r => server.listen(0, '127.0.0.1', r));
     const URL_ = `http://127.0.0.1:${server.address().port}`;
     process.env.UPSTASH_REDIS_REST_URL = URL_;
     process.env.UPSTASH_REDIS_REST_TOKEN = 'stand-in-token';
     process.env.UPSTASH_DISABLE_TELEMETRY = '1';
-    const tradeStore = require(path.join(BACKEND, 'tradeStore.js'));
+    const tradeStore = require(path.join(GEN1DIR, 'tradeStore.js'));
     const { Redis } = require('@upstash/redis');
     const other = new Redis({ url: URL_, token: 'stand-in-token', retry: false });
 
@@ -190,42 +158,24 @@ const verb = c => String(c[0]).toLowerCase();
     await tradeStore.updateState(() => null);
     check('A7. a change that returns nothing sends no save at all (as today)', !shim.log.some(c => verb(c) !== 'get'), shim.log.map(verb));
 
-    // A9. Source: the save module saves only through the script, and nothing
-    // else in the service names the record.
-    const src = fs.readFileSync(path.join(BACKEND, 'tradeStore.js'), 'utf8').replace(/\/\/.*$/gm, '');
-    check('A9. tradeStore.js has no SET call', !/redis\.set\s*\(/.test(src));
-    check('A9. tradeStore.js has exactly one script call, with the generation-1 save', (src.match(/redis\.eval\s*\(/g) || []).length === 1 && /redis\.eval\s*\(\s*GEN1_SAVE_SCRIPT/.test(src));
-    const files = [];
-    (function walk(d) {
-      for (const n of fs.readdirSync(d)) {
-        if (n === 'node_modules' || n === 'tests' || n.startsWith('.')) continue;
-        const p = path.join(d, n);
-        if (fs.statSync(p).isDirectory()) walk(p);
-        else if (n.endsWith('.js') && fs.readFileSync(p, 'utf8').includes('trades:state')) files.push(path.relative(BACKEND, p));
-      }
-    })(BACKEND);
-    check('A9. only tradeStore.js and the read-only Step E tool name "trades:state"', JSON.stringify(files.sort()) === JSON.stringify(['tools/stepE-prepare.js', 'tradeStore.js']), files);
-    check('A9. the Step E tool does not talk to the storage service', !/@upstash\/redis/.test(fs.readFileSync(path.join(BACKEND, 'tools/stepE-prepare.js'), 'utf8')));
+    // (A9, the source checks of the current tree, are in tests/source-check.js.)
 
     // =================================================================
-    console.log('\n--- B. the script itself, on a real Redis on this machine ---');
-    const which = spawnSync('sh', ['-c', 'command -v redis-server'], { encoding: 'utf8' });
-    if (!which.stdout.trim()) {
+    console.log(STORE ? '\n--- B. the script itself, on the run\'s temporary Upstash database ---' : '\n--- B. the script itself, on a real Redis on this machine ---');
+    localR = await startRedis();
+    if (!localR) {
       console.log('SKIPPED: part B -- no redis-server on this machine. The script was NOT run here; it runs in the real-store gate (plan 6.0).');
     } else {
-      redisDir = fs.mkdtempSync(path.join(os.tmpdir(), 'writer-fence-'));
-      const port = await new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
-      redisProc = spawn(which.stdout.trim(), ['--port', String(port), '--bind', '127.0.0.1', '--save', '', '--appendonly', 'no', '--dir', redisDir], { stdio: 'ignore' });
-      let up = false;
-      for (let i = 0; i < 100 && !up; i++) {
-        try { direct = respClient(port); await direct.ready; up = (await direct.call('PING')) === 'PONG'; } catch (x) { await new Promise(r => setTimeout(r, 50)); }
-      }
-      check('B0. a real Redis started on this machine', up);
+      direct = localR.client;
+      const up = localR.store ? (await direct.call('DBSIZE')) !== undefined : true;
+      check(localR.store ? 'B0. the run\'s temporary database answers' : 'B0. a real Redis started on this machine, identified over its own socket', up);
       if (up) {
-        shim.redis = respClient(port); await shim.redis.ready;
+        if (!localR.store) shim.redis = localR.client;
         shim.mode = 'redis';
-        const ver = await direct.call('INFO', 'server');
-        console.log('     Redis', (String(ver).match(/redis_version:(\S+)/) || [])[1] || '?');
+        if (!localR.store) {
+          const ver = await direct.call('INFO', 'server');
+          console.log('     Redis', (String(ver).match(/redis_version:(\S+)/) || [])[1] || '?');
+        }
         const KEYS = ['trades:state', '{trades:state}:fence'];
         const seed = async (fence, kind = 'string') => {
           await direct.call('FLUSHALL');
@@ -277,7 +227,13 @@ const verb = c => String(c[0]).toLowerCase();
           const outcomes = [];
           let raisedAt = -1, afterRaise = null, n = 0, stop = false;
           const saver = (async () => {
-            while (!stop && n < 400) { n++; outcomes.push({ n, r: await saveOnce(n), afterConfirmed: raisedAt >= 0 }); }
+            // "After the raise" is judged when the save STARTS: a save sent
+            // before the raise was confirmed may land before it (allowed by
+            // Q-T24 (b)) and only answer after it. Judging it on its answer,
+            // as this did until 25 Oct 2026, now and then counted such a save
+            // as landing after the raise (1 run in 7 locally). The record's
+            // own re-read below ("unchanged") is the check on the store.
+            while (!stop && n < 400) { n++; const startedAfter = raisedAt >= 0; outcomes.push({ n, r: await saveOnce(n), afterConfirmed: startedAfter }); }
           })();
           await new Promise(r => setTimeout(r, 40));
           await direct.call('SET', KEYS[1], '2');     // THE RAISE, by "another process"
@@ -325,10 +281,11 @@ const verb = c => String(c[0]).toLowerCase();
   } catch (e) {
     fail++; console.log('FAIL: TEST CRASHED', e && e.stack || e);
   } finally {
-    try { if (shim.redis) shim.redis.close(); if (direct) direct.close(); } catch (e) { /* closing only */ }
-    if (redisProc) redisProc.kill('SIGKILL');
-    if (redisDir) try { fs.rmSync(redisDir, { recursive: true, force: true }); } catch (e) { /* temp folder only */ }
+    // Part B's Redis: stopped by SHUTDOWN NOSAVE over its own verified
+    // connection (tests/lib/localRedis.js), never by a process signal.
+    if (localR) { try { reportStop(check, await localR.stop()); } catch (e) { fail++; console.log('FAIL: stopping part B\'s Redis threw:', e && e.message); } }
     server.close();
+    removeOlderBuilds();
     console.log(`\n${pass} passed, ${fail} failed`);
     process.exit(fail ? 1 : 0);
   }

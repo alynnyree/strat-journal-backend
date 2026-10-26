@@ -162,14 +162,21 @@ const PUBLIC = {
 
   // ---- 3. /health --------------------------------------------------------
   const hs = await (await call('GET', '/health')).json();
-  check('/health to a stranger says only up and the time', JSON.stringify(Object.keys(hs).sort()) === '["ok","time"]', hs);
+  // The owner's decision D-2 (24 Oct 2026): "add generation, fenced, schemaVersion and build to
+  // the public health check" -- EXACTLY those four beside up and the time. This
+  // list is the guard against the public answer ever being widened by accident.
+  const PUBLIC_HEALTH = '["build","fenced","generation","ok","schemaVersion","time"]';
+  check('/health to a stranger says only up, the time, and the four deploy facts (D-2)', JSON.stringify(Object.keys(hs).sort()) === PUBLIC_HEALTH, hs);
+  check('...each of them plain: generation 2, fenced true/false/null, schemaVersion a number or null, build text or null',
+    hs.generation === 2 && [true, false, null].includes(hs.fenced) && (hs.schemaVersion === null || Number.isSafeInteger(hs.schemaVersion))
+    && (hs.build === null || typeof hs.build === 'string'), hs);
   const hk = await (await call('GET', '/health', { headers: { Authorization: 'Bearer right-key' } })).json();
   check('/health with the key gives the full picture', 'uptimeSeconds' in hk && 'recentFailures' in hk && 'keyInAddress' in hk, Object.keys(hk));
   check('/health reports who still uses the address key', hk.keyInAddress && hk.keyInAddress['iPhone Shortcut'], hk.keyInAddress);
-  // Queue plan 5.8.2, BUILD IDENTITY (Deploy 1): the writer generation, whether
+  // Queue plan 5.8.2, BUILD IDENTITY (Deploy 1; generation 2 since Deploy 2): the writer generation, whether
   // its saves are fenced, and the deployed build -- behind the key only.
-  check('/health with the key reports writer generation 1, its fenced state and the build',
-    hk.writer && hk.writer.generation === 1 && 'fenced' in hk.writer && 'build' in hk, { writer: hk.writer, build: hk.build });
+  check('/health with the key reports writer generation 2, its fenced state, its start-up and the build',
+    hk.writer && hk.writer.generation === 2 && 'fenced' in hk.writer && 'startup' in hk.writer && 'build' in hk, { writer: hk.writer, build: hk.build });
 
   // ---- 4. Which pages may read answers -----------------------------------
   const acao = async origin => (await call('GET', '/health', { headers: { Origin: origin } })).headers.get('access-control-allow-origin');
@@ -278,7 +285,7 @@ const PUBLIC = {
   const nsReset = await call('POST', '/api/trades/reset');
   check('...including the reset route', nsReset.status === 503, nsReset.status);
   const nsHealth = await (await call('GET', '/health')).json();
-  check('...and /health says only "up"', Object.keys(nsHealth).length === 2, nsHealth);
+  check('...and /health says only "up", the time and the four deploy facts', JSON.stringify(Object.keys(nsHealth).sort()) === PUBLIC_HEALTH, nsHealth);
   process.env.APP_SECRET = 'right-key';
 
   server.close();

@@ -15,7 +15,7 @@ const { installCrashGuards, getCrashes, uptimeSeconds, startedAt, memoryMb, watc
 const { lastPhoneAlert } = require('./pushcut');
 const { wrap, errorHandler } = require('./asyncRoute');
 const { keyOk, queryKeyUse } = require('./appKey');
-const { writerStatus } = require('./tradeStore');
+const { writerStatus, publicStatus, startGeneration2 } = require('./tradeStore');
 
 // Installed before anything is started, so a failure while starting up is
 // caught too. Without this, one unwrapped failure anywhere in a background
@@ -79,11 +79,15 @@ app.use(express.json({ limit: '16mb' }));
 // and the only sign anything had happened was an email from the hosting
 // company that the owner cannot act on.
 //
-// Public, but only "up" and the time. Everything else -- uptime, memory,
-// recent failures, what happened to his last phone alert -- describes his
-// private setup and is returned only with the app key (the app sends it).
+// Public: "up", the time, and -- the owner's decision D-2 of 24 Oct 2026,
+// "add generation, fenced, schemaVersion and build to the public health
+// check" -- exactly those four, so a deploy can be confirmed without the app
+// key (tests/private-doors-are-locked.js holds the exact list). Everything else --
+// uptime, memory, recent failures, what happened to his last phone alert --
+// describes his private setup and is returned only with the app key (the app
+// sends it).
 app.get('/health', wrap(async (req, res) => {
-  if (!keyOk(req)) return res.json({ ok: true, time: new Date().toISOString() });
+  if (!keyOk(req)) return res.json({ ok: true, time: new Date().toISOString(), ...publicStatus() });
   let crashes = [];
   try { crashes = await getCrashes(5); } catch (err) { /* never let this route fail */ }
   // What became of the last alert sent to his phone. Behind the Details
@@ -142,11 +146,36 @@ const app = buildApp();
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Strat Journal backend listening on port ${PORT}`);
-  startAutoSync(process.env.SYNC_CRON || '*/5 * * * *'); // stays running as a safety net alongside the streamer
-  startStreamer();
+  // Generation 2 (queue plan 5.8.3 (D3)): raise the fence, expand the record,
+  // and only then start anything that saves -- the five-minute sync, the live
+  // stream and the import's resume. Until then every save answers "not
+  // ready" and the routes that only read keep working.
+  startWhenReady().catch(err => console.log('Start-up failed:', (err && err.message) || err));
   // Every one of these is started and not waited on, so each needs its own
   // catch. A promise nobody is holding that fails is what ends the process.
   persistExistingFeedback().catch(err =>
     console.log('Could not make existing test feedback permanent:', err.message)); // one-time: stop older test feedback ageing out
 });
+}
+
+// A start-up that could not finish because an answer was lost or unclear is
+// tried again, once a minute, at most ten times; each try is a new, safe
+// operation (the raise and the expansion change nothing the second time).
+// A fence above 2, a fence that is not a number, or a record in a form this
+// code does not accept is NOT retried: that is stop-and-preserve (plan 5.8.6),
+// shown behind the app key on /health, and recovery is a reviewed step.
+async function startWhenReady() {
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    const out = await startGeneration2();
+    if (out.ready) {
+      console.log('Generation 2 ready: the fence reads 2 and the record is expanded.');
+      startAutoSync(process.env.SYNC_CRON || '*/5 * * * *'); // stays running as a safety net alongside the streamer
+      startStreamer();
+      return;
+    }
+    console.log(`Generation 2 not ready (${out.stage}): ${out.why || ''}`);
+    if (['fenced', 'fence-invalid', 'state-invalid'].includes(out.stage)) return;
+    await new Promise(r => setTimeout(r, 60 * 1000));
+  }
+  console.log('Generation 2 did not become ready after ten tries; nothing that saves was started.');
 }
