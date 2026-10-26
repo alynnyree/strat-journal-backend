@@ -517,7 +517,14 @@ const newestKind = cmd => { const d = JSON.parse(cmd[6]); const r = Object.value
         await a.call({ cmd: 'init', url: a.url });
         await a.call({ cmd: 'schwab', fills: fillsFor(3, 0) });
         let oldText = null;
+        // "After the save returned": the process ends RIGHT THERE. Its exit
+        // message can reach it a moment late, and in that moment it would make
+        // its ordinary progress save; so every command after the publication's
+        // answer is held back (CI, 26 Oct 2026: that progress save landed and
+        // the record read as two versions on, though nothing was torn).
+        let ended = false;
         a.shim.hooks.before = async cmd => {
+          if (ended) return { drop: true };
           if (scriptName(cmd, SCRIPTS) === 'COMMIT' && newestKind(cmd) === 'publication') {
             oldText = await text();
             if (point === 'before the save') { a.proc.send({ cmd: 'exit', id: 0 }); return { drop: true }; }
@@ -525,7 +532,7 @@ const newestKind = cmd => { const d = JSON.parse(cmd[6]); const r = Object.value
         };
         a.shim.hooks.after = async (cmd, reply) => {
           if (scriptName(cmd, SCRIPTS) === 'COMMIT' && newestKind(cmd) === 'publication') {
-            if (point === 'after the save returned') { setTimeout(() => a.proc.send({ cmd: 'exit', id: 0 }), 0); return undefined; }
+            if (point === 'after the save returned') { ended = true; setTimeout(() => a.proc.send({ cmd: 'exit', id: 0 }), 0); return undefined; }
             if (point === 'save sent, answer never received') { a.proc.send({ cmd: 'exit', id: 0 }); return { drop: true }; }
           }
         };
