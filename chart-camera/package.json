@@ -1,0 +1,16 @@
+{
+  "name": "chart-camera",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Records the TradingView chart and keeps pictures and a recording of each trade for the Strat Journal",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js"
+  },
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

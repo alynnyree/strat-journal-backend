@@ -1,0 +1,10 @@
+[Unit]
+Description=Chart camera: take the latest version of its software (the branch this copy follows)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/runuser -u __USER__ -- /usr/bin/git -C __REPO__ pull --ff-only
+ExecStart=/usr/bin/runuser -u __USER__ -- /usr/bin/npm --prefix __CAM__ install --omit=dev --no-audit --no-fund
+ExecStart=/bin/systemctl restart chart-camera.service

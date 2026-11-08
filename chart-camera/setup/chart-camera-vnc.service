@@ -1,0 +1,9 @@
+[Unit]
+Description=Chart camera: remote view of the chart screen, ONLY while signing in to TradingView
+After=chart-camera-display.service
+Requires=chart-camera-display.service
+
+[Service]
+User=__USER__
+ExecStart=/usr/bin/x11vnc -display :99 -rfbauth /home/__USER__/.vnc/passwd -forever -shared -rfbport 5900 -noxdamage
+Restart=on-failure

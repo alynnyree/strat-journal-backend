@@ -1,0 +1,11 @@
+{
+  "serviceUrl": "https://strat-journal-backend.onrender.com",
+  "appKey": "PUT-YOUR-APP-KEY-HERE",
+  "chartUrl": "https://www.tradingview.com/chart/PUT-YOUR-LAYOUT-ID-HERE/",
+  "defaultSymbol": "SPY",
+  "intervalMinutes": 5,
+  "maxVideoMinutes": 45,
+  "keepHeadMinutes": 40,
+  "keepTailMinutes": 5,
+  "dataDir": "/mnt/ssd/chart-camera"
+}

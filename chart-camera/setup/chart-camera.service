@@ -1,0 +1,19 @@
+[Unit]
+Description=Chart camera: records the TradingView chart and keeps each trade's pictures and recording
+After=network-online.target chart-camera-display.service
+Wants=network-online.target
+Requires=chart-camera-display.service
+
+[Service]
+User=__USER__
+WorkingDirectory=__CAM__
+Environment=DISPLAY=:99
+Environment=CHART_CAMERA_CONFIG=/etc/chart-camera/config.json
+ExecStart=/usr/bin/node src/main.js
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
