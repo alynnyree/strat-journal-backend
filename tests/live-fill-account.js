@@ -54,6 +54,7 @@ const axios = {
   },
 };
 const tokens = { last_transaction_check: null };
+const cameraMoments = [];
 const SCHWAB_CLIENT = process.env.M1_SCHWAB_CLIENT || path.join(BACKEND, 'schwabClient.js');
 const stubs = {
   axios,
@@ -71,6 +72,9 @@ const stubs = {
   './aiClient': { classifyStrategy: async () => null },
   './pushcut': { notifyTradeClosed: async () => {}, notifyTradeOpened: async () => {}, notifyTradeStillOpen: async () => {} },
   './browserEvents': { queueBrowserEvent: async () => {} },
+  // The chart camera's moments, recorded so the real sync can be checked
+  // for what it tells the camera (cameraEvents.js).
+  './cameraEvents': { queueCameraEvent: async (type, f) => { cameraMoments.push(Object.assign({ type }, f)); } },
   './signInWatch': { checkSignInAndNotify: async () => ({}) },
 };
 const origLoad = Module._load;
@@ -136,6 +140,11 @@ const REF_A = refOf('HASH-ACCOUNT-A'), REF_B = refOf('HASH-ACCOUNT-B');
       check('   its id is the M-1 id from the pair, idBasis "fill-pair", accountRef carried',
         t && /-p[0-9a-f]{32}$/.test(t.id) && t.idBasis === 'fill-pair' && t.accountRef === REF_A && t.fills.join('+') === '111000000001+111000000002', t);
       check('   no exception recorded for either fill', Object.keys(st2.exceptions || {}).length === 0, st2.exceptions);
+      // The chart camera hears both moments from the real sync, with the
+      // exact seconds of the two fills, and that nothing is still held.
+      const op = cameraMoments.find(m => m.type === 'opened'), cl = cameraMoments.find(m => m.type === 'closed');
+      check('   the camera was told of the opening, at the second of the buy', !!op && op.ticker === 'SPY' && op.entryTimestamp === st.openLegs[0].openTimestamp && op.legKey === `${st.openLegs[0].occ}-${st.openLegs[0].openTimestamp}`, cameraMoments);
+      check('   and of the closing, with both seconds and "nothing still held"', !!cl && t && cl.entryTimestamp === t.entryTimestamp && cl.exitTimestamp === t.exitTimestamp && cl.stillOpen === false && cl.tradeId === t.id && cl.legKey === op.legKey, cl);
     });
 
     console.log('\n--- 4. a sale read from ANOTHER account is not paired ---');

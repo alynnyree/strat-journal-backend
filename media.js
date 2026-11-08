@@ -131,6 +131,13 @@ router.post('/upload', upload.any(), wrap(async (req, res) => {
   // be part of a trade goes into his journal unlabelled.
   if (req.query.test === '1' || req.query.test === 'true') record.test = true;
   if (req.query.moment) record.moment = String(req.query.moment).slice(0, 20);
+  // The chart camera says so, and may add ONE short plain-words note about
+  // the picture -- e.g. that it was taken a few seconds late because the
+  // chart was still switching to the traded symbol. Kept with the picture
+  // so the journal can show the truth about it, never a picture passed off
+  // as something it is not.
+  if (req.query.source === 'camera') record.source = 'camera';
+  if (req.query.note) record.note = String(req.query.note).slice(0, 160);
   await redis.set(`screenshot:${id}`, JSON.stringify(record), { ex: SCREENSHOT_TTL_SECONDS });
   await redis.lpush(LIST_KEY, id);
   await redis.ltrim(LIST_KEY, 0, MAX_PENDING - 1);
@@ -422,4 +429,18 @@ ${videoCards || '<div class="meta">None right now.</div>'}
 </body></html>`);
 }));
 
+// A recording that is ALREADY in storage, offered to the journal the same
+// way /upload-video does: a small pointer on the waiting list, matched to a
+// trade by its entry time. Used by the chart camera, whose recordings go
+// straight to storage (see videoStorage.getUploadUrl).
+async function registerPendingVideo({ id, r2Key, timestamp, sizeBytes, extra }) {
+  const record = Object.assign({}, extra || {}, { id, r2Key, timestamp, sizeBytes: typeof sizeBytes === 'number' ? sizeBytes : null });
+  await redis.set(`video:${id}`, JSON.stringify(record), { ex: VIDEO_TTL_SECONDS });
+  await redis.lpush(VIDEO_LIST_KEY, id);
+  await redis.ltrim(VIDEO_LIST_KEY, 0, MAX_PENDING - 1);
+  return record;
+}
+
 module.exports = router;
+module.exports.registerPendingVideo = registerPendingVideo;
+module.exports.parseTimestampToMs = parseTimestampToMs;

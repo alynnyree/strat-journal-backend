@@ -9,6 +9,7 @@ const mediaRouter = require('./media');
 const aiRoutes = require('./aiRoutes');
 const { persistExistingFeedback } = require('./aiTestFeedback');
 const { router: browserEventsRouter } = require('./browserEvents');
+const { router: cameraRouter } = require('./cameraEvents');
 const { startAutoSync, FTFC_RULE_VERSION } = require('./cron');
 const { startStreamer } = require('./schwabStreamer');
 const { installCrashGuards, getCrashes, uptimeSeconds, startedAt, memoryMb, watchMemory } = require('./crashGuard');
@@ -126,6 +127,7 @@ app.use('/debug', streamerTestRouter);
 app.use('/media', mediaRouter);
 app.use('/ai', aiRoutes);
 app.use('/browser', browserEventsRouter);
+app.use('/camera', cameraRouter);
 
 // Mounted last, after every route, or it catches nothing. Turns a request
 // that failed into a plain answer instead of a hung phone.

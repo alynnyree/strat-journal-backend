@@ -149,6 +149,20 @@ async function run() {
   ok(Array.isArray(pj.screenshots) && pj.screenshots.length >= 3, 'the pictures are queued for the journal');
   ok(pj.screenshots.every(s => 'image' in s), 'every one keeps the image key present, even when slimmed');
 
+  // The chart camera: its pictures say so, carry their moment (entry,
+  // during, exit) and may carry ONE short note, kept with the picture.
+  {
+    const rr = await post('?key=testkey&timestamp=2026-11-09T14:31:12Z&moment=during&source=camera&note=' + encodeURIComponent('taken 6 seconds after your entry: the chart was switching to IWM'));
+    eq(rr.status, 200, 'a chart-camera picture is accepted');
+    const rec = JSON.parse(store.get('screenshot:' + rr.body.id));
+    eq(rec.source, 'camera', 'and is marked as the camera\'s');
+    eq(rec.moment, 'during', 'with its moment');
+    ok(/switching to IWM/.test(rec.note), 'and its note');
+    const long = await post('?key=testkey&timestamp=2026-11-09T14:31:12Z&source=camera&note=' + 'x'.repeat(500));
+    eq(JSON.parse(store.get('screenshot:' + long.body.id)).note.length, 160, 'a note is cut to 160 characters');
+    const plain = await post('?key=testkey&timestamp=2026-11-09T14:31:12Z&source=other');
+    eq(JSON.parse(store.get('screenshot:' + plain.body.id)).source, undefined, 'only "camera" is recorded as a source');
+  }
   console.log(`upload route: ${n} checks passed`);
   srv.close();
 }

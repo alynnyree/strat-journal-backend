@@ -79,6 +79,7 @@ const stubs = {
   './aiClient': { classifyStrategy: async () => null },
   './pushcut': { notifyTradeClosed: async () => {}, notifyTradeOpened: async () => {}, notifyTradeStillOpen: async () => {} },
   './browserEvents': { queueBrowserEvent: async () => {} },
+  './cameraEvents': { queueCameraEvent: async () => {} },
   './signInWatch': { checkSignInAndNotify: async () => ({}) },
 };
 const origLoad = Module._load;

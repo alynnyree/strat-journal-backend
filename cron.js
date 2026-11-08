@@ -11,6 +11,7 @@ const { computeStopForTrade, loadSettings: loadStopSettings } = require('./stopR
 const { classifyStrategy } = require('./aiClient');
 const { notifyTradeClosed, notifyTradeOpened, notifyTradeStillOpen } = require('./pushcut');
 const { queueBrowserEvent } = require('./browserEvents');
+const { queueCameraEvent } = require('./cameraEvents');
 const { checkSignInAndNotify } = require('./signInWatch');
 
 const SHORT_TRADE_SAFETY_NET_MS = 15 * 60 * 1000; // matches pushcut.js's SHORT_TRADE_MS
@@ -577,6 +578,7 @@ async function syncOnce() {
     // them and the app's catch-up fills them in.
     let landed = [];
     let opened = [];
+    let openAfter = null;   // the open legs once this change is made: which contracts are still held
     await tradeStore.updateState(latest => {
       const ambiguous = [];
       const latestCutover = latest.identityCutoverAt ? cutoverOf(latest) : cutoverMs;
@@ -595,6 +597,7 @@ async function syncOnce() {
         landed = q.keep;
         opened = m.newlyOpenedLegs;
         next.openLegs = m.updatedState.openLegs;
+        openAfter = next.openLegs;
         next.pending = [...landed, ...(latest.pending || [])];
         next.lastProcessedIds = unionIds(latest.lastProcessedIds, take.map(f => f.transactionId));
         // H-2: in the same change as "processed" (see withExceptions).
@@ -617,6 +620,12 @@ async function syncOnce() {
       for (const leg of opened) {
         notifyTradeOpened(leg).catch(() => {});
         queueBrowserEvent('opened', { ticker: leg.ticker, dir: leg.dir, timestamp: leg.openTimestamp }).catch(() => {});
+        // The chart camera: the exact second of the fill, so it can keep the
+        // frame from that moment. Fire-and-forget, like the alerts above.
+        queueCameraEvent('opened', {
+          ticker: leg.ticker, dir: leg.dir, occ: leg.occ || null,
+          legKey: `${leg.occ}-${leg.openTimestamp}`, entryTimestamp: leg.openTimestamp,
+        }).catch(() => {});
         scheduleStillOpenCheck(leg);
       }
     }
@@ -625,6 +634,16 @@ async function syncOnce() {
       for (const trade of landed) {
         notifyTradeClosed(trade).catch(() => {}); // notifyTradeClosed already logs its own failures
         queueBrowserEvent('closed', { ticker: trade.ticker, dir: trade.dir, timestamp: trade.exitTimestamp }).catch(() => {});
+        // Both times, so the camera can keep the entry frame even when the
+        // opening and the closing arrived together (a quick trade caught in
+        // one check), plus whether contracts of it are still held.
+        queueCameraEvent('closed', {
+          ticker: trade.ticker, dir: trade.dir, occ: trade.occ || null, tradeId: trade.id || null,
+          legKey: `${trade.occ}-${trade.entryTimestamp}`,
+          entryTimestamp: trade.entryTimestamp, exitTimestamp: trade.exitTimestamp,
+          contracts: trade.contracts ?? null,
+          stillOpen: Array.isArray(openAfter) ? openAfter.some(l => l.occ === trade.occ) : null,
+        }).catch(() => {});
       }
     }
 

@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 // Cloudflare R2 speaks the same S3 protocol as Amazon's own storage, so the
@@ -51,4 +51,34 @@ async function getPlaybackUrl(key, expiresInSeconds = 3600) {
   return getSignedUrl(client, command, { expiresIn: expiresInSeconds });
 }
 
-module.exports = { uploadVideo, getPlaybackUrl, isConfigured };
+// THE CHART CAMERA'S RECORDINGS GO STRAIGHT TO STORAGE, NOT THROUGH THIS
+// SERVICE. A 45-minute trade is a few hundred megabytes, and everything
+// this service sends out counts against its free monthly allowance -- so
+// the camera is handed a temporary link it can upload one file to, and
+// the service only ever sees a small pointer afterwards. The link names
+// ONE key and expires on its own.
+async function getUploadUrl(key, contentType, expiresInSeconds = 15 * 60) {
+  const client = getClient();
+  if (!client) throw new Error('R2 storage is not configured.');
+  const command = new PutObjectCommand({ Bucket: getBucket(), Key: key, ContentType: contentType || 'video/mp4' });
+  return getSignedUrl(client, command, { expiresIn: expiresInSeconds });
+}
+
+// Is that object really in storage, and how big? Asked before a recording
+// is offered to the journal, so a pointer can never be filed against a
+// trade for a file that never arrived. Answers with a reason, never a bare
+// null: "not there" and "could not ask" are different faults.
+async function headVideo(key) {
+  const client = getClient();
+  if (!client) return { found: false, sizeBytes: null, reason: 'R2 storage is not configured.' };
+  try {
+    const out = await client.send(new HeadObjectCommand({ Bucket: getBucket(), Key: key }));
+    return { found: true, sizeBytes: typeof out.ContentLength === 'number' ? out.ContentLength : null, reason: null };
+  } catch (err) {
+    const status = err && err.$metadata && err.$metadata.httpStatusCode;
+    if (status === 404 || (err && err.name === 'NotFound')) return { found: false, sizeBytes: null, reason: 'That recording is not in storage.' };
+    return { found: false, sizeBytes: null, reason: 'Storage could not be asked about that recording' + (status ? ` (it answered ${status}).` : '.') };
+  }
+}
+
+module.exports = { uploadVideo, getPlaybackUrl, isConfigured, getUploadUrl, headVideo };

@@ -130,6 +130,10 @@ const PUBLIC = {
   check('every private route refuses a caller with NO key', openNoKey.length === 0, openNoKey);
   check('every private route refuses a WRONG key (header and address)', openWrongKey.length === 0, openWrongKey);
   check('the reset route is among those checked', routes.some(r => r.path === '/api/trades/reset'));
+  // The chart camera's six routes (cameraEvents.js) are private like the rest.
+  check('the chart camera\'s routes are among those checked (and so refuse without the key)',
+    ['GET /camera/events', 'POST /camera/heartbeat', 'GET /camera/status', 'POST /camera/video-upload-url', 'POST /camera/video-uploaded', 'POST /camera/test-trade']
+      .every(n => routes.some(r => `${r.method} ${r.path}` === n)), routes.filter(r => r.path.startsWith('/camera')).map(r => `${r.method} ${r.path}`));
   // Audit H-2: the exception ledger is private like every other route here.
   check('the H-2 exceptions route is among those checked (and so refuses without the key)', routes.some(r => r.method === 'GET' && r.path === '/api/trades/exceptions'));
   {
