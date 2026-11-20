@@ -563,6 +563,10 @@ async function syncOnce() {
       checkpointKeptAt: store.last_transaction_check || null,
     };
 
+    // Step 1B: the switch-on moment (null = purchase records are not touched).
+    let switchOnAt = null;
+    try { switchOnAt = await require('./setupSwitch').switchOnAt(); } catch (e) { switchOnAt = null; }
+
     const state = await tradeStore.getState();
     // The changeover moment is set once, by the first run of this code, and
     // never moved (Step C).
@@ -583,6 +587,14 @@ async function syncOnce() {
         await enrichWithStopRule(token, trial.newPending);
       }
       for (const t of trial.newPending) enriched.set(tradeKey(t), t);
+      // Step 1B, P0: each new purchase gets its record BEFORE the save that
+      // makes it collectible, so no journal copy can collect (or delete) a
+      // trade whose purchase has no record yet. A failure here never blocks
+      // the import.
+      if (switchOnAt != null) {
+        try { await require('./purchases').beforeSave(trial.newlyOpenedLegs, { switchOnAt }); }
+        catch (err) { console.log('Purchase records (before the save) failed:', err.message); }
+      }
     }
 
     // Then the match is made again ON THE RECORD AS IT IS NOW and only the
@@ -625,6 +637,16 @@ async function syncOnce() {
       }
       return next;
     });
+
+    // Step 1B, P1/P2 then P3: confirm what was saved and send the pop-ups,
+    // then repair anything a failed tick left behind. Read-only on the queue.
+    if (switchOnAt != null) {
+      try {
+        const purchases = require('./purchases');
+        await purchases.afterSave(opened);
+        await purchases.sweep(await tradeStore.getState(), { switchOnAt });
+      } catch (err) { console.log('Purchase records (after the save) failed:', err.message); }
+    }
 
     // Only here, in the live 5-minute/streamer-triggered check — never
     // from runBackfill() below, which can surface a hundred-plus

@@ -126,6 +126,8 @@ app.use('/debug', streamerTestRouter);
 app.use('/media', mediaRouter);
 app.use('/ai', aiRoutes);
 app.use('/browser', browserEventsRouter);
+// Step 1B: his pop-up answers (play and entry timeframe), apart from the trade queue.
+app.use('/purchases', require('./purchases').router);
 
 // Mounted last, after every route, or it catches nothing. Turns a request
 // that failed into a plain answer instead of a hung phone.
