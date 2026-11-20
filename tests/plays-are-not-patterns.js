@@ -45,11 +45,15 @@ const ai = require(path.join(BACKEND, 'aiClient.js'));
 let pass = 0, fail = 0;
 const check = (l, c) => { if (c) { pass++; console.log('PASS:', l); } else { fail++; console.log('FAIL:', l); } };
 
+// Step 1: an entry an hour ago (the full prices are out), and bars that
+// started before the entry minute -- the only kind the AI is shown.
+const ENTRY = Date.now() - 3600000;
 const candles = Array.from({ length: 20 }, (_, i) => ({
+  datetime: Math.floor(ENTRY / 60000) * 60000 - (20 - i) * 60000,
   open: 601 + i * 0.1, high: 601.4 + i * 0.1, low: 600.8 + i * 0.1, close: 601.2 + i * 0.1,
 }));
 const trade = {
-  ticker: 'SPY', dir: 'Long', entryTimestamp: Date.now(),
+  ticker: 'SPY', dir: 'Long', entryTimestamp: ENTRY,
   ftfcConfirmed: true, ftfcDirection: 'BULLISH', ftfcTimeframesInRun: ['1D', '1H', '30m', '15m'],
   undEntry: 601.2, undExit: 601.9,
   replayData: { candles, entryIndex: 5, exitIndex: 15 },

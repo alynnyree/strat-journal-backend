@@ -101,7 +101,10 @@ const stubs = {
   './auth': { getValidAccessToken: async () => 'tok' },
   './tokenStore': { getTokens: async () => ({ ...tokens }), setLastCheck: async iso => { tokens.last_transaction_check = iso; } },
   './alpacaClient': { isReady: async () => false, isConfigured: () => false, underlyingPriceAt: async () => null, fetchBars: async () => [] },
-  './replayData': { getReplayCandles: async () => ({ candles: [], reason: 'stand-in' }) },
+  // Step 1: the AI is shown only bars from BEFORE the entry minute, so the
+  // stand-in replay holds some (10:21-10:30 New York).
+  './replayData': { getReplayCandles: async () => ({ candles: Array.from({ length: 10 }, (_, i) => ({
+    datetime: Date.parse('2026-10-09T14:21:00Z') + i * 60000, open: 575, high: 575.4, low: 574.8, close: 575.2 })), entryIndex: 9, exitIndex: 9 }) },
   './stopRule': { loadSettings: async () => ({ enabled: false }), computeStopForTrade: async () => ({ stop: null }) },
   './pushcut': {
     notifyTradeClosed: async t => { alerts.push({ kind: 'closed', trade: t }); },
@@ -117,6 +120,9 @@ Module._load = function (request) {
   return origLoad.apply(this, arguments);
 };
 const cron = require(path.join(BACKEND, 'cron.js'));
+// Step 1: only trades from after the switch-on moment are read. This sheet's
+// trade is from 9 Oct 2026, so the switch-on is set before it.
+const switchReady = require(path.join(BACKEND, 'setupSwitch.js')).switchOnAt({ redis: { set: async () => 'OK', get: async () => String(Date.parse('2026-10-09T14:00:00Z')) } });
 const { PLAYS } = require(path.join(BACKEND, 'aiClient.js'));
 
 const ny = ms => {
@@ -133,6 +139,7 @@ const SHEET = {
 };
 
 async function runTrade(play, playConfidence = 'high') {
+  await switchReady;
   reset();
   geminiAnswer = { strategy: 'unclear', confidence: 'low', reasoning: 'stand-in', play, playConfidence, playReasoning: 'stand-in', notation: 'unclear', broadeningFormation: 'unclear' };
   schwabTxs = [tx(900000000001, true, ENTRY_MS, 1.25, 2, 1.32)];

@@ -36,13 +36,15 @@ const check=(l,c)=>{ if(c){pass++;console.log('PASS:',l);} else {fail++;console.
             broadeningFormation:'yes', broadeningReasoning:'higher highs and lower lows' };
   const trade = { id:'t1', ticker:'SPY', dir:'Short', ftfcConfirmed:true, ftfcDirection:'bear',
                   ftfcTimeframesInRun:['1D','4H','2H','1H'], undEntry:570,
-                  replayData:{candles:[{open:1,high:2,low:0.5,close:1.5}]} };
+                  // Step 1: a bar from before the entry minute (the only kind shown).
+                  entryTimestamp: Date.now() - 3600000,
+                  replayData:{candles:[{open:1,high:2,low:0.5,close:1.5,datetime:Date.now() - 3660000}]} };
   const out = await classifyStrategy(trade);
 
   // ===== what comes back =====
   check(`his notation comes back (${out.notation})`, out.notation === '2U-2D');
   check(`with its direction (${out.notationDirection})`, out.notationDirection === 'Bearish');
-  check('the combo name is still one of his nine', out.strategy === '2-2 Reversal');
+  check('the combo name is still one of his eight read automatically', out.strategy === '2-2 Reversal');
   check(`the AI's own Broadening answer comes back (${out.broadeningFormation})`, out.broadeningFormation === 'yes');
   check('with its reasoning', /higher highs/.test(out.broadeningReasoning || ''));
   check('and it can pick the Broadening play', out.play === 'Broadening Formation Scalp');
@@ -62,8 +64,9 @@ const check=(l,c)=>{ if(c){pass++;console.log('PASS:',l);} else {fail++;console.
     /USE them as supporting evidence/.test(sentPrompt));
   check('but must not override what the bars show',
     /never let it override what the bars plainly show/.test(sentPrompt));
-  check('the nine combos are still the only valid combo answer',
-    /the nine above remain the only valid answers for the combo/.test(sentPrompt));
+  check('the eight combos are still the only valid combo answer (PMG never read automatically)',
+    /the eight above remain the only valid answers for the combo/.test(sentPrompt) && /PMG is never chosen automatically/.test(sentPrompt)
+    && !sentSchema.properties.strategy.enum.includes('PMG'));
   check('his notation is spelled out for the model',
     /2U = a directional bar that took out the previous bar's HIGH/.test(sentPrompt) &&
     /2D = a directional bar that took out the previous bar's LOW/.test(sentPrompt));
@@ -81,8 +84,9 @@ const check=(l,c)=>{ if(c){pass++;console.log('PASS:',l);} else {fail++;console.
   reply = { strategy:'unclear', confidence:'low', reasoning:'r', play:'unclear',
             playConfidence:'low', playReasoning:'pr', notation:'unclear',
             notationDirection:'unclear', broadeningFormation:'unclear', broadeningReasoning:'could not tell' };
-  const vague = await classifyStrategy({ id:'t2', ticker:'SPY' });
-  check('an unreadable chart claims no notation', vague === null || vague.notation === 'unclear');
+  const vague = await classifyStrategy({ id:'t2', ticker:'SPY', dir:'Long', entryTimestamp: Date.now() - 3600000,
+    replayData:{candles:[{open:1,high:2,low:0.5,close:1.5,datetime:Date.now() - 3660000}]} });
+  check('an unreadable chart claims no notation and no combo', !vague.notation && !vague.strategy && vague.setupReading.outcome === 'unsure');
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail?1:0);

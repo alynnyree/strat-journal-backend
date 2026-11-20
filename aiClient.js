@@ -491,7 +491,8 @@ async function readSetup(trade, opts = {}) {
     return { skipped: 'before-switch-on' };
   }
   const base = { ruleVersion: SETUP_RULE_VERSION, at: new Date(now).toISOString(), outcome: null,
-                 candidates: [], timeframes: null, aiChoice: null, reasoning: null, dataNotes: [] };
+                 candidates: [], timeframes: null, aiChoice: null, reasoning: null, dataNotes: [],
+                 sawCandles: barsBeforeEntry(trade).length };
   const readFacts = opts.readFacts || require('./setupReader').readSetupFacts;
   let got;
   try { got = await readFacts(trade, { now }); }
