@@ -132,6 +132,11 @@ const PUBLIC = {
   check('the reset route is among those checked', routes.some(r => r.path === '/api/trades/reset'));
   // Audit H-2: the exception ledger is private like every other route here.
   check('the H-2 exceptions route is among those checked (and so refuses without the key)', routes.some(r => r.method === 'GET' && r.path === '/api/trades/exceptions'));
+  // Step 1B (B14): every purchase route is found, and so refuses without the key.
+  for (const want of ['GET /purchases/waiting', 'GET /purchases/', 'POST /purchases/answer', 'POST /purchases/skip', 'GET /purchases/history',
+                      'GET /purchases/push/key', 'POST /purchases/push/subscribe', 'POST /purchases/push/unsubscribe', 'GET /purchases/stats']) {
+    check(`B14 ${want} is among those checked (and so refuses without the key)`, routes.some(r => `${r.method} ${r.path}` === want), routes.filter(r => /purchases/.test(r.path)).map(r => r.method + ' ' + r.path));
+  }
   {
     const before = db.get('trades:state');
     db.set('trades:state', { type: 'string', value: { openLegs: [{ occ: 'X', remaining: 1 }], pending: [], lastProcessedIds: [],

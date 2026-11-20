@@ -16,6 +16,19 @@ on:
 jobs:
   guard-check:
     runs-on: ubuntu-latest
+    # Step 1B: the purchase-answer checks need a REAL Redis server -- an
+    # in-memory stand-in cannot prove that two devices answering at the same
+    # moment never both win.
+    services:
+      redis:
+        image: redis:7.2.5
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,3 +46,6 @@ jobs:
       # as a success.
       - name: Run every check
         run: node tests/run-all.js
+        env:
+          REDIS_TEST_URL: redis://127.0.0.1:6379
+          REQUIRE_REAL_REDIS: '1'
