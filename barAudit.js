@@ -29,6 +29,12 @@ function minutesOfDay(ms) {
   let hour = Number(p.hour); if (hour === 24) hour = 0;
   return hour * 60 + Number(p.minute);
 }
+// The New York calendar date of a moment, as YYYY-MM-DD. Built once: an
+// Intl formatter made per candle is the memory fault on this project's record.
+const EASTERN_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+function easternDateOf(ms) { return EASTERN_DATE.format(new Date(ms)); }
 const SESSION_OPEN_MIN = 9 * 60 + 30;
 const SESSION_CLOSE_MIN = 16 * 60;
 
@@ -36,13 +42,17 @@ const SESSION_CLOSE_MIN = 16 * 60;
 // anchored to the session open and stamped with when they START. This is
 // deliberately the SAME rule ftfcCheck and the replay screen use -- if it
 // drifts from either, that is itself worth finding.
+//
+// Keyed by the DAY as well as the slot (Step 1): with minutes from several
+// days, a half-day's last slot and the next morning's first slot could
+// otherwise carry the same number and be merged into one bar.
 function buildFromMinutes(oneMin, minutes) {
   const out = [];
   let cur = null, curBucket = null;
   for (const c of oneMin) {
     const m = minutesOfDay(c.datetime);
     if (m < SESSION_OPEN_MIN || m >= SESSION_CLOSE_MIN) continue;
-    const bucket = Math.floor((m - SESSION_OPEN_MIN) / minutes);
+    const bucket = easternDateOf(c.datetime) + ':' + Math.floor((m - SESSION_OPEN_MIN) / minutes);
     if (bucket !== curBucket) {
       cur = { datetime: c.datetime - ((m - SESSION_OPEN_MIN) % minutes) * 60000,
               open: c.open, high: c.high, low: c.low, close: c.close };
@@ -146,4 +156,4 @@ async function auditBars(symbol, startMs, endMs, sizes = [5, 15, 30, 60]) {
   };
 }
 
-module.exports = { auditBars, buildFromMinutes, minutesOfDay, SESSION_OPEN_MIN, SESSION_CLOSE_MIN };
+module.exports = { auditBars, buildFromMinutes, minutesOfDay, easternDateOf, SESSION_OPEN_MIN, SESSION_CLOSE_MIN };
