@@ -246,12 +246,16 @@ function applyClassificationToTrade(trade, result) {
   // answerable for every trade the reading has touched -- not only the
   // ones it managed to name.
   if (result.sawCandles != null) trade.stratSawCandles = result.sawCandles;
+  // Step 1: the reading itself, with its outcome and the measured
+  // candidates, so the journal can show his timeframe's combo to confirm.
+  if (result.setupReading) trade.setupReading = result.setupReading;
   // The combo (WHAT he saw) and the play (HOW he chose it) are two
   // separate answers. Either can be confident while the other is not.
   if (result.strategy) {
     trade.strat = result.strategy;
     trade.stratConfidence = result.confidence;
     trade.stratReasoning = result.reasoning;
+    trade.stratTimeframe = result.stratTimeframe || null;
   }
   if (result.play) {
     trade.play = result.play;
@@ -272,10 +276,23 @@ function applyClassificationToTrade(trade, result) {
   }
 }
 
-async function enrichWithStrategy(trades) {
+// Step 1: read only trades from after the switch-on moment, and with his
+// own pop-up answer when there is one (he named the timeframe: the AI is
+// not asked, the journal asks him to confirm the measured combo). If the
+// switch-on moment cannot be read, nothing is read at all.
+function purchasesModule() { try { return require('./purchases'); } catch (e) { return null; } }
+async function enrichWithStrategy(trades, deps = {}) {
+  const switchOnAt = await (deps.switchOnAt || require('./setupSwitch').switchOnAt)();
+  if (switchOnAt == null) return trades;
+  const purchases = deps.purchases !== undefined ? deps.purchases : purchasesModule();
+  let examples = [];
+  try { if (purchases) examples = await purchases.recentAnswers(10); } catch (e) { examples = []; }
   for (const trade of trades) {
     try {
-      const result = await classifyStrategy(trade);
+      let ownerAnswer = null;
+      const fill = Array.isArray(trade.fills) ? trade.fills[0] : null;
+      try { if (purchases && fill) ownerAnswer = await purchases.currentAnswer(String(fill)); } catch (e) { ownerAnswer = null; }
+      const result = await classifyStrategy(trade, { switchOnAt, ownerAnswer, examples });
       applyClassificationToTrade(trade, result);
     } catch (err) {
       console.log(`Strategy classification failed for ${trade.ticker}:`, err.message);

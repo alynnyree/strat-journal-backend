@@ -95,8 +95,24 @@ async function drain() {
       const trade = parse(row);
       if (!trade || !trade.id) continue;
       try {
-        const result = await classifyStrategy(trade);
-        await recordResult(trade.id, result || { strategy: null, play: null });
+        // Step 1: no switch-on moment, no reading -- put it back and stop.
+        const switchOnAt = await require('./setupSwitch').switchOnAt();
+        if (switchOnAt == null) { await r.lpush(QUEUE_KEY, row); break; }
+        let ownerAnswer = null, examples = [];
+        try {
+          const purchases = require('./purchases');
+          const fill = Array.isArray(trade.fills) ? trade.fills[0] : null;
+          if (fill) ownerAnswer = await purchases.currentAnswer(String(fill));
+          examples = await purchases.recentAnswers(10);
+        } catch (e) { /* answers are help, not a requirement */ }
+        const result = await classifyStrategy(trade, { switchOnAt, ownerAnswer, examples });
+        if (result && result.setupReading && result.setupReading.outcome === 'daily-limit') {
+          await r.lpush(QUEUE_KEY, row);
+          pausedUntil = Date.now() + RATE_PAUSE_MS;
+          console.log('Setup reading paused: the AI is at its limit for now.');
+          break;
+        }
+        await recordResult(trade.id, result || { strategy: null, play: null, skipped: 'before-switch-on' });
         done++;
       } catch (err) {
         const status = err.response?.status;

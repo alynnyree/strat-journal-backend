@@ -252,7 +252,9 @@ const STRATEGIES = [
   { key: '2-2 Reversal', desc: 'A directional bar (2) in one direction, immediately followed by a directional bar (2) in the OPPOSITE direction (e.g. a "2 down" candle then a "2 up" candle, or vice versa).' },
   { key: '3-2-2 Reversal', desc: 'Played the same as a 2-2 Reversal, but preceded by an outside bar (3). Stop is placed at 50% of the trigger candle.' },
   { key: '1-2-2 Rev Strat', desc: 'Played the same as a 2-2 Reversal, but starting from an inside bar (1) rather than directly from a directional bar — has an extra target because of that. Stop is placed at 50% of the trigger candle.' },
-  { key: '1 Bar Rev Strat', desc: 'One single candle retraces to the 50% (halfway) level of the PREVIOUS candle\'s range, then reverses to take out the OPPOSITE side of that previous candle\'s range. Can occur after either a "2" or a "3" candle. This is the "50% Rule."' },
+  // His rule, in his words (15 Nov 2026): "I take my entry at 50% level of
+  // previous candle and target the high of previous candle."
+  { key: '1 Bar Rev Strat', desc: 'His rule, in his words: "I take my entry at 50% level of previous candle and target the high of previous candle." Bullish: the candle first trades BELOW the previous candle\'s low, then turns and reaches the previous candle\'s 50% level, where he enters; the previous candle\'s high is the TARGET, not something that must already have happened. Bearish is the mirror: first ABOVE the previous high, then down to the 50% level, targeting the previous low.' },
   { key: 'PMG', desc: 'Pivot Machine Gun — a reversal occurring after 5 or more consecutive lower highs, or 5 or more consecutive higher lows.' },
 ];
 
@@ -435,6 +437,146 @@ async function loadTeachingBlock() {
   }
 }
 
+// ---- STEP 1A: the measured reading (authorised 15 Nov 2026) --------------
+const { AUTO_COMBOS, TIMEFRAME_KEYS, RULE_VERSION: SETUP_RULE_VERSION } = require('./setupBars');
+
+// The bars he could have seen: only those that STARTED before the entry
+// minute, the last `max` of them.
+function barsBeforeEntry(trade, max = 30) {
+  const entry = Number(trade && trade.entryTimestamp);
+  if (!Number.isFinite(entry)) return [];
+  const minuteStart = Math.floor(entry / 60000) * 60000;
+  const all = (trade.replayData && Array.isArray(trade.replayData.candles)) ? trade.replayData.candles : [];
+  return all.filter(c => Number.isFinite(c.datetime) && c.datetime < minuteStart).slice(-max);
+}
+
+// What was MEASURED, handed to the model as the only combos it may choose.
+function evidenceBlock(candidates, timeframes) {
+  if (!candidates) {
+    return '\nNo measured bar labels are available for this trade. The only evidence is the one-minute bars that started before his entry, listed below -- the weakest kind. Answer "unclear" unless they plainly show one of the eight.\n';
+  }
+  const lines = [];
+  for (const k of TIMEFRAME_KEYS) {
+    const t = timeframes && timeframes[k];
+    if (!t || !t.bars || !t.bars.length) continue;
+    lines.push(`  ${k} [${t.status}]: ${t.bars.map(b => b.label + (b.borderline ? '(too close to call)' : '')).join(' -> ')} (last = the bar forming at his entry)`);
+  }
+  const cands = candidates.map(c => `  - ${c.timeframe}: ${c.notation} = "${c.combo}" (${c.direction})${c.borderline ? ', too close to call' : ''}${c.orderUnknown ? ', order unknown' : ''}${c.confirmed ? '' : ', unconfirmed'}`);
+  return `
+MEASURED FROM THE PRICES, up to the second he bought and nothing after. Each bar is labelled against the one before it (2U took out the previous high, 2D the previous low, 3 both, 1 neither); the last bar on each line is the one forming at his entry, which is always the last bar of his combo:
+${lines.join('\n') || '  (no timeframe could be measured)'}
+The ONLY combos you may choose are these measured candidates${candidates.length ? '' : ' -- there are none, so the combo answer must be "unclear"'}:
+${cands.join('\n')}
+Pick the one he most likely traded, and name its timeframe in 'timeframe'. Never name a combo that is not in this list.
+`;
+}
+
+function plainError(err) {
+  const status = err && err.response && err.response.status;
+  if (status === 429) return 'the AI is at its daily limit';
+  if (status) return `the AI answered ${status}`;
+  return 'the AI could not be reached' + (err && err.message ? ` (${err.message})` : '');
+}
+
+// THE SETUP READING (Step 1A). Never throws. Returns a reading whose outcome
+// is one of: tagged-by-ai, unsure, unreachable, daily-limit, no-data,
+// outside-candidates, waiting-for-data (confirmed-by-owner is only ever
+// written by the journal when he taps Yes). When he has named the timeframe
+// himself, the AI is not asked: the reading carries the measured candidates
+// and waits for his confirmation (pendingOwner, outcome null).
+// A trade from before the switch-on moment is not read at all.
+async function readSetup(trade, opts = {}) {
+  const now = opts.now ?? Date.now();
+  if (Number.isFinite(opts.switchOnAt) && !(Number(trade && trade.entryTimestamp) >= opts.switchOnAt)) {
+    return { skipped: 'before-switch-on' };
+  }
+  const base = { ruleVersion: SETUP_RULE_VERSION, at: new Date(now).toISOString(), outcome: null,
+                 candidates: [], timeframes: null, aiChoice: null, reasoning: null, dataNotes: [] };
+  const readFacts = opts.readFacts || require('./setupReader').readSetupFacts;
+  let got;
+  try { got = await readFacts(trade, { now }); }
+  catch (e) { got = { ok: false, outcome: 'no-data', reason: 'measuring the bars failed: ' + e.message }; }
+  let facts = null;
+  if (got && got.ok) {
+    facts = got.facts;
+    base.candidates = facts.candidates;
+    base.timeframes = facts.timeframes;
+    base.dataNotes = facts.notes.slice();
+  } else if (got && got.outcome === 'waiting-for-data') {
+    return { ...base, outcome: 'waiting-for-data', dataNotes: [got.reason] };
+  } else {
+    base.dataNotes.push((got && got.reason) || 'the bars could not be measured');
+  }
+
+  const answer = opts.ownerAnswer;
+  if (answer && answer.timeframe && facts) {
+    return { ...base, pendingOwner: true, ownerTimeframe: answer.timeframe };
+  }
+  if (!facts) {
+    if (!barsBeforeEntry(trade).length) return { ...base, outcome: 'no-data' };
+    base.dataNotes.push('weakest evidence: bars from before the entry only, no measured candidates');
+  }
+
+  let parsed;
+  try {
+    parsed = await (opts.run || runClassification)(trade, {
+      candidates: facts ? facts.candidates : null, timeframes: facts ? facts.timeframes : null, examples: opts.examples || [] });
+  } catch (err) {
+    const status = err && err.response && err.response.status;
+    return { ...base, outcome: status === 429 ? 'daily-limit' : 'unreachable',
+             dataNotes: [...base.dataNotes, plainError(err)], error: { status: status ?? null } };
+  }
+
+  const said = parsed.strategy;
+  let outcome, choice = null;
+  if (!said || said === 'unclear' || parsed.confidence !== 'high') {
+    outcome = 'unsure';
+  } else if (facts) {
+    const tf = parsed.timeframe;
+    choice = facts.candidates.find(c => c.combo === said && (!tf || tf === 'unclear' || c.timeframe === tf)) || null;
+    outcome = choice ? 'tagged-by-ai' : 'outside-candidates';
+  } else if (AUTO_COMBOS.includes(said)) {
+    outcome = 'tagged-by-ai';
+    choice = { combo: said, timeframe: null, notation: parsed.notation || null, direction: null, confirmed: false };
+  } else {
+    outcome = 'outside-candidates';
+  }
+  const playOk = parsed.play && parsed.play !== 'unclear' && parsed.playConfidence === 'high' && PLAYS.some(x => x.key === parsed.play);
+  return {
+    ...base, outcome,
+    aiChoice: choice ? { combo: choice.combo, timeframe: choice.timeframe, notation: choice.notation, direction: choice.direction, confirmed: !!choice.confirmed }
+      : (said && said !== 'unclear' ? { combo: said, refused: outcome === 'outside-candidates', confidence: parsed.confidence || null } : null),
+    reasoning: parsed.reasoning || null,
+    play: playOk ? parsed.play : null, playConfidence: playOk ? parsed.playConfidence : null, playReasoning: playOk ? parsed.playReasoning || null : null,
+    broadeningFormation: parsed.broadeningFormation || null, broadeningReasoning: parsed.broadeningReasoning || null,
+    notationDirection: parsed.notationDirection || null,
+    usedScreenshot: !!parsed.usedScreenshot, sawCandles: parsed.sawCandles ?? null, sawCandidates: parsed.sawCandidates ?? null,
+  };
+}
+
+// What is kept on the trade: the reading without anything bulky or private.
+function storedReading(r) {
+  const { prompt, usedScreenshot, ...keep } = r || {};
+  return keep;
+}
+
+// The fields the journal and the rest of the service already read, filled
+// from a reading -- the combo only when the AI chose a MEASURED candidate.
+function legacyFrom(r) {
+  const out = { setupReading: storedReading(r), sawCandles: r.sawCandles ?? null, usedScreenshot: !!r.usedScreenshot,
+                strategy: null, play: r.play || null, playConfidence: r.playConfidence || null, playReasoning: r.playReasoning || null,
+                broadeningFormation: r.broadeningFormation || null, broadeningReasoning: r.broadeningReasoning || null };
+  if (r.outcome === 'tagged-by-ai' && r.aiChoice) {
+    out.strategy = r.aiChoice.combo;
+    out.confidence = 'high';
+    out.reasoning = r.reasoning;
+    out.notation = r.aiChoice.notation || null;
+    out.notationDirection = r.aiChoice.direction ? (r.aiChoice.direction === 'bearish' ? 'Bearish' : 'Bullish') : (r.notationDirection || null);
+    out.stratTimeframe = r.aiChoice.timeframe || null;
+  }
+  return out;
+}
+
 // Classification" tool — builds the same prompt, calls Gemini, and always
 // returns the raw result (never null), so callers decide for themselves
 // whether/how to act on a low-confidence or "unclear" answer. Throws on a
@@ -448,10 +590,23 @@ async function loadTeachingBlock() {
 // screenshot exists (trade.shotEntry, or trade.shotExit as a fallback), or
 // a freeform description (trade.testDescription — only ever set by the
 // test tool, never a real trade), it's included as extra evidence.
-async function runClassification(trade) {
+async function runClassification(trade, { candidates = null, timeframes = null, examples = [] } = {}) {
   const teaching = await loadTeachingBlock();
-  const candles = ((trade.replayData && trade.replayData.candles) || []).slice(-15);
+  // STEP 1: only bars that STARTED before the entry minute. This was the
+  // last fifteen of the replay window, and for 110 of his 111 trades every
+  // one of them was AFTER the entry.
+  const candles = barsBeforeEntry(trade);
   const candleSummary = candles.map(c => `O:${c.open} H:${c.high} L:${c.low} C:${c.close}`).join(' | ');
+  const evidence = evidenceBlock(candidates, timeframes);
+  const allowed = candidates ? [...new Set(candidates.map(c => c.combo))] : AUTO_COMBOS;
+  const schema = JSON.parse(JSON.stringify(CLASSIFY_SCHEMA));
+  schema.properties.strategy.enum = [...allowed, 'unclear'];
+  schema.properties.timeframe = { type: 'STRING', enum: [...TIMEFRAME_KEYS, 'unclear'] };
+  const entryClock = Number.isFinite(Number(trade.entryTimestamp))
+    ? new Date(Number(trade.entryTimestamp)).toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' New York'
+    : 'n/a';
+  const his = (examples || []).filter(e => e && e.play && e.timeframe).slice(0, 10)
+    .map(e => `${e.play} on the ${e.timeframe}${e.formationTimeframe ? ` (formation ${e.formationTimeframe})` : ''}`);
 
   // Entry screenshot preferred — it's the chart at the moment the setup was
   // actually taken, matching what the candle data above already looks at.
@@ -462,10 +617,10 @@ async function runClassification(trade) {
 
   const prompt = `You are classifying a single options trade against a trader's own pre-defined Strat-methodology candle patterns. Each pattern below is defined purely by candle shape (numbered "1"=inside bar, "2"=directional bar, "3"=outside bar, per the trader's own rules). Only classify with high confidence if the evidence clearly matches — if the data is ambiguous or doesn't clearly support any of them, say "unclear" honestly rather than guessing.
 
-Defined patterns:
-${STRATEGIES.map(s => `- "${s.key}": ${s.desc}`).join('\n')}
-
-FTFC alignment and Broadening Formation are still NOT patterns — the nine above remain the only valid answers for the combo. But as of 2026-08-31 the trader has asked that you USE them as supporting evidence when the bars alone leave the combo genuinely ambiguous. The timeframe alignment below was measured from real price data at the minute he entered, so it is evidence, not a guess. Weigh it; never let it override what the bars plainly show.
+Defined patterns (read automatically; PMG is never chosen automatically, by his decision of 15 Nov 2026):
+${STRATEGIES.filter(s => AUTO_COMBOS.includes(s.key)).map(s => `- "${s.key}": ${s.desc}`).join('\n')}
+${evidence}
+FTFC alignment and Broadening Formation are still NOT patterns — the eight above remain the only valid answers for the combo. But as of 2026-08-31 the trader has asked that you USE them as supporting evidence when the bars alone leave the combo genuinely ambiguous. The timeframe alignment below was measured from real price data at the minute he entered, so it is evidence, not a guess. Weigh it; never let it override what the bars plainly show.
 
 ALSO REPORT THE COMBO IN HIS OWN NOTATION. He does not read "2-2 Reversal" or "2-2 Continuation" — he reads the direction of each bar:
   2U = a directional bar that took out the previous bar's HIGH
@@ -479,8 +634,11 @@ Trade data:
 - Direction: ${trade.dir || 'n/a'}
 - FTFC confirmed: ${trade.ftfcConfirmed == null ? 'n/a' : (trade.ftfcConfirmed ? 'Yes' : 'No')} (direction: ${trade.ftfcDirection || 'n/a'}, run: ${(trade.ftfcTimeframesInRun || []).join('→') || 'n/a'})
 - Taken off a Broadening Formation: ${trade.offBroadeningFormation == null ? 'n/a' : (trade.offBroadeningFormation ? 'Yes' : 'No')}
-- Underlying price at entry: ${trade.undEntry ?? 'n/a'}, at exit: ${trade.undExit ?? 'n/a'}
-- Last ~15 one-minute candles into entry: ${candleSummary || 'not available'}
+- Entry (the second he bought): ${entryClock}
+- Underlying price at entry: ${trade.undEntry ?? 'n/a'}
+- His stop on the underlying: ${trade.stop ?? 'n/a'}
+- One-minute bars that started BEFORE his entry minute (nothing after it): ${candleSummary || 'not available'}
+- His own recent answers (play and the timeframe he entered on): ${his.length ? his.join('; ') : 'none yet'}
 
 SECOND QUESTION, answered separately. Which of the trader's three PLAYS was this? The play is HOW he chose the trade; the combo above is WHAT he saw. A trade has both, and they are independent — answer "unclear" for this one if the evidence does not support a choice, even where the combo is obvious.
 
@@ -498,7 +656,7 @@ ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${scr
   const attachments = [];
   if (imagePart) attachments.push({ ...imagePart, label: 'THE CHART TO CLASSIFY — this trade\'s own screenshot. Your answer is about this one.' });
   attachments.push(...teaching.imageParts);
-  const parsed = await callGeminiJson(prompt, CLASSIFY_SCHEMA, 6000, attachments);
+  const parsed = await callGeminiJson(prompt, schema, 6000, attachments);
   // Everything the model was asked for, not a hand-picked three.
   //
   // This line used to return strategy, confidence and reasoning only. The
@@ -514,7 +672,7 @@ ${imagePart ? `- An attached screenshot/photo of the trader's own chart at ${scr
   // shape this could not open -- and nothing anywhere recorded that, so a
   // blind answer and a properly-read one looked identical on the card and
   // stayed that way for ever. A reading now says what it was given.
-  return { ...parsed, usedScreenshot: !!imagePart, sawCandles: candles.length };
+  return { ...parsed, usedScreenshot: !!imagePart, sawCandles: candles.length, sawCandidates: candidates ? candidates.length : null, prompt };
 }
 
 // Classifies a single newly-matched trade against the trader's own defined
@@ -538,17 +696,17 @@ function applyConfidenceBar(result) {
   return { comboOk, playOk };
 }
 
-async function classifyStrategy(trade) {
-  try {
-    const result = await runClassification(trade);
-    const { comboOk, playOk } = applyConfidenceBar(result);
-    if (comboOk || playOk) return result;
-    console.log(`Strategy classification: not confident enough to auto-tag (confidence=${result.confidence}, strategy=${result.strategy}, usedScreenshot=${result.usedScreenshot}).`);
-    return null;
-  } catch (err) {
-    console.log('Strategy classification failed:', err.response?.data || err.message);
-    return null;
+// STEP 1: every reading comes back with its outcome (setupReading), so
+// "could not reach the AI", "the AI was unsure" and "there were no bars"
+// are never one silent null again. Returns null ONLY for a trade from
+// before the switch-on moment, which is not read at all.
+async function classifyStrategy(trade, opts = {}) {
+  const r = await readSetup(trade, opts);
+  if (r.skipped) return null;
+  if (r.outcome !== 'tagged-by-ai') {
+    console.log(`Setup reading for ${trade && (trade.ticker || trade.id)}: ${r.outcome || 'waiting for his confirmation'}${r.dataNotes && r.dataNotes.length ? ' (' + r.dataNotes.join('; ') + ')' : ''}.`);
   }
+  return legacyFrom(r);
 }
 
 // The full-test rehearsal's version. Unlike classifyStrategy, it must tell
@@ -562,9 +720,14 @@ async function classifyStrategy(trade) {
 // broken. classifyStrategy folds the last two together into null, which
 // made an empty minute look like a broken reader.
 async function classifyForTest(trade) {
-  const result = await runClassification(trade);   // throws only if the AI cannot be reached
-  const { comboOk, playOk } = applyConfidenceBar(result);
-  return { reached: true, tagged: comboOk || playOk, result };
+  const r = await readSetup(trade, {});
+  if (r.outcome === 'unreachable' || r.outcome === 'daily-limit') {
+    const e = new Error(r.outcome === 'daily-limit' ? 'The AI is at its limit for now.' : 'The AI could not be reached.');
+    e.reading = r;
+    throw e;
+  }
+  const result = legacyFrom(r);
+  return { reached: r.outcome !== 'no-data' && r.outcome !== 'waiting-for-data', tagged: !!(result.strategy || result.play), result };
 }
 
 // Sandbox version for the "Test Classification" tool (index.html).
@@ -779,4 +942,4 @@ Write "summary" as a 2-3 sentence overview, and "insights" as a list of specific
   return callGeminiJson(prompt, ANALYSIS_SCHEMA, 8000);
 }
 
-module.exports = { classifyStrategy, classifyForTest, testClassifyStrategy, runPortfolioAnalysis, interpretBacktest, STRATEGIES, PLAYS };
+module.exports = { classifyStrategy, classifyForTest, readSetup, runClassification, barsBeforeEntry, legacyFrom, storedReading, testClassifyStrategy, runPortfolioAnalysis, interpretBacktest, STRATEGIES, PLAYS };

@@ -321,7 +321,9 @@ const ALPACA_TIMEFRAME = {
 // more than anything real, while being roughly 20MB rather than 274MB.
 const MAX_BARS = 150000;
 
-async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false }) {
+// `used`, when given, receives the feed that answered: 'iex' if ANY page
+// came from the single-exchange feed (Step 1 marks such a reading).
+async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false, used = null }) {
   await ensureKeysLoaded();
   if (!isConfigured()) return null;
   const timeframe = daily ? '1Day' : ALPACA_TIMEFRAME[minutes];
@@ -344,7 +346,9 @@ async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false })
         limit: 10000, adjustment: 'raw',
       };
       if (pageToken) params.page_token = pageToken;
-      const data = await alpacaGetFeed(`/stocks/${encodeURIComponent(symbol)}/bars`, params);
+      const pageUsed = {};
+      const data = await alpacaGetFeed(`/stocks/${encodeURIComponent(symbol)}/bars`, params, { used: pageUsed });
+      if (used && pageUsed.feed) used.feed = (used.feed === 'iex' || pageUsed.feed === 'iex') ? 'iex' : pageUsed.feed;
       for (const bar of (data?.bars || [])) {
         out.push({
           datetime: Date.parse(bar.t),
@@ -377,6 +381,36 @@ async function fetchBars(symbol, { minutes = 1, startMs, endMs, daily = false })
   return out;
 }
 
+// Every trade printed between two moments (Step 1: the entry minute, rebuilt
+// only up to the entry second, and a minute whose order matters). Up to 20
+// pages; if more remain the answer would be partial, so it is null rather
+// than a quietly short list. -> { trades: [{t, p}], feed } or null.
+async function tradesBetween(symbol, startMs, endMs) {
+  await ensureKeysLoaded();
+  if (!isConfigured() || !Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+  const out = [];
+  let pageToken = null, feed = null;
+  try {
+    for (let page = 0; page < 20; page++) {
+      const used = {};
+      const params = { start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString(), limit: 10000 };
+      if (pageToken) params.page_token = pageToken;
+      const data = await alpacaGetFeed(`/stocks/${encodeURIComponent(symbol)}/trades`, params, { onlyFeeds: feedsForMoment(endMs), used });
+      feed = (feed === 'iex' || used.feed === 'iex') ? 'iex' : (used.feed || feed);
+      for (const t of (data?.trades || [])) {
+        const ms = Date.parse(t.t), p = Number(t.p);
+        if (Number.isFinite(ms) && Number.isFinite(p) && ms <= endMs) out.push({ t: ms, p });
+      }
+      pageToken = data?.next_page_token || null;
+      if (!pageToken) return { trades: out.sort((a, b) => a.t - b.t), feed };
+    }
+    return null;
+  } catch (err) {
+    console.log(`Alpaca trades failed for ${symbol}:`, err.response?.status || err.message);
+    return null;
+  }
+}
+
 // The underlying price at a fill, best available source first, along with
 // HOW it was arrived at. The caller stores that alongside the number so a
 // figure is never shown as exact when it is not.
@@ -404,7 +438,7 @@ async function underlyingPriceAt(symbol, timestampMs) {
 
 module.exports = {
   isConfigured, isReady, underlyingPriceAt, lastTradePriceAt, minuteCloseAt, feedsForMoment,
-  tooRecentForFreePlan, FREE_PLAN_DELAY_MS, fetchBars, ALPACA_TIMEFRAME,
+  tooRecentForFreePlan, FREE_PLAN_DELAY_MS, fetchBars, tradesBetween, ALPACA_TIMEFRAME,
   feedState, feedRefused,
   saveKeys, clearKeys, loadSavedKeys, ensureKeysLoaded, keyStatus,
 };
