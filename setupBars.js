@@ -203,7 +203,7 @@ function readSetups(input) {
     }
     // C8 needs B0's own path: every minute of it must be on hand.
     const prev = bars[bars.length - 2];
-    const path = minutes.filter(c => c.datetime >= b0Start);
+    const path = minutes.filter(c => c.datetime >= b0Start && minutesOfDay(c.datetime) >= SESSION_OPEN_MIN && minutesOfDay(c.datetime) < SESSION_CLOSE_MIN);
     const covered = before.length && before[0].datetime <= b0Start;
     if (covered && path.length) {
       const r = readC8(prev, path, bullish, input.minuteTrades);
@@ -211,7 +211,7 @@ function readSetups(input) {
         if (r.needs != null) needs.add(r.needs);
         const b0 = labelled[labelled.length - 1];
         entry.candidates.push({ timeframe: tf.key, direction: bullish ? 'bullish' : 'bearish', combo: C8.name,
-          notation: `${prev === bars[bars.length - 2] && labelled.length > 1 ? labelled[labelled.length - 2].label : '?'}-${b0.label}`,
+          notation: `${labelled.length > 1 ? labelled[labelled.length - 2].label : '?'}-${b0.label}`,
           length: 2, borderline: r.borderline, orderUnknown: r.orderUnknown, confirmed: confirmed && !r.orderUnknown });
       }
     } else if (!covered) {
