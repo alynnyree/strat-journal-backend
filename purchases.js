@@ -6,7 +6,7 @@
 // When he buys, a PURCHASE RECORD is made for the opening fill, and his
 // phone and laptop get a pop-up asking the play and the timeframe he
 // entered on. His answer is stored under that fill id. The trade queue
-// ('trades:state') is never written here: collecting a trade, or deleting a
+// (kept by tradeStore.js) is never written here: collecting a trade, or deleting a
 // queued one, never touches a purchase record or an answer, and no code that
 // collects or deletes a queued trade ever touches this. The journal joins
 // his answer to the trade later by the trade's opening fill id.
